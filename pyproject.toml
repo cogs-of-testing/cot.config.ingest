@@ -1,0 +1,30 @@
+[build-system]
+build-backend = "hatchling.build"
+
+requires = [ "hatch-vcs", "hatchling" ]
+
+[project]
+name = "cot-config"
+description = "type annotation based composable settings"
+
+classifiers = [
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+]
+dynamic = [ "version" ]
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build.targets.wheel]
+sources = [ "src" ]
+packages = [ "src/cot" ]
+[tool.hatch.envs.default]
+installer = "uv"
+dependencies = [ "pytest" ]
+[tool.hatch.envs.default.scripts]
+test = "pytest {args}"
