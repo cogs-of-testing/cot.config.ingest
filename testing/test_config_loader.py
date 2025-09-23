@@ -1,8 +1,6 @@
 """Test ConfigLoader and debug functionality."""
 
 import json
-import tempfile
-from pathlib import Path
 
 import pytest
 
@@ -11,9 +9,8 @@ from cot.config.debug import (
     get_config_report,
     get_load_order,
     get_non_default_values,
-    get_override_chain,
     get_overridden_values,
-    get_source_location,
+    get_override_chain,
     get_value_source,
     is_default,
     was_overridden,
@@ -59,11 +56,14 @@ def test_loader_from_file(tmp_path):
     """Test loading from a configuration file."""
     config_file = tmp_path / "config.json"
     with config_file.open("w") as f:
-        json.dump({
-            "name": "file_app",
-            "host": "0.0.0.0",
-            "port": 3000,
-        }, f)
+        json.dump(
+            {
+                "name": "file_app",
+                "host": "0.0.0.0",
+                "port": 3000,
+            },
+            f,
+        )
 
     loader = ConfigLoader(SampleConfig)
     loader.load_file(config_file)
@@ -106,12 +106,15 @@ def test_loader_precedence(tmp_path):
     # Create a config file
     config_file = tmp_path / "config.json"
     with config_file.open("w") as f:
-        json.dump({
-            "name": "file_app",
-            "host": "file_host",
-            "port": 1000,
-            "workers": 2,
-        }, f)
+        json.dump(
+            {
+                "name": "file_app",
+                "host": "file_host",
+                "port": 1000,
+                "workers": 2,
+            },
+            f,
+        )
 
     # Environment variables
     env = {
@@ -275,12 +278,7 @@ def test_lazy_loader():
 def test_loader_chaining():
     """Test that loader methods can be chained."""
     loader = ConfigLoader(SampleConfig)
-    config = (
-        loader
-        .set_values(name="chained")
-        .load_env({"SAMPLE_PORT": "7777"})
-        .build()
-    )
+    config = loader.set_values(name="chained").load_env({"SAMPLE_PORT": "7777"}).build()
 
     assert config.name == "chained"
     assert config.port == 7777

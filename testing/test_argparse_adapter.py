@@ -33,7 +33,9 @@ def test_argparse_adapter_basic():
     adapter.add_to_parser(parser)
 
     # Parse some arguments
-    args = parser.parse_args(["--name", "mytest", "--debug", "--paths", "path1", "--paths", "path2"])
+    args = parser.parse_args(
+        ["--name", "mytest", "--debug", "--paths", "path1", "--paths", "path2"]
+    )
 
     assert args.name == "mytest"
     assert args.debug is True
@@ -101,7 +103,9 @@ def test_argparse_with_subconfig():
     parser = argparse.ArgumentParser()
     adapter.add_to_parser(parser)
 
-    args = parser.parse_args(["--name", "myserver", "--db-host", "dbserver", "--db-port", "5433"])
+    args = parser.parse_args(
+        ["--name", "myserver", "--db-host", "dbserver", "--db-port", "5433"]
+    )
 
     config_data = adapter.extract_config(args)
 

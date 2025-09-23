@@ -55,9 +55,7 @@ class EnvironmentAdapter:
                     config_data[field_name] = value
 
             elif isinstance(field_obj, SubConfigDescriptor):
-                sub_data = self._get_subconfig_from_env(
-                    environ, field_name, field_obj
-                )
+                sub_data = self._get_subconfig_from_env(environ, field_name, field_obj)
                 if sub_data:
                     config_data[field_name] = field_obj.config_class(**sub_data)
 
@@ -100,7 +98,10 @@ class EnvironmentAdapter:
                     sub_data[subconfig.primary] = value
 
         # Check for prefixed fields
-        for sub_field_name, sub_field in subconfig.config_class.__config_fields__.items():
+        for (
+            sub_field_name,
+            sub_field,
+        ) in subconfig.config_class.__config_fields__.items():
             if sub_field_name == subconfig.primary:
                 continue
 
@@ -151,7 +152,6 @@ class EnvironmentAdapter:
                 return parsed.get("value")
             except Exception:
                 pass
-
 
         # Handle list fields with action="append"
         if field.action == "append":

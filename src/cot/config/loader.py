@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -309,7 +308,9 @@ class ConfigLoader:
         :raises RuntimeError: If debug mode is not enabled
         """
         if not self._debug_info:
-            raise RuntimeError("Debug mode is not enabled. Set debug=True in ConfigLoader")
+            raise RuntimeError(
+                "Debug mode is not enabled. Set debug=True in ConfigLoader"
+            )
 
         return self._debug_info.generate_report()
 

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from pathlib import Path
 from typing import Any
 
 
@@ -128,17 +127,11 @@ class ConfigDebugInfo:
 
     def get_non_default_values(self) -> dict[str, ConfigValue]:
         """Get all values that are not using defaults."""
-        return {
-            k: v for k, v in self._values.items()
-            if not v.is_default()
-        }
+        return {k: v for k, v in self._values.items() if not v.is_default()}
 
     def get_overridden_values(self) -> dict[str, ConfigValue]:
         """Get all values that were overridden from previous sources."""
-        return {
-            k: v for k, v in self._values.items()
-            if v.was_overridden()
-        }
+        return {k: v for k, v in self._values.items() if v.was_overridden()}
 
     def generate_report(self) -> str:
         """Generate a human-readable debug report."""

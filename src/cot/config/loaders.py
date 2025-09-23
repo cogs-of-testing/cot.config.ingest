@@ -47,7 +47,9 @@ def load_yaml(path: Path | str) -> dict[str, Any]:
     try:
         import yaml  # type: ignore
     except ImportError:
-        raise ImportError("PyYAML is required to load YAML files. Install it with: pip install PyYAML")
+        raise ImportError(
+            "PyYAML is required to load YAML files. Install it with: pip install PyYAML"
+        )
 
     path = Path(path)
     with path.open("r") as f:
@@ -99,7 +101,9 @@ def save_toml(data: dict[str, Any], path: Path | str) -> None:
     try:
         import tomli_w  # type: ignore
     except ImportError:
-        raise ImportError("tomli_w is required to save TOML files. Install it with: pip install tomli_w")
+        raise ImportError(
+            "tomli_w is required to save TOML files. Install it with: pip install tomli_w"
+        )
 
     path = Path(path)
     with path.open("wb") as f:
@@ -117,7 +121,9 @@ def save_yaml(data: dict[str, Any], path: Path | str) -> None:
     try:
         import yaml  # type: ignore
     except ImportError:
-        raise ImportError("PyYAML is required to save YAML files. Install it with: pip install PyYAML")
+        raise ImportError(
+            "PyYAML is required to save YAML files. Install it with: pip install PyYAML"
+        )
 
     path = Path(path)
     with path.open("w") as f:

@@ -109,7 +109,9 @@ class Config(metaclass=ConfigMeta):
         return isinstance(other, self.__class__) and vars(self) == vars(other)
 
     @classmethod
-    def from_data(cls, *sources: dict[str, Any] | tuple[Origin, dict[str, Any]]) -> Self:
+    def from_data(
+        cls, *sources: dict[str, Any] | tuple[Origin, dict[str, Any]]
+    ) -> Self:
         """
         Create a Config instance from multiple data sources.
 
@@ -169,7 +171,9 @@ class Config(metaclass=ConfigMeta):
         return cls.from_data(*sources)
 
     @classmethod
-    def from_env(cls, prefix: str | None = None, environ: dict[str, str] | None = None) -> Self:
+    def from_env(
+        cls, prefix: str | None = None, environ: dict[str, str] | None = None
+    ) -> Self:
         """
         Load configuration from environment variables.
 

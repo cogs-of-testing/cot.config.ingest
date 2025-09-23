@@ -1,8 +1,6 @@
 """Test configuration file loaders."""
 
 import json
-import tempfile
-from pathlib import Path
 
 import pytest
 
@@ -96,6 +94,7 @@ def test_load_yaml_not_installed(tmp_path, monkeypatch):
     """Test YAML loading when PyYAML is not installed."""
     # Mock import failure
     import builtins
+
     original_import = builtins.__import__
 
     def mock_import(name, *args, **kwargs):

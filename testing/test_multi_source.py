@@ -2,7 +2,6 @@
 
 import argparse
 import json
-from pathlib import Path
 
 from cot.config import Config, field
 from cot.config.adapters import ConfigToArgparseAdapter, EnvironmentAdapter
