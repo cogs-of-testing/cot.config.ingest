@@ -7,6 +7,6 @@ class SampleConfig(Config):
 
 def test_basic_from_data():
     input = {"name": "John"}
-    loaded = SampleConfig.from_data([input])
+    loaded = SampleConfig.from_data(input)
 
     assert loaded == SampleConfig(name="John")

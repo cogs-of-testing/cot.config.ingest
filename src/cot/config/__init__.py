@@ -109,8 +109,86 @@ class Config(metaclass=ConfigMeta):
         return isinstance(other, self.__class__) and vars(self) == vars(other)
 
     @classmethod
-    def from_data(cls, inputs: Inputs) -> Self:
-        return cls(**inputs[0])  # type: ignore[arg-type]  # todo: normalize inputs
+    def from_data(cls, *sources: dict[str, Any] | tuple[Origin, dict[str, Any]]) -> Self:
+        """
+        Create a Config instance from multiple data sources.
+
+        Args:
+            *sources: Variable number of data sources. Each can be:
+                - A dictionary of configuration data
+                - A tuple of (origin, data) where origin describes the source
+
+        Returns:
+            Config instance with merged data from all sources
+
+        Note:
+            Sources are merged in order, with later sources overriding earlier ones.
+        """
+        merged_data: dict[str, Any] = {}
+
+        for source in sources:
+            if isinstance(source, tuple):
+                _origin, data = source
+            else:
+                data = source
+
+            # Deep merge the data
+            cls._merge_data(merged_data, data)
+
+        return cls(**merged_data)
+
+    @classmethod
+    def _merge_data(cls, target: dict[str, Any], source: dict[str, Any]) -> None:
+        """Deep merge source dictionary into target dictionary."""
+        for key, value in source.items():
+            if key in target:
+                # If both values are dicts, merge them
+                if isinstance(target[key], dict) and isinstance(value, dict):
+                    cls._merge_data(target[key], value)
+                else:
+                    # Otherwise, override with new value
+                    target[key] = value
+            else:
+                target[key] = value
+
+    @classmethod
+    def from_files(cls, *paths: Path | str) -> Self:
+        """
+        Load configuration from multiple files.
+
+        Args:
+            *paths: File paths to load configuration from
+
+        Returns:
+            Config instance with merged data from all files
+        """
+        from .loaders import load_file
+
+        sources = []
+        for path in paths:
+            if Path(path).exists():
+                data = load_file(path)
+                sources.append((str(path), data))
+
+        return cls.from_data(*sources)
+
+    @classmethod
+    def from_env(cls, prefix: str | None = None, environ: dict[str, str] | None = None) -> Self:
+        """
+        Load configuration from environment variables.
+
+        Args:
+            prefix: Prefix for environment variables
+            environ: Environment dictionary (defaults to os.environ)
+
+        Returns:
+            Config instance with data from environment
+        """
+        from .adapters.environment import EnvironmentAdapter
+
+        adapter = EnvironmentAdapter(cls, env_prefix=prefix)
+        data = adapter.extract_config(environ)
+        return cls(**data)
 
 
 __all__ = [

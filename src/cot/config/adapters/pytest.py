@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Protocol
 
+from .._name_mapping import field_to_cli_name
 from ..descriptors import FieldDescriptor, SubConfigDescriptor
 
 if TYPE_CHECKING:
@@ -170,14 +171,7 @@ class ConfigToPytestAdapter:
 
     def _field_to_cli_name(self, field_name: str) -> str:
         """Convert a field name to a CLI option name."""
-        # Add prefix if configured
-        if self.prefix:
-            field_name = f"{self.prefix}_{field_name}"
-
-        # Convert underscores to hyphens
-        cli_name = field_name.replace("_", "-")
-
-        return f"--{cli_name}"
+        return field_to_cli_name(field_name, self.prefix)
 
     def _field_to_ini_name(self, field_name: str) -> str:
         """Convert a field name to an ini option name."""
