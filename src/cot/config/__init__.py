@@ -1,14 +1,15 @@
-import typing_extensions
 from collections.abc import Sequence
 from pathlib import Path
-from typing import TypeAlias, Any, Sequence
-from typing_extensions import Self
+from typing import Any
+
+import typing_extensions
+from typing_extensions import Self, TypeAlias
 
 Origin: TypeAlias = str | Path | None
-InputData = dict[str | Any]
+InputData: TypeAlias = dict[str, Any]
 
-Inputs = Sequence[InputData | tuple[Origin, InputData]]
-NormalizedInputs = Sequence[tuple[Origin, InputData]]
+Inputs: TypeAlias = Sequence[InputData | tuple[Origin, InputData]]
+NormalizedInputs: TypeAlias = Sequence[tuple[Origin, InputData]]
 
 
 @typing_extensions.dataclass_transform()
@@ -17,17 +18,17 @@ class Config:
         for name, value in kwargs.items():
             setattr(self, name, value)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         values = ", ".join(f"{k}={v!r}" for k, v in vars(self).items())
         return f"<{self.__class__.__name__} {values}>"
 
-    def __eq__(self, other: object):
+    def __eq__(self, other: object) -> bool:
         return isinstance(other, self.__class__) and vars(self) == vars(other)
 
     @classmethod
-    def from_data(self, inputs: Sequence[Inputs]) -> Self:
-        return self(**inputs[0])  # todo: normalize inputs
+    def from_data(cls, inputs: Inputs) -> Self:
+        return cls(**inputs[0])  # type: ignore[arg-type]  # todo: normalize inputs
 
 
-def field() -> None:
+def field() -> Any:
     return None
