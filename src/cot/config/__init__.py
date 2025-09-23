@@ -113,15 +113,14 @@ class Config(metaclass=ConfigMeta):
         """
         Create a Config instance from multiple data sources.
 
-        Args:
-            *sources: Variable number of data sources. Each can be:
-                - A dictionary of configuration data
-                - A tuple of (origin, data) where origin describes the source
+        :param sources: Variable number of data sources. Each can be:
 
-        Returns:
-            Config instance with merged data from all sources
+            - A dictionary of configuration data
+            - A tuple of (origin, data) where origin describes the source
 
-        Note:
+        :returns: Config instance with merged data from all sources
+
+        .. note::
             Sources are merged in order, with later sources overriding earlier ones.
         """
         merged_data: dict[str, Any] = {}
@@ -156,11 +155,8 @@ class Config(metaclass=ConfigMeta):
         """
         Load configuration from multiple files.
 
-        Args:
-            *paths: File paths to load configuration from
-
-        Returns:
-            Config instance with merged data from all files
+        :param paths: File paths to load configuration from
+        :returns: Config instance with merged data from all files
         """
         from .loaders import load_file
 
@@ -177,12 +173,9 @@ class Config(metaclass=ConfigMeta):
         """
         Load configuration from environment variables.
 
-        Args:
-            prefix: Prefix for environment variables
-            environ: Environment dictionary (defaults to os.environ)
-
-        Returns:
-            Config instance with data from environment
+        :param prefix: Prefix for environment variables
+        :param environ: Environment dictionary (defaults to os.environ)
+        :returns: Config instance with data from environment
         """
         from .adapters.environment import EnvironmentAdapter
 

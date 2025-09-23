@@ -19,8 +19,7 @@ class ConfigToArgparseAdapter:
         """
         Initialize the adapter.
 
-        Args:
-            config_class: The Config class to adapt
+        :param config_class: The Config class to adapt
         """
         self.config_class = config_class
         self.prefix = config_class.__config_prefix__
@@ -33,9 +32,8 @@ class ConfigToArgparseAdapter:
         """
         Register the configuration with an ArgumentParser.
 
-        Args:
-            parser: The ArgumentParser instance
-            group_name: Optional group name for options
+        :param parser: The ArgumentParser instance
+        :param group_name: Optional group name for options
         """
         group = parser.add_argument_group(group_name) if group_name else parser
 
@@ -131,11 +129,8 @@ class ConfigToArgparseAdapter:
         """
         Extract configuration values from parsed arguments.
 
-        Args:
-            args: Parsed arguments from argparse
-
-        Returns:
-            Dictionary of configuration values
+        :param args: Parsed arguments from argparse
+        :returns: Dictionary of configuration values
         """
         config_data: dict[str, Any] = {}
 
@@ -191,13 +186,10 @@ class ConfigToArgparseAdapter:
         """
         Create a new ArgumentParser with the config registered.
 
-        Args:
-            prog: Program name
-            description: Program description
-            **kwargs: Additional ArgumentParser arguments
-
-        Returns:
-            Configured ArgumentParser
+        :param prog: Program name
+        :param description: Program description
+        :param kwargs: Additional ArgumentParser arguments
+        :returns: Configured ArgumentParser
         """
         parser = argparse.ArgumentParser(prog=prog, description=description, **kwargs)
         self.add_to_parser(parser)

@@ -9,13 +9,10 @@ def nested_get(data: dict[str, Any], path: str, separator: str = ".") -> Any:
     """
     Get a value from a nested dictionary using a path.
 
-    Args:
-        data: The dictionary to search
-        path: Path to the value (e.g., "logging.level")
-        separator: Path separator
-
-    Returns:
-        The value at the path or None if not found
+    :param data: The dictionary to search
+    :param path: Path to the value (e.g., "logging.level")
+    :param separator: Path separator
+    :returns: The value at the path or None if not found
     """
     keys = path.split(separator)
     current: Any = data
@@ -36,11 +33,10 @@ def nested_set(
     """
     Set a value in a nested dictionary using a path.
 
-    Args:
-        data: The dictionary to modify
-        path: Path to set (e.g., "logging.level")
-        value: The value to set
-        separator: Path separator
+    :param data: The dictionary to modify
+    :param path: Path to set (e.g., "logging.level")
+    :param value: The value to set
+    :param separator: Path separator
     """
     keys = path.split(separator)
     current = data
@@ -62,13 +58,10 @@ def flatten_dict(
     """
     Flatten a nested dictionary.
 
-    Args:
-        data: The dictionary to flatten
-        prefix: Prefix for keys
-        separator: Separator between nested levels
-
-    Returns:
-        Flattened dictionary
+    :param data: The dictionary to flatten
+    :param prefix: Prefix for keys
+    :param separator: Separator between nested levels
+    :returns: Flattened dictionary
     """
     result = {}
 
@@ -87,12 +80,9 @@ def unflatten_dict(data: dict[str, Any], separator: str = "_") -> dict[str, Any]
     """
     Unflatten a dictionary with separated keys.
 
-    Args:
-        data: The flattened dictionary
-        separator: Separator used in keys
-
-    Returns:
-        Nested dictionary
+    :param data: The flattened dictionary
+    :param separator: Separator used in keys
+    :returns: Nested dictionary
     """
     result: dict[str, Any] = {}
 

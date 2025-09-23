@@ -22,12 +22,9 @@ def field_to_cli_name(field_name: str, prefix: str | None = None) -> str:
     """
     Convert a field name to CLI option name.
 
-    Args:
-        field_name: The field name to convert
-        prefix: Optional prefix to add
-
-    Returns:
-        CLI option name with -- prefix
+    :param field_name: The field name to convert
+    :param prefix: Optional prefix to add
+    :returns: CLI option name with -- prefix
     """
     if prefix:
         field_name = f"{prefix}_{field_name}"
@@ -38,12 +35,9 @@ def field_to_env_name(field_name: str, prefix: str | None = None) -> str:
     """
     Convert a field name to environment variable name.
 
-    Args:
-        field_name: The field name to convert
-        prefix: Optional prefix to add
-
-    Returns:
-        Environment variable name in UPPER_CASE
+    :param field_name: The field name to convert
+    :param prefix: Optional prefix to add
+    :returns: Environment variable name in UPPER_CASE
     """
     if prefix:
         field_name = f"{prefix}_{field_name}"

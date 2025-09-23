@@ -26,11 +26,10 @@ class EnvironmentAdapter:
         """
         Initialize the environment adapter.
 
-        Args:
-            config_class: The Config class to adapt
-            env_prefix: Global prefix for all environment variables
-            load_json: Parse JSON strings from environment variables
-            load_toml: Parse TOML strings from environment variables
+        :param config_class: The Config class to adapt
+        :param env_prefix: Global prefix for all environment variables
+        :param load_json: Parse JSON strings from environment variables
+        :param load_toml: Parse TOML strings from environment variables
         """
         self.config_class = config_class
         self.env_prefix = env_prefix or config_class.__config_prefix__
@@ -41,11 +40,8 @@ class EnvironmentAdapter:
         """
         Extract configuration from environment variables.
 
-        Args:
-            environ: Environment dictionary (defaults to os.environ)
-
-        Returns:
-            Dictionary of configuration values
+        :param environ: Environment dictionary (defaults to os.environ)
+        :returns: Dictionary of configuration values
         """
         if environ is None:
             environ = dict(os.environ)
@@ -120,12 +116,9 @@ class EnvironmentAdapter:
         """
         Parse environment variable value based on field metadata.
 
-        Args:
-            raw_value: Raw string from environment
-            field: Field descriptor with metadata
-
-        Returns:
-            Parsed value
+        :param raw_value: Raw string from environment
+        :param field: Field descriptor with metadata
+        :returns: Parsed value
         """
         # Handle empty strings
         if not raw_value:
@@ -181,8 +174,7 @@ class EnvironmentAdapter:
         """
         Get a mapping of field names to environment variable names.
 
-        Returns:
-            Dictionary mapping field names to env var names
+        :returns: Dictionary mapping field names to env var names
         """
         mapping = {}
 

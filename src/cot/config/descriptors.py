@@ -24,12 +24,19 @@ class FieldDescriptor:
     required: bool = False
 
     def __set_name__(self, owner: type, name: str) -> None:
-        """Set the field name when attached to a class."""
+        """Set the field name when attached to a class.
+
+        :param owner: The class that owns this descriptor
+        :param name: The name of the attribute
+        """
         if self.name is None:
             self.name = name
 
     def get_default(self) -> Any:
-        """Get the default value for this field."""
+        """Get the default value for this field.
+
+        :returns: The default value or result of default_factory
+        """
         if self.default_factory is not None:
             return self.default_factory()
         if self.default is not MISSING:
@@ -37,7 +44,12 @@ class FieldDescriptor:
         return None
 
     def validate(self, value: Any) -> Any:
-        """Validate the value against choices if specified."""
+        """Validate the value against choices if specified.
+
+        :param value: The value to validate
+        :returns: The validated value
+        :raises ValueError: If value is not in allowed choices
+        """
         if self.choices is not None and value not in self.choices:
             raise ValueError(
                 f"Invalid value {value!r} for {self.name}. "
@@ -55,7 +67,11 @@ class SubConfigDescriptor:
     name: str | None = None
 
     def __set_name__(self, owner: type, name: str) -> None:
-        """Set the sub-config name when attached to a class."""
+        """Set the sub-config name when attached to a class.
+
+        :param owner: The class that owns this descriptor
+        :param name: The name of the attribute
+        """
         if self.name is None:
             self.name = name
 
@@ -124,18 +140,16 @@ def field(
     """
     Create a field descriptor for configuration attributes.
 
-    Args:
-        from_parent: Marker to inherit value from parent config
-        default: Default value for the field
-        default_factory: Callable to create default value
-        help: Help text for the field
-        choices: Valid choices for the field value
-        metavar: Metavar for CLI argument
-        action: CLI action type (e.g., 'append', 'store_true')
-        required: Whether the field is required
-
-    Returns:
-        FieldDescriptor instance
+    :param from_parent: Marker to inherit value from parent config
+    :param default: Default value for the field
+    :param default_factory: Callable to create default value
+    :param help: Help text for the field
+    :param choices: Valid choices for the field value
+    :param metavar: Metavar for CLI argument
+    :param action: CLI action type (e.g., 'append', 'store_true')
+    :param required: Whether the field is required
+    :returns: FieldDescriptor instance
+    :raises ValueError: If both default and default_factory are specified
     """
     if default_factory is not None and default is not MISSING:
         raise ValueError("Cannot specify both default and default_factory")
@@ -162,12 +176,9 @@ def sub_config(
     """
     Create a sub-configuration descriptor.
 
-    Args:
-        config_class: The configuration class for the sub-config
-        primary: The primary field name for CLI mapping
-
-    Returns:
-        SubConfigDescriptor instance
+    :param config_class: The configuration class for the sub-config
+    :param primary: The primary field name for CLI mapping
+    :returns: SubConfigDescriptor instance
     """
     if config_class is None:
         # This will be filled in by the metaclass

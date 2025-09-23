@@ -37,12 +37,11 @@ class ConfigLoader:
         """
         Initialize the configuration loader.
 
-        Args:
-            config_class: The Config class to load
-            env_prefix: Prefix for environment variables
-            enable_env: Whether to load from environment variables
-            enable_cli: Whether to support CLI arguments
-            debug: Enable debug tracking of sources
+        :param config_class: The Config class to load
+        :param env_prefix: Prefix for environment variables
+        :param enable_env: Whether to load from environment variables
+        :param enable_cli: Whether to support CLI arguments
+        :param debug: Enable debug tracking of sources
         """
         self.config_class = config_class
         self.env_prefix = env_prefix or config_class.__config_prefix__
@@ -74,13 +73,10 @@ class ConfigLoader:
         """
         Load configuration from a file.
 
-        Args:
-            path: Path to the configuration file
-            required: Whether the file must exist
-            merge: Whether to merge with existing file data
-
-        Returns:
-            Self for chaining
+        :param path: Path to the configuration file
+        :param required: Whether the file must exist
+        :param merge: Whether to merge with existing file data
+        :returns: Self for chaining
         """
         path = Path(path)
 
@@ -105,12 +101,9 @@ class ConfigLoader:
         """
         Load configuration from multiple files.
 
-        Args:
-            *paths: Paths to configuration files
-            required: Whether files must exist
-
-        Returns:
-            Self for chaining
+        :param paths: Paths to configuration files
+        :param required: Whether files must exist
+        :returns: Self for chaining
         """
         for path in paths:
             self.load_file(path, required=required)
@@ -120,11 +113,8 @@ class ConfigLoader:
         """
         Load configuration from environment variables.
 
-        Args:
-            environ: Environment dictionary (defaults to os.environ)
-
-        Returns:
-            Self for chaining
+        :param environ: Environment dictionary (defaults to os.environ)
+        :returns: Self for chaining
         """
         if not self.enable_env:
             return self
@@ -151,12 +141,9 @@ class ConfigLoader:
         """
         Load configuration from command-line arguments.
 
-        Args:
-            args: Arguments to parse (defaults to sys.argv)
-            parser: Custom ArgumentParser to use
-
-        Returns:
-            Self for chaining
+        :param args: Arguments to parse (defaults to sys.argv)
+        :param parser: Custom ArgumentParser to use
+        :returns: Self for chaining
         """
         if not self.enable_cli:
             return self
@@ -180,11 +167,8 @@ class ConfigLoader:
         """
         Set configuration values programmatically.
 
-        Args:
-            **values: Configuration values to set
-
-        Returns:
-            Self for chaining
+        :param values: Configuration values to set
+        :returns: Self for chaining
         """
         self._merge_data(self._code_data, values)
 
@@ -202,13 +186,10 @@ class ConfigLoader:
         """
         Get or create the ArgumentParser for CLI configuration.
 
-        Args:
-            prog: Program name
-            description: Program description
-            **kwargs: Additional ArgumentParser arguments
-
-        Returns:
-            Configured ArgumentParser
+        :param prog: Program name
+        :param description: Program description
+        :param kwargs: Additional ArgumentParser arguments
+        :returns: Configured ArgumentParser
         """
         if self._cli_parser is None:
             if self._cli_adapter is None:
@@ -226,8 +207,7 @@ class ConfigLoader:
         """
         Build the configuration instance from all loaded sources.
 
-        Returns:
-            Configured instance with all sources merged
+        :returns: Configured instance with all sources merged
         """
         # Merge all data sources in order of precedence
         merged_data: dict[str, Any] = {}
@@ -325,11 +305,8 @@ class ConfigLoader:
         """
         Get a debug report of configuration sources.
 
-        Returns:
-            Human-readable debug report
-
-        Raises:
-            RuntimeError: If debug mode is not enabled
+        :returns: Human-readable debug report
+        :raises RuntimeError: If debug mode is not enabled
         """
         if not self._debug_info:
             raise RuntimeError("Debug mode is not enabled. Set debug=True in ConfigLoader")
@@ -349,9 +326,8 @@ class LazyConfigLoader:
         """
         Initialize the lazy loader.
 
-        Args:
-            config_class: The Config class to load
-            **kwargs: Arguments for ConfigLoader
+        :param config_class: The Config class to load
+        :param kwargs: Arguments for ConfigLoader
         """
         self.config_class = config_class
         self.loader_kwargs = kwargs

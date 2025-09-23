@@ -14,11 +14,8 @@ def get_debug_info(config: Config) -> ConfigDebugInfo | None:
     """
     Get debug information for a configuration instance.
 
-    Args:
-        config: The configuration instance
-
-    Returns:
-        Debug information if available, None otherwise
+    :param config: The configuration instance
+    :returns: Debug information if available, None otherwise
     """
     return getattr(config, "_debug_info", None)
 
@@ -27,12 +24,9 @@ def get_value_source(config: Config, field_name: str) -> ConfigValue | None:
     """
     Get the source information for a specific configuration field.
 
-    Args:
-        config: The configuration instance
-        field_name: The name of the field
-
-    Returns:
-        ConfigValue with source information if available
+    :param config: The configuration instance
+    :param field_name: The name of the field
+    :returns: ConfigValue with source information if available
     """
     debug_info = get_debug_info(config)
     if debug_info:
@@ -44,14 +38,9 @@ def get_config_report(config: Config) -> str:
     """
     Generate a debug report for a configuration instance.
 
-    Args:
-        config: The configuration instance
-
-    Returns:
-        Human-readable debug report
-
-    Raises:
-        ValueError: If no debug information is available
+    :param config: The configuration instance
+    :returns: Human-readable debug report
+    :raises ValueError: If no debug information is available
     """
     debug_info = get_debug_info(config)
     if not debug_info:
@@ -66,11 +55,8 @@ def get_non_default_values(config: Config) -> dict[str, Any]:
     """
     Get all configuration values that are not using defaults.
 
-    Args:
-        config: The configuration instance
-
-    Returns:
-        Dictionary of field names to values for non-default values
+    :param config: The configuration instance
+    :returns: Dictionary of field names to values for non-default values
     """
     debug_info = get_debug_info(config)
     if not debug_info:
@@ -86,11 +72,8 @@ def get_overridden_values(config: Config) -> dict[str, Any]:
     """
     Get all configuration values that were overridden from previous sources.
 
-    Args:
-        config: The configuration instance
-
-    Returns:
-        Dictionary of field names to values for overridden values
+    :param config: The configuration instance
+    :returns: Dictionary of field names to values for overridden values
     """
     debug_info = get_debug_info(config)
     if not debug_info:
@@ -106,12 +89,9 @@ def is_default(config: Config, field_name: str) -> bool:
     """
     Check if a configuration field is using its default value.
 
-    Args:
-        config: The configuration instance
-        field_name: The name of the field
-
-    Returns:
-        True if the field is using its default value
+    :param config: The configuration instance
+    :param field_name: The name of the field
+    :returns: True if the field is using its default value
     """
     value_info = get_value_source(config, field_name)
     if value_info:
@@ -125,12 +105,9 @@ def was_overridden(config: Config, field_name: str) -> bool:
     """
     Check if a configuration field was overridden from a previous source.
 
-    Args:
-        config: The configuration instance
-        field_name: The name of the field
-
-    Returns:
-        True if the field was overridden
+    :param config: The configuration instance
+    :param field_name: The name of the field
+    :returns: True if the field was overridden
     """
     value_info = get_value_source(config, field_name)
     if value_info:
@@ -142,11 +119,8 @@ def get_load_order(config: Config) -> list[tuple[str, str | None]]:
     """
     Get the order in which configuration sources were loaded.
 
-    Args:
-        config: The configuration instance
-
-    Returns:
-        List of (source_type, location) tuples
+    :param config: The configuration instance
+    :returns: List of (source_type, location) tuples
     """
     debug_info = get_debug_info(config)
     if not debug_info:
@@ -159,12 +133,9 @@ def get_source_location(config: Config, field_name: str) -> str | None:
     """
     Get the location where a configuration value came from.
 
-    Args:
-        config: The configuration instance
-        field_name: The name of the field
-
-    Returns:
-        Location string (file path, env var name, etc.) or None
+    :param config: The configuration instance
+    :param field_name: The name of the field
+    :returns: Location string (file path, env var name, etc.) or None
     """
     value_info = get_value_source(config, field_name)
     if value_info:
@@ -176,12 +147,9 @@ def get_override_chain(config: Config, field_name: str) -> list[str]:
     """
     Get the chain of overrides for a configuration field.
 
-    Args:
-        config: The configuration instance
-        field_name: The name of the field
-
-    Returns:
-        List of source descriptions from most recent to oldest
+    :param config: The configuration instance
+    :param field_name: The name of the field
+    :returns: List of source descriptions from most recent to oldest
     """
     value_info = get_value_source(config, field_name)
     if value_info:

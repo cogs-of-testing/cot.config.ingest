@@ -11,11 +11,8 @@ def load_json(path: Path | str) -> dict[str, Any]:
     """
     Load configuration from a JSON file.
 
-    Args:
-        path: Path to JSON file
-
-    Returns:
-        Parsed configuration dictionary
+    :param path: Path to JSON file
+    :returns: Parsed configuration dictionary
     """
     path = Path(path)
     with path.open("r") as f:
@@ -26,11 +23,8 @@ def load_toml(path: Path | str) -> dict[str, Any]:
     """
     Load configuration from a TOML file.
 
-    Args:
-        path: Path to TOML file
-
-    Returns:
-        Parsed configuration dictionary
+    :param path: Path to TOML file
+    :returns: Parsed configuration dictionary
     """
     try:
         import tomllib  # type: ignore
@@ -46,14 +40,9 @@ def load_yaml(path: Path | str) -> dict[str, Any]:
     """
     Load configuration from a YAML file.
 
-    Args:
-        path: Path to YAML file
-
-    Returns:
-        Parsed configuration dictionary
-
-    Raises:
-        ImportError: If PyYAML is not installed
+    :param path: Path to YAML file
+    :returns: Parsed configuration dictionary
+    :raises ImportError: If PyYAML is not installed
     """
     try:
         import yaml  # type: ignore
@@ -69,14 +58,9 @@ def load_file(path: Path | str) -> dict[str, Any]:
     """
     Load configuration from a file, detecting format by extension.
 
-    Args:
-        path: Path to configuration file
-
-    Returns:
-        Parsed configuration dictionary
-
-    Raises:
-        ValueError: If file format is not supported
+    :param path: Path to configuration file
+    :returns: Parsed configuration dictionary
+    :raises ValueError: If file format is not supported
     """
     path = Path(path)
     suffix = path.suffix.lower()
@@ -95,10 +79,9 @@ def save_json(data: dict[str, Any], path: Path | str, indent: int = 2) -> None:
     """
     Save configuration to a JSON file.
 
-    Args:
-        data: Configuration dictionary
-        path: Path to save to
-        indent: Indentation level
+    :param data: Configuration dictionary
+    :param path: Path to save to
+    :param indent: Indentation level
     """
     path = Path(path)
     with path.open("w") as f:
@@ -109,12 +92,9 @@ def save_toml(data: dict[str, Any], path: Path | str) -> None:
     """
     Save configuration to a TOML file.
 
-    Args:
-        data: Configuration dictionary
-        path: Path to save to
-
-    Raises:
-        ImportError: If tomli_w is not installed
+    :param data: Configuration dictionary
+    :param path: Path to save to
+    :raises ImportError: If tomli_w is not installed
     """
     try:
         import tomli_w  # type: ignore
@@ -130,12 +110,9 @@ def save_yaml(data: dict[str, Any], path: Path | str) -> None:
     """
     Save configuration to a YAML file.
 
-    Args:
-        data: Configuration dictionary
-        path: Path to save to
-
-    Raises:
-        ImportError: If PyYAML is not installed
+    :param data: Configuration dictionary
+    :param path: Path to save to
+    :raises ImportError: If PyYAML is not installed
     """
     try:
         import yaml  # type: ignore

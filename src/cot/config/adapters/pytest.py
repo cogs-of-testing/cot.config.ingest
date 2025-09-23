@@ -50,8 +50,7 @@ class ConfigToPytestAdapter:
         """
         Initialize the adapter.
 
-        Args:
-            config_class: The Config class to adapt
+        :param config_class: The Config class to adapt
         """
         self.config_class = config_class
         self.prefix = config_class.__config_prefix__
@@ -60,9 +59,8 @@ class ConfigToPytestAdapter:
         """
         Register the configuration with a pytest Parser.
 
-        Args:
-            parser: The pytest Parser instance
-            group_name: Optional group name for options
+        :param parser: The pytest Parser instance
+        :param group_name: Optional group name for options
         """
         group = parser.getgroup(group_name) if group_name else parser
 
@@ -191,11 +189,8 @@ class ConfigToPytestAdapter:
         """
         Extract configuration values from parsed arguments.
 
-        Args:
-            parsed_args: Parsed arguments from pytest
-
-        Returns:
-            Dictionary of configuration values
+        :param parsed_args: Parsed arguments from pytest
+        :returns: Dictionary of configuration values
         """
         config_data: dict[str, Any] = {}
 
