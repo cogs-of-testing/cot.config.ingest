@@ -111,9 +111,10 @@ def test_argparse_with_subconfig():
 
     assert config_data["name"] == "myserver"
     assert "db" in config_data
-    assert isinstance(config_data["db"], DatabaseConfig)
-    assert config_data["db"].host == "dbserver"
-    assert config_data["db"].port == 5433
+    # Sub-config should be a dict, not an instance (for from_parent support)
+    assert isinstance(config_data["db"], dict)
+    assert config_data["db"]["host"] == "dbserver"
+    assert config_data["db"]["port"] == 5433
 
 
 def test_argparse_field_dest():

@@ -80,7 +80,7 @@ class Config(metaclass=ConfigMeta):
     __config_prefix__: ClassVar[str | None] = None
 
     def __init__(self, **kwargs: Any):
-        # Initialize fields with defaults
+        # Phase 1: Initialize all regular fields (not sub-configs)
         for field_name, field_obj in self.__config_fields__.items():
             if isinstance(field_obj, FieldDescriptor):
                 if field_name in kwargs:
@@ -88,15 +88,27 @@ class Config(metaclass=ConfigMeta):
                 else:
                     value = field_obj.get_default()
                 setattr(self, field_name, value)
-            elif isinstance(field_obj, SubConfigDescriptor):
+
+        # Phase 2: Initialize sub-configs (after all parent fields are set)
+        # This ensures parent values are available for propagation
+        for field_name, field_obj in self.__config_fields__.items():
+            if isinstance(field_obj, SubConfigDescriptor):
                 if field_name in kwargs:
                     value = kwargs[field_name]
+                    # Convert dict to sub-config instance if needed
+                    if isinstance(value, dict):
+                        # Merge parent values into sub-config kwargs
+                        sub_kwargs = self._merge_parent_values(value, field_obj.config_class)
+                        value = field_obj.config_class(**sub_kwargs)
+                    # If it's already an instance, use as-is
                 else:
-                    # Create empty sub-config
-                    value = field_obj.config_class()
+                    # Create sub-config with parent values
+                    sub_kwargs = self._merge_parent_values({}, field_obj.config_class)
+                    value = field_obj.config_class(**sub_kwargs)
+
                 setattr(self, field_name, value)
 
-        # Set any additional kwargs not in fields
+        # Phase 3: Set any additional kwargs not in fields
         for name, value in kwargs.items():
             if name not in self.__config_fields__:
                 setattr(self, name, value)
@@ -107,6 +119,32 @@ class Config(metaclass=ConfigMeta):
 
     def __eq__(self, other: object) -> bool:
         return isinstance(other, self.__class__) and vars(self) == vars(other)
+
+    def _merge_parent_values(self, sub_kwargs: dict[str, Any], sub_config_class: type[Config]) -> dict[str, Any]:
+        """
+        Merge parent values into sub-config kwargs for fields marked with from_parent.
+
+        :param sub_kwargs: Explicit kwargs provided for the sub-config
+        :param sub_config_class: The sub-configuration class
+        :returns: Updated kwargs with from_parent values from parent config
+        """
+        # Start with provided kwargs
+        result = sub_kwargs.copy()
+
+        # Get sub-config's field descriptors
+        sub_fields = sub_config_class.__config_fields__
+
+        # Process all from_parent fields
+        for field_name, field_obj in sub_fields.items():
+            if isinstance(field_obj, FieldDescriptor) and field_obj.from_parent:
+                # This field should get its value from parent if not explicitly provided
+                if field_name not in result:
+                    # Look for the value in the parent (self)
+                    if hasattr(self, field_name):
+                        parent_value = getattr(self, field_name)
+                        result[field_name] = parent_value
+
+        return result
 
     @classmethod
     def from_data(

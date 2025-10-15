@@ -173,7 +173,7 @@ class ConfigToArgparseAdapter:
                             sub_data[sub_field_name] = value
 
                 if sub_data:
-                    config_data[field_name] = field_obj.config_class(**sub_data)
+                    config_data[field_name] = sub_data
 
         return config_data
 
