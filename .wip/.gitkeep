@@ -1,0 +1,28 @@
+# .wip Directory
+
+This directory is for temporary LLM-supported work in progress.
+
+## Purpose
+
+- Store planning documents for ongoing development
+- Track incremental implementation progress
+- Keep notes and design decisions during LLM-assisted coding sessions
+- Maintain context between sessions
+
+## Contents
+
+Files in this directory are:
+- **Temporary:** May be moved, renamed, or deleted as work progresses
+- **Informal:** Not necessarily final documentation
+- **Session-specific:** Created during LLM coding sessions for context
+
+## When to Clean Up
+
+Consider moving content out of .wip when:
+- A feature is completed and documented properly
+- Planning documents are no longer needed
+- Information should be in main docs or README
+
+## Current Files
+
+- `incremental-implementation-plan.md` - Phased implementation plan for achieving project goals
