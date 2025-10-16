@@ -5,10 +5,11 @@
 When building configurations from multiple sources (CLI args, env vars, config files), we need to:
 
 1. **Track origins** - Know exactly where each value came from
-2. **Debug merging** - Understand how values were combined/overridden
-3. **Express partial configs** - Represent incomplete configuration from a single source
-4. **Trace inheritance** - Show how `from_parent` values propagate
-5. **Explain resolution** - Show the sequence of overrides that led to final value
+2. **Debug merging** - Understand how values were combined in load order
+3. **Express partial configs** - Represent incomplete configuration from a single loader
+4. **Explain resolution** - Show which loader provided the final value
+
+Note: `from_parent` inheritance is a Config initialization concern, not a fragment concern.
 
 ## Current State
 
@@ -26,12 +27,12 @@ The project already has basic origin tracking in `src/cot/config/source_info.py`
 
 ### Current Limitations ❌
 
-1. **No fragment representation** - Can't represent partial/incomplete configs
-2. **Limited inheritance tracking** - Doesn't show `from_parent` propagation
-3. **No merge visualization** - Hard to see how fragments combine
-4. **Single-field focus** - Tracks fields independently, not as coherent fragments
-5. **No structured API** - Debug info is mainly for reporting, not programmatic use
-6. **No diff support** - Can't compare fragments or show what changed
+1. **No fragment representation** - Can't represent partial/incomplete configs from a single loader
+2. **No merge visualization** - Hard to see how fragments combine in load order
+3. **Single-field focus** - Tracks fields independently, not as coherent fragments
+4. **No structured API** - Debug info is mainly for reporting, not programmatic use
+5. **No diff support** - Can't compare fragments or show what changed
+6. **Enum-based origins** - SourceType enum limits extensibility for custom loaders
 
 ---
 
@@ -39,91 +40,119 @@ The project already has basic origin tracking in `src/cot/config/source_info.py`
 
 ### Core Concept
 
-A **ConfigFragment** represents a partial configuration obtained from a single source, with full metadata about its origin and how it should merge with other fragments.
+A **ConfigFragment** represents a partial configuration obtained from a single loader. Fragments are deep-merged in the order they are loaded - later fragments override earlier ones. There is no merge mode - loader order decides everything.
 
 ```python
 @dataclass
 class ConfigFragment:
-    """A partial configuration from a single source."""
+    """
+    A partial configuration from a single loader.
 
-    # What values this fragment contains
+    Fragments contain whatever data the loader extracted,
+    which may be incomplete (not all config fields present).
+    """
+
+    # What values this fragment contains (can be partial)
     data: dict[str, Any]
 
     # Where this fragment came from
     origin: FragmentOrigin
 
-    # How this fragment should merge with others
-    merge_mode: MergeMode = MergeMode.OVERRIDE
-
-    # Parent fragment that spawned this (for sub-configs)
-    parent: ConfigFragment | None = None
-
-    # Path in the config hierarchy (e.g., "logging.cli")
-    path: tuple[str, ...] = ()
-
-    # Metadata
+    # When this fragment was created
     timestamp: datetime = field(default_factory=datetime.now)
-    source_hash: str | None = None  # for change detection
+
+    # Hash of source for change detection (optional)
+    source_hash: str | None = None
 ```
 
 ### Fragment Origins
 
+**Design principle:** Use the actual loader class/type instead of an enum. This avoids maintaining a centralized enum and allows custom loaders to be tracked naturally.
+
 ```python
-class FragmentOriginType(Enum):
-    """Type of origin for a configuration fragment."""
-
-    # Direct sources
-    CLI_ARGS = "cli_args"
-    ENV_VARS = "env_vars"
-    CONFIG_FILE = "config_file"
-    CODE = "code"
-
-    # Computed sources
-    DEFAULT_VALUES = "defaults"
-    FROM_PARENT = "from_parent"
-    MERGED = "merged"
-
-    # Special
-    OVERRIDE = "override"
-    FALLBACK = "fallback"
-
 @dataclass
 class FragmentOrigin:
-    """Detailed origin information for a fragment."""
+    """Information about where a fragment came from."""
 
-    origin_type: FragmentOriginType
+    # The loader that created this fragment (the type, not an enum)
+    loader_type: type  # e.g., EnvironmentAdapter, ConfigToArgparseAdapter, FileLoader
 
     # Specific location details
-    location: str | None = None  # file path, env prefix, etc.
-    line_range: tuple[int, int] | None = None  # for files
-    timestamp: datetime | None = None
+    location: str | None = None  # file path, env prefix, CLI command, etc.
 
-    # For merged fragments
-    source_fragments: list[ConfigFragment] = field(default_factory=list)
+    # For file sources
+    file_path: Path | None = None
+    line_range: tuple[int, int] | None = None
 
-    # For inherited values
-    inherited_from: str | None = None  # field path
+    # For environment sources
+    env_prefix: str | None = None
+    env_vars_used: list[str] = field(default_factory=list)
+
+    # For CLI sources
+    cli_args: list[str] = field(default_factory=list)
+
+    # Optional: reference to loader instance for advanced introspection
+    loader_instance: Any = None
 
     def __str__(self) -> str:
-        if self.location:
+        """Human-readable description."""
+        loader_name = self.loader_type.__name__
+
+        if self.file_path:
             if self.line_range:
-                return f"{self.origin_type.value}:{self.location}:{self.line_range[0]}-{self.line_range[1]}"
-            return f"{self.origin_type.value}:{self.location}"
-        return self.origin_type.value
+                return f"{loader_name}:{self.file_path}:{self.line_range[0]}-{self.line_range[1]}"
+            return f"{loader_name}:{self.file_path}"
+
+        if self.env_prefix:
+            return f"{loader_name}:{self.env_prefix}_*"
+
+        if self.cli_args:
+            return f"{loader_name}:{' '.join(self.cli_args)}"
+
+        return loader_name
 ```
 
-### Merge Modes
+### Merging Strategy (Always Deep Merge, First Wins)
+
+**There is only one merge strategy: deep merge, where the FIRST loader with a value provides it. Defaults come LAST.**
+
+Load order: **CLI → ENV → FILE → DEFAULTS**
+
+- First fragment with a value wins
+- For dictionaries: recursive merge (first fragment with each key wins)
+- For scalars: first value wins
+- Defaults are loaded last as a fallback
 
 ```python
-class MergeMode(Enum):
-    """How a fragment should be merged with others."""
+def deep_merge_first_wins(
+    fragments: list[ConfigFragment]
+) -> dict[str, Any]:
+    """
+    Deep merge fragments where FIRST wins.
 
-    OVERRIDE = "override"      # Replace existing values
-    MERGE_DEEP = "merge_deep"  # Deep merge dicts, concat lists
-    APPEND = "append"          # Only for list values
-    REQUIRE = "require"        # Must be set (validation)
-    FALLBACK = "fallback"      # Only use if not already set
+    Load order: CLI → ENV → FILE → DEFAULTS
+    The first fragment that provides a value wins.
+    """
+    # Reverse to process from last to first
+    result: dict[str, Any] = {}
+
+    for fragment in reversed(fragments):
+        result = _deep_merge_into(fragment.data, result)
+
+    return result
+
+def _deep_merge_into(source: dict[str, Any], target: dict[str, Any]) -> dict[str, Any]:
+    """Merge source into target, where source values take precedence."""
+    result = target.copy()
+    for key, value in source.items():
+        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+            result[key] = _deep_merge_into(value, result[key])
+        else:
+            result[key] = value
+    return result
 ```
+
+**Defaults are just the last fragment** - they provide values only if no earlier loader provided them.
 
 ---
 
