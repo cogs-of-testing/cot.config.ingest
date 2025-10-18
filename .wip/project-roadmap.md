@@ -1,4 +1,4 @@
-# Incremental Implementation Plan for cot.config.ingest
+# Project Roadmap for cot.config.ingest
 
 ## Project Goal
 
@@ -243,7 +243,29 @@ class Config:
 
 ---
 
-## Phase 7: Advanced Features (Future)
+## Phase 7: Configuration Fragments System
+
+**Status:** 🚧 In Design/Implementation
+
+**Goal:** Implement origin tracking and debugging for configuration loading
+
+Configuration fragments provide complete visibility into where configuration values come from across multiple sources (CLI, environment, files, defaults). This system enables powerful debugging and validation capabilities.
+
+**Documentation:**
+- Design specification: [config-fragments-design.md](config-fragments-design.md)
+- Implementation plan: [fragments-implementation-plan.md](fragments-implementation-plan.md)
+- ConfigLoader integration: [config-loading-integration-plan.md](config-loading-integration-plan.md)
+
+**Key capabilities when complete:**
+- Track origin of every configuration value
+- Visualize override chains across sources
+- Debug configuration loading issues
+- Validate required fields
+- Compare configurations
+
+---
+
+## Phase 8: Advanced Features (Future)
 
 **Status:** 💡 Ideas for future consideration
 
@@ -302,6 +324,11 @@ For the project to achieve its stated goals:
 - from_parent field inheritance working
 - 86 tests passing
 - README example functional
+
+**Phase 7: 🚧 IN PROGRESS** (Configuration Fragments)
+- Design complete
+- Implementation planned
+- See fragment-specific documents for details
 
 **Next recommended phase:** Phase 2 (Multiple inheritance) or Phase 6 (Documentation)
 

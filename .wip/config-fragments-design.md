@@ -35,6 +35,12 @@ Each `LoadedData` includes `LoaderInfo` metadata (loader type, location, etc.)
 ### Key Insight
 The Config class structure and field configuration drive the transformation. Mappers don't invent conventions; they query the field API for the proper name in each namespace.
 
+This means:
+- Field descriptors can specify their own naming in each namespace (env vars, CLI args, etc.)
+- Mappers use the field configuration API (`field_to_env_name`, `field_to_cli_name`) to get the correct names
+- This allows fields to override default naming conventions when needed
+- The separation of concerns is maintained: loaders load, configs define structure, mappers translate
+
 ---
 
 ## Core Data Structures
@@ -541,6 +547,25 @@ class MergedFragment:
    - Human-readable loader descriptions
 
 ---
+
+## Integration Approach
+
+Debug information is accessed via a clean API rather than attaching internal attributes to config instances:
+
+```python
+from cot.config.fragments import get_debug_info
+
+# Load config with debug enabled
+config = MyConfig.load(debug=True)
+
+# Access debug info through API
+debug = get_debug_info(config)
+if debug:
+    print(debug.get_origin("database.host"))
+    print(debug.get_all_origins("debug"))
+```
+
+See [config-loading-integration-plan.md](config-loading-integration-plan.md) for complete integration details.
 
 ## Benefits
 

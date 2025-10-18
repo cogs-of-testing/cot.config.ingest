@@ -14,6 +14,8 @@ See [config-fragments-design.md](config-fragments-design.md) for the complete de
 
 **Goal**: Implement the basic fragment data structures
 
+See [config-fragments-design.md](config-fragments-design.md#core-data-structures) for specifications.
+
 #### Tasks
 - [ ] Create `src/cot/config/fragments.py` module
 - [ ] Implement `LoadedData` dataclass
@@ -38,6 +40,8 @@ See [config-fragments-design.md](config-fragments-design.md) for the complete de
 ### Phase 2: Field Path Mappers ✨
 
 **Goal**: Implement mappers that query field configuration for name mappings
+
+See [config-fragments-design.md](config-fragments-design.md#field-path-mapping) for design details.
 
 #### Tasks
 - [ ] Define `FieldPathMapper` Protocol in `fragments.py`
@@ -134,7 +138,7 @@ See [config-fragments-design.md](config-fragments-design.md) for the complete de
 
 ### Phase 5: Adapter Integration ✨
 
-**Goal**: Add fragment extraction to existing adapters
+**Goal**: Add fragment support to existing adapters
 
 #### Tasks
 - [ ] Add `load_data()` method to `EnvironmentAdapter`
