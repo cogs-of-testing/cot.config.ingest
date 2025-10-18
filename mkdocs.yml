@@ -1,0 +1,84 @@
+site_name: cot.config.ingest
+site_description: Type annotations and helpers for configuration ingestion
+site_url: https://github.com/cogs-of-testing/cot.config.ingest
+repo_url: https://github.com/cogs-of-testing/cot.config.ingest
+repo_name: cot.config.ingest
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            show_source: true
+            show_root_heading: true
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.snippets
+  - pymdownx.details
+  - admonition
+  - toc:
+      permalink: true
+  - pymdownx.tabbed:
+      alternate_style: true
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Installation: getting-started/installation.md
+    - Quick Start: getting-started/quickstart.md
+    - Inspiration: getting-started/inspiration.md
+  - User Guide:
+    - Basic Usage: guide/basic-usage.md
+    - Configuration Sources: guide/configuration-sources.md
+    - Field Inheritance: guide/field-inheritance.md
+    - Sub-Configurations: guide/sub-configurations.md
+  - API Reference:
+    - Config Class: api/config.md
+    - Field Functions: api/fields.md
+    - Adapters: api/adapters.md
+    - Loaders: api/loaders.md
+  - Examples:
+    - Simple CLI App: examples/simple-cli.md
+    - Multi-Source Config: examples/multi-source.md
+    - Pytest Plugin: examples/pytest-plugin.md
+  - Design:
+    - Architecture: design/architecture.md
+    - Configuration Fragments: design/fragments.md
+    - Roadmap: design/roadmap.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/cogs-of-testing/cot.config.ingest
