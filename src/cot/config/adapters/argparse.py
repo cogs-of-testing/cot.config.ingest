@@ -22,7 +22,7 @@ class ConfigToArgparseAdapter:
         :param config_class: The Config class to adapt
         """
         self.config_class = config_class
-        self.prefix = config_class.__config_prefix__
+        self.prefix = config_class._get_fields_config().prefix
 
     def add_to_parser(
         self,
@@ -38,7 +38,7 @@ class ConfigToArgparseAdapter:
         group = parser.add_argument_group(group_name) if group_name else parser
 
         # Process each field in the config
-        for field_name, field_obj in self.config_class.__config_fields__.items():
+        for field_name, field_obj in self.config_class._get_fields_config().items():
             if isinstance(field_obj, FieldDescriptor):
                 self._add_field_to_parser(group, field_name, field_obj)
             elif isinstance(field_obj, SubConfigDescriptor):
@@ -100,7 +100,7 @@ class ConfigToArgparseAdapter:
         """Add a sub-configuration to the parser."""
         # If there's a primary field, add it with the sub-config's name
         if subconfig.primary:
-            primary_field = subconfig.config_class.__config_fields__.get(
+            primary_field = subconfig.config_class._get_fields_config().get(
                 subconfig.primary
             )
             if isinstance(primary_field, FieldDescriptor):
@@ -108,7 +108,7 @@ class ConfigToArgparseAdapter:
                 self._add_field_to_parser(group, field_name, primary_field)
 
         # Add all fields from sub-config with prefixed names
-        sub_fields = subconfig.config_class.__config_fields__.items()
+        sub_fields = subconfig.config_class._get_fields_config().items()
         for sub_field_name, sub_field in sub_fields:
             if isinstance(sub_field, FieldDescriptor):
                 # Skip the primary field if already added
@@ -134,7 +134,7 @@ class ConfigToArgparseAdapter:
         """
         config_data: dict[str, Any] = {}
 
-        for field_name, field_obj in self.config_class.__config_fields__.items():
+        for field_name, field_obj in self.config_class._get_fields_config().items():
             dest = self._field_to_dest(field_name)
 
             if hasattr(args, dest):
@@ -160,7 +160,7 @@ class ConfigToArgparseAdapter:
                             sub_data[field_obj.primary] = value
 
                 # Check for prefixed fields
-                for sub_field_name in field_obj.config_class.__config_fields__:
+                for sub_field_name in field_obj.config_class._get_fields_config():
                     if sub_field_name == field_obj.primary:
                         continue
 

@@ -23,65 +23,90 @@ Inputs: TypeAlias = Sequence[InputData | tuple[Origin, InputData]]
 NormalizedInputs: TypeAlias = Sequence[tuple[Origin, InputData]]
 
 
-class ConfigMeta(type):
-    """Metaclass for configuration classes to process field descriptors."""
+class FieldsConfig(dict[str, FieldDescriptor | SubConfigDescriptor]):
+    """Container for config fields with prefix information."""
 
-    def __new__(
-        mcs,
-        name: str,
-        bases: tuple[type, ...],
-        namespace: dict[str, Any],
-        **kwargs: Any,
-    ) -> ConfigMeta:
-        # Extract prefix if provided
-        prefix = kwargs.pop("prefix", None)
+    def __init__(
+        self,
+        fields: dict[str, FieldDescriptor | SubConfigDescriptor],
+        prefix: str | None = None,
+    ):
+        """
+        Initialize FieldsConfig.
 
-        # Collect field descriptors from class and bases
+        :param fields: Dictionary of field descriptors
+        :param prefix: Optional prefix for this config
+        """
+        super().__init__(fields)
+        self.prefix = prefix
+
+
+def get_fields_config(config_class: type) -> FieldsConfig:
+    """
+    Get the FieldsConfig from a Config class.
+
+    :param config_class: The Config class to extract from
+    :returns: FieldsConfig instance
+    """
+    return getattr(config_class, "_Config__fields_config")
+
+
+@typing_extensions.dataclass_transform()
+class Config:
+    """Base class for configuration objects."""
+
+    __fields_config: ClassVar[FieldsConfig] = FieldsConfig({})
+
+    @classmethod
+    def _get_fields_config(cls) -> FieldsConfig:
+        """
+        Get the FieldsConfig for this class.
+
+        Helper to avoid name mangling issues when accessing from other classes.
+        """
+        return cls.__fields_config
+
+    def __init_subclass__(cls, prefix: str | None = None, **kwargs: Any) -> None:
+        """Process configuration class at definition time."""
+        super().__init_subclass__(**kwargs)
+
+        # Collect field descriptors from bases and current class
         fields: dict[str, FieldDescriptor | SubConfigDescriptor] = {}
 
         # Inherit fields from base classes
-        for base in bases:
-            if hasattr(base, "__config_fields__"):
-                base_fields = base.__config_fields__
-                fields.update(base_fields)
+        for base in cls.__mro__[1:]:  # Skip cls itself
+            base_fields_config = getattr(base, "_Config__fields_config", None)
+            if base_fields_config is not None:
+                # Add base fields that aren't overridden
+                for name, field_obj in base_fields_config.items():
+                    if name not in fields:
+                        fields[name] = field_obj
 
-        # Process current class fields
-        for key, value in list(namespace.items()):
+        # Process current class - look for field descriptors
+        for name, value in cls.__dict__.items():
             if isinstance(value, (FieldDescriptor, SubConfigDescriptor)):
-                fields[key] = value
+                fields[name] = value
+                # Set the name on the descriptor
                 if isinstance(value, FieldDescriptor):
-                    value.name = key
+                    value.name = name
                 elif isinstance(value, SubConfigDescriptor):
-                    value.name = key
+                    value.name = name
                     # Handle forward references
                     if value.config_class is type:
                         # This will be resolved later
                         pass
 
-        # Store fields metadata
-        namespace["__config_fields__"] = fields
-        namespace["__config_prefix__"] = prefix
+        # Store fields and prefix in FieldsConfig (using mangled name)
+        cls._Config__fields_config = FieldsConfig(fields, prefix)
 
-        cls = super().__new__(mcs, name, bases, namespace)
-
-        # Set field names
+        # Call __set_name__ on all fields to finalize them
         for field_name, field_obj in fields.items():
             if hasattr(field_obj, "__set_name__"):
                 field_obj.__set_name__(cls, field_name)
 
-        return cls
-
-
-@typing_extensions.dataclass_transform()
-class Config(metaclass=ConfigMeta):
-    """Base class for configuration objects."""
-
-    __config_fields__: ClassVar[dict[str, FieldDescriptor | SubConfigDescriptor]] = {}
-    __config_prefix__: ClassVar[str | None] = None
-
     def __init__(self, **kwargs: Any):
         # Phase 1: Initialize all regular fields (not sub-configs)
-        for field_name, field_obj in self.__config_fields__.items():
+        for field_name, field_obj in self.__fields_config.items():
             if isinstance(field_obj, FieldDescriptor):
                 if field_name in kwargs:
                     value = field_obj.validate(kwargs[field_name])
@@ -91,7 +116,7 @@ class Config(metaclass=ConfigMeta):
 
         # Phase 2: Initialize sub-configs (after all parent fields are set)
         # This ensures parent values are available for propagation
-        for field_name, field_obj in self.__config_fields__.items():
+        for field_name, field_obj in self.__fields_config.items():
             if isinstance(field_obj, SubConfigDescriptor):
                 if field_name in kwargs:
                     value = kwargs[field_name]
@@ -110,7 +135,7 @@ class Config(metaclass=ConfigMeta):
 
         # Phase 3: Set any additional kwargs not in fields
         for name, value in kwargs.items():
-            if name not in self.__config_fields__:
+            if name not in self.__fields_config:
                 setattr(self, name, value)
 
     def __repr__(self) -> str:
@@ -132,7 +157,7 @@ class Config(metaclass=ConfigMeta):
         result = sub_kwargs.copy()
 
         # Get sub-config's field descriptors
-        sub_fields = sub_config_class.__config_fields__
+        sub_fields = sub_config_class.__fields_config
 
         # Process all from_parent fields
         for field_name, field_obj in sub_fields.items():
@@ -228,7 +253,8 @@ class Config(metaclass=ConfigMeta):
 
 __all__ = [
     "Config",
-    "ConfigMeta",
+    "FieldsConfig",
+    "get_fields_config",
     "field",
     "from_parent",
     "sub_config",

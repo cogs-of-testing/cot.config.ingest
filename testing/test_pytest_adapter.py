@@ -2,7 +2,7 @@
 
 from unittest.mock import Mock
 
-from cot.config import Config, field, sub_config
+from cot.config import Config, field, sub_config, get_fields_config
 from cot.config.adapters import ConfigToPytestAdapter
 
 
@@ -171,8 +171,8 @@ def test_ini_type_detection():
     """Test ini type detection for fields."""
     adapter = ConfigToPytestAdapter(SampleConfig)
 
-    bool_field = SampleConfig.__config_fields__["debug"]
+    bool_field = get_fields_config(SampleConfig)["debug"]
     assert adapter._get_ini_type(bool_field) == "bool"
 
-    str_field = SampleConfig.__config_fields__["name"]
+    str_field = get_fields_config(SampleConfig)["name"]
     assert adapter._get_ini_type(str_field) is None  # Default to None for non-bool

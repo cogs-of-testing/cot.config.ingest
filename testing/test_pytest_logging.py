@@ -1,4 +1,5 @@
 """Test the pytest logging configuration example."""
+from cot.config import get_fields_config
 
 from pathlib import Path
 from typing import Literal
@@ -130,7 +131,7 @@ def test_logging_config_with_values():
 def test_field_metadata():
     """Test that field metadata is preserved."""
     # Access field metadata through the class
-    fields = LoggingPluginConfig.__config_fields__
+    fields = get_fields_config(LoggingPluginConfig)
 
     assert "level" in fields
     level_field = fields["level"]
@@ -145,8 +146,8 @@ def test_field_metadata():
 
 def test_config_prefix():
     """Test that config prefix is stored."""
-    assert LoggingPluginConfig.__config_prefix__ == "log"
-    assert LogBaseConfig.__config_prefix__ is None
+    assert get_fields_config(LoggingPluginConfig).prefix == "log"
+    assert get_fields_config(LogBaseConfig).prefix is None
 
 
 def test_field_choices_validation():

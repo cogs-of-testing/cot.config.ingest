@@ -43,7 +43,7 @@ class ConfigLoader:
         :param debug: Enable debug tracking of sources
         """
         self.config_class = config_class
-        self.env_prefix = env_prefix or config_class.__config_prefix__
+        self.env_prefix = env_prefix or config_class._get_fields_config().prefix
         self.enable_env = enable_env
         self.enable_cli = enable_cli
         self.debug = debug
@@ -267,7 +267,7 @@ class ConfigLoader:
         if not self._debug_info:
             return
 
-        for field_name, field_obj in config.__config_fields__.items():
+        for field_name, field_obj in config._get_fields_config().items():
             if field_name not in merged_data:
                 # This field is using its default value
                 from .descriptors import FieldDescriptor

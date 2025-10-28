@@ -32,7 +32,7 @@ class EnvironmentAdapter:
         :param load_toml: Parse TOML strings from environment variables
         """
         self.config_class = config_class
-        self.env_prefix = env_prefix or config_class.__config_prefix__
+        self.env_prefix = env_prefix or config_class._get_fields_config().prefix
         self.load_json = load_json
         self.load_toml = load_toml
 
@@ -48,7 +48,7 @@ class EnvironmentAdapter:
 
         config_data: dict[str, Any] = {}
 
-        for field_name, field_obj in self.config_class.__config_fields__.items():
+        for field_name, field_obj in self.config_class._get_fields_config().items():
             if isinstance(field_obj, FieldDescriptor):
                 value = self._get_field_from_env(environ, field_name, field_obj)
                 if value is not None:
@@ -89,7 +89,7 @@ class EnvironmentAdapter:
 
         # Check for primary field
         if subconfig.primary:
-            primary_field = subconfig.config_class.__config_fields__.get(
+            primary_field = subconfig.config_class._get_fields_config().get(
                 subconfig.primary
             )
             if isinstance(primary_field, FieldDescriptor):
@@ -101,7 +101,7 @@ class EnvironmentAdapter:
         for (
             sub_field_name,
             sub_field,
-        ) in subconfig.config_class.__config_fields__.items():
+        ) in subconfig.config_class._get_fields_config().items():
             if sub_field_name == subconfig.primary:
                 continue
 
@@ -178,7 +178,7 @@ class EnvironmentAdapter:
         """
         mapping = {}
 
-        for field_name, field_obj in self.config_class.__config_fields__.items():
+        for field_name, field_obj in self.config_class._get_fields_config().items():
             if isinstance(field_obj, FieldDescriptor):
                 env_name = field_to_env_name(field_name, self.env_prefix)
                 mapping[field_name] = env_name
@@ -190,7 +190,7 @@ class EnvironmentAdapter:
                     mapping[f"{field_name}.{field_obj.primary}"] = env_name
 
                 # Other fields
-                for sub_field_name in field_obj.config_class.__config_fields__:
+                for sub_field_name in field_obj.config_class._get_fields_config():
                     if sub_field_name != field_obj.primary:
                         prefixed_name = f"{field_name}_{sub_field_name}"
                         env_name = field_to_env_name(prefixed_name, self.env_prefix)
