@@ -10,6 +10,7 @@ from .adapters.argparse import ConfigToArgparseAdapter
 from .adapters.environment import EnvironmentAdapter
 from .loaders import load_file
 from .source_info import ConfigDebugInfo, SourceType
+from ._name_mapping import field_to_cli_name
 
 if TYPE_CHECKING:
     from . import Config
@@ -240,22 +241,82 @@ class ConfigLoader:
         current_data: dict[str, Any],
         new_data: dict[str, Any],
         source_type: SourceType,
+        prefix: str = "",
     ) -> None:
-        """Track the source of configuration values."""
+        """Recursively track the source of configuration values.
+
+        This mirrors the deep-merge semantics used by `_merge_data` and records
+        provenance for nested fields using dotted paths (e.g. "db.host").
+        """
         if not self._debug_info:
             return
 
+        # Prepare mappings/fallbacks once
+        env_names = None
+        if source_type == SourceType.ENV and self._env_adapter:
+            env_names = self._env_adapter.get_env_var_names()
+
+        cli_prefix = None
+        if source_type == SourceType.CLI:
+            # Ensure we have an adapter to determine prefix used for CLI names
+            if self._cli_adapter is None:
+                self._cli_adapter = ConfigToArgparseAdapter(self.config_class)
+            cli_prefix = self._cli_adapter.prefix
+
         for key, value in new_data.items():
+            field_path = f"{prefix}.{key}" if prefix else key
+
+            # If the new value is a dict, recurse to record leaf provenance
+            if isinstance(value, dict):
+                curr_sub = current_data.get(key, {}) if isinstance(current_data, dict) else {}
+                if not isinstance(curr_sub, dict):
+                    curr_sub = {}
+                self._track_source_values(curr_sub, value, source_type, prefix=field_path)
+                continue
+
+            # If the adapter returned a sub-config instance (e.g. EnvironmentAdapter
+            # creates subconfig objects), convert it to a mapping and recurse so we
+            # can record nested field provenance (e.g. "db.host").
+            if not isinstance(value, dict):
+                value_cls = getattr(value, "__class__", None)
+                fields_cfg = getattr(value_cls, "_get_fields_config", None)
+                if callable(fields_cfg):
+                    try:
+                        sub_fields = value.__class__._get_fields_config()
+                    except Exception:
+                        sub_fields = None
+                    if sub_fields:
+                        sub_map: dict[str, Any] = {}
+                        # Only include fields that differ from their descriptor defaults
+                        from .descriptors import FieldDescriptor
+
+                        for sub_name, sub_field_obj in sub_fields.items():
+                            if hasattr(value, sub_name) and isinstance(sub_field_obj, FieldDescriptor):
+                                val = getattr(value, sub_name)
+                                default_val = sub_field_obj.get_default()
+                                # Treat default (including None) as "not provided" by the source
+                                if val != default_val:
+                                    sub_map[sub_name] = val
+
+                        if sub_map:
+                            curr_sub = current_data.get(key, {}) if isinstance(current_data, dict) else {}
+                            self._track_source_values(curr_sub, sub_map, source_type, prefix=field_path)
+                            continue
+
             # Determine location based on source type
             location = None
-            if source_type == SourceType.ENV and self._env_adapter:
-                env_names = self._env_adapter.get_env_var_names()
-                location = env_names.get(key)
+            if source_type == SourceType.ENV:
+                if env_names is None and self._env_adapter:
+                    env_names = self._env_adapter.get_env_var_names()
+                if env_names:
+                    location = env_names.get(field_path)
             elif source_type == SourceType.CLI:
-                location = f"--{key.replace('_', '-')}"
+                # CLI names for sub-fields use underscores: e.g. db.host -> db_host
+                prefixed_name = field_path.replace(".", "_")
+                location = field_to_cli_name(prefixed_name, cli_prefix)
 
             self._debug_info.set_value(
-                field_name=key,
+                field_name=field_path,
                 value=value,
                 source_type=source_type,
                 location=location,
@@ -289,11 +350,55 @@ class ConfigLoader:
 
     def _merge_data(self, target: dict[str, Any], source: dict[str, Any]) -> None:
         """Deep merge source dictionary into target dictionary."""
+        def to_mapping(val: Any) -> Any:
+            """Convert sub-config instances to dicts for merging, otherwise return as-is."""
+            # If it's already a dict, use it
+            if isinstance(val, dict):
+                return val
+
+            # If it's a config-like instance, convert to dict of its fields
+            val_cls = getattr(val, "__class__", None)
+            if val_cls is not None and hasattr(val_cls, "_get_fields_config"):
+                try:
+                    fields = val.__class__._get_fields_config()
+                except Exception:
+                    fields = None
+
+                if fields:
+                    result: dict[str, Any] = {}
+                    for sub_name in fields:
+                        if hasattr(val, sub_name):
+                            result[sub_name] = getattr(val, sub_name)
+                    return result
+
+            return val
+
         for key, value in source.items():
             if key in target:
-                # If both values are dicts, merge them
-                if isinstance(target[key], dict) and isinstance(value, dict):
-                    self._merge_data(target[key], value)
+                tval = target[key]
+                sval = value
+
+                tmap = to_mapping(tval)
+                smap = to_mapping(sval)
+
+                # If both sides are mappings, merge recursively
+                if isinstance(tmap, dict) and isinstance(smap, dict):
+                    # Merge while treating explicit None in source as "not provided"
+                    # when a target value already exists. This handles adapters
+                    # that construct sub-config instances with missing fields set
+                    # to their default (often None) so they don't wipe file data.
+                    for sub_k, sub_v in smap.items():
+                        if sub_v is None and sub_k in tmap and tmap[sub_k] is not None:
+                            # Skip overriding with None (treat as absent)
+                            continue
+
+                        if sub_k in tmap and isinstance(tmap[sub_k], dict) and isinstance(sub_v, dict):
+                            self._merge_data(tmap[sub_k], sub_v)
+                        else:
+                            tmap[sub_k] = sub_v
+
+                    # Ensure merged mapping is placed back into target
+                    target[key] = tmap
                 else:
                     # Otherwise, override with new value
                     target[key] = value
