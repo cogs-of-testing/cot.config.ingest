@@ -21,7 +21,7 @@ class AppConfig(Config, prefix="app"):
     ssl: bool = field(default=False)
 
 
-def test_environment_adapter_basic():
+def test_environment_adapter_basic() -> None:
     """Test basic environment adapter functionality."""
     adapter = EnvironmentAdapter(SimpleConfig)
 
@@ -37,11 +37,11 @@ def test_environment_adapter_basic():
 
     assert config_data["name"] == "envtest"
     assert config_data["debug"] is True
-    assert config_data["count"] == 42
+    assert config_data["count"] == 42  # Automatically parsed as integer
     assert config_data["items"] == ["item1", "item2", "item3"]
 
 
-def test_environment_adapter_with_prefix():
+def test_environment_adapter_with_prefix() -> None:
     """Test environment adapter with prefix."""
     adapter = EnvironmentAdapter(AppConfig)
 
@@ -54,11 +54,11 @@ def test_environment_adapter_with_prefix():
     config_data = adapter.extract_config(env)
 
     assert config_data["host"] == "example.com"
-    assert config_data["port"] == 3000
+    assert config_data["port"] == 3000  # Automatically parsed as integer
     assert config_data["ssl"] is True
 
 
-def test_environment_adapter_custom_prefix():
+def test_environment_adapter_custom_prefix() -> None:
     """Test environment adapter with custom prefix."""
     adapter = EnvironmentAdapter(SimpleConfig, env_prefix="MYAPP")
 
@@ -73,22 +73,22 @@ def test_environment_adapter_custom_prefix():
     assert config_data["debug"] is True
 
 
-def test_environment_adapter_json_parsing():
-    """Test JSON parsing from environment variables."""
-    adapter = EnvironmentAdapter(SimpleConfig, load_json=True)
+def test_environment_adapter_json_parsing() -> None:
+    """Test TOML parsing from environment variables."""
+    adapter = EnvironmentAdapter(SimpleConfig)
 
     env = {
-        "ITEMS": '["json1", "json2"]',
+        "ITEMS": '["toml1", "toml2"]',
         "COUNT": "100",
     }
 
     config_data = adapter.extract_config(env)
 
-    assert config_data["items"] == ["json1", "json2"]
+    assert config_data["items"] == ["toml1", "toml2"]
     assert config_data["count"] == 100
 
 
-def test_environment_adapter_boolean_parsing():
+def test_environment_adapter_boolean_parsing() -> None:
     """Test boolean value parsing."""
     adapter = EnvironmentAdapter(SimpleConfig)
 
@@ -104,7 +104,7 @@ def test_environment_adapter_boolean_parsing():
         assert config_data["debug"] is False, f"Failed for {false_value}"
 
 
-def test_environment_adapter_with_subconfig():
+def test_environment_adapter_with_subconfig() -> None:
     """Test environment adapter with sub-configuration."""
 
     class DatabaseConfig(Config):
@@ -129,10 +129,10 @@ def test_environment_adapter_with_subconfig():
     assert "db" in config_data
     assert isinstance(config_data["db"], DatabaseConfig)
     assert config_data["db"].host == "dbserver"
-    assert config_data["db"].port == 5433
+    assert config_data["db"].port == 5433  # Automatically parsed as integer
 
 
-def test_environment_adapter_get_var_names():
+def test_environment_adapter_get_var_names() -> None:
     """Test getting environment variable name mapping."""
     adapter = EnvironmentAdapter(AppConfig)
 
@@ -143,7 +143,7 @@ def test_environment_adapter_get_var_names():
     assert mapping["ssl"] == "APP_SSL"
 
 
-def test_environment_adapter_empty_values():
+def test_environment_adapter_empty_values() -> None:
     """Test handling of empty environment values."""
     adapter = EnvironmentAdapter(SimpleConfig)
 

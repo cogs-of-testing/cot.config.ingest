@@ -2,7 +2,7 @@
 
 from unittest.mock import Mock
 
-from cot.config import Config, field, sub_config, get_fields_config
+from cot.config import Config, field, get_fields_config, sub_config
 from cot.config.adapters import ConfigToPytestAdapter
 
 
@@ -31,7 +31,7 @@ class ParentConfig(Config, prefix="parent"):
     nested: NestedConfig = sub_config(NestedConfig, primary="enabled")
 
 
-def test_adapter_basic():
+def test_adapter_basic() -> None:
     """Test basic adapter functionality."""
     adapter = ConfigToPytestAdapter(SampleConfig)
 
@@ -39,7 +39,7 @@ def test_adapter_basic():
     assert adapter.prefix == "sample"
 
 
-def test_adapter_field_name_conversion():
+def test_adapter_field_name_conversion() -> None:
     """Test field name to CLI/ini name conversion."""
     adapter = ConfigToPytestAdapter(SampleConfig)
 
@@ -53,7 +53,7 @@ def test_adapter_field_name_conversion():
     assert adapter._field_to_ini_name("debug") == "sample_debug"
 
 
-def test_adapter_no_prefix():
+def test_adapter_no_prefix() -> None:
     """Test adapter without prefix."""
 
     class NoPrefix(Config):
@@ -65,7 +65,7 @@ def test_adapter_no_prefix():
     assert adapter._field_to_ini_name("option") == "option"
 
 
-def test_add_to_parser():
+def test_add_to_parser() -> None:
     """Test adding configuration to a mock parser."""
     # Create mock parser
     parser = Mock()
@@ -93,7 +93,7 @@ def test_add_to_parser():
     )
 
 
-def test_add_nested_config_to_parser():
+def test_add_nested_config_to_parser() -> None:
     """Test adding nested configuration to parser."""
     parser = Mock()
     group = Mock()
@@ -127,7 +127,7 @@ def test_add_nested_config_to_parser():
     )
 
 
-def test_extract_config():
+def test_extract_config() -> None:
     """Test extracting configuration from parsed arguments."""
     adapter = ConfigToPytestAdapter(SampleConfig)
 
@@ -148,7 +148,7 @@ def test_extract_config():
     }
 
 
-def test_extract_nested_config():
+def test_extract_nested_config() -> None:
     """Test extracting nested configuration."""
     adapter = ConfigToPytestAdapter(ParentConfig)
 
@@ -167,12 +167,12 @@ def test_extract_nested_config():
     assert config_data["nested"].level == "warning"
 
 
-def test_ini_type_detection():
+def test_ini_type_detection() -> None:
     """Test ini type detection for fields."""
     adapter = ConfigToPytestAdapter(SampleConfig)
 
     bool_field = get_fields_config(SampleConfig)["debug"]
-    assert adapter._get_ini_type(bool_field) == "bool"
+    assert adapter._get_ini_type(bool_field) == "bool"  # type: ignore[arg-type]
 
     str_field = get_fields_config(SampleConfig)["name"]
-    assert adapter._get_ini_type(str_field) is None  # Default to None for non-bool
+    assert adapter._get_ini_type(str_field) is None  # type: ignore[arg-type]  # Default to None for non-bool

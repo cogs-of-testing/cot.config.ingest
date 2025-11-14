@@ -2,6 +2,7 @@
 
 import argparse
 import json
+from pathlib import Path
 
 from cot.config import Config, field
 from cot.config.adapters import ConfigToArgparseAdapter, EnvironmentAdapter
@@ -18,7 +19,7 @@ class AppConfig(Config, prefix="app"):
     workers: int = field(default=4, help="Number of workers")
 
 
-def test_from_data_single_source():
+def test_from_data_single_source() -> None:
     """Test from_data with a single source."""
     config = AppConfig.from_data({"name": "test", "port": 3000})
 
@@ -28,7 +29,7 @@ def test_from_data_single_source():
     assert config.debug is False
 
 
-def test_from_data_multiple_sources():
+def test_from_data_multiple_sources() -> None:
     """Test from_data with multiple sources that override each other."""
     # First source: base config
     base = {
@@ -60,7 +61,7 @@ def test_from_data_multiple_sources():
     assert config.workers == 8  # from cli
 
 
-def test_from_data_with_origins():
+def test_from_data_with_origins() -> None:
     """Test from_data with origin tracking."""
     config = AppConfig.from_data(
         ("config.json", {"name": "from_file", "port": 5000}),
@@ -74,7 +75,7 @@ def test_from_data_with_origins():
     assert config.workers == 16
 
 
-def test_from_files(tmp_path):
+def test_from_files(tmp_path: Path) -> None:
     """Test loading from multiple files."""
     # Create test files
     base_config = tmp_path / "base.json"
@@ -92,7 +93,7 @@ def test_from_files(tmp_path):
     assert config.debug is True
 
 
-def test_from_env():
+def test_from_env() -> None:
     """Test loading from environment variables."""
     env = {
         "APP_NAME": "env_app",
@@ -109,7 +110,7 @@ def test_from_env():
     assert config.debug is True
 
 
-def test_combined_sources_integration(tmp_path):
+def test_combined_sources_integration(tmp_path: Path) -> None:
     """Test realistic integration with file, env, and CLI sources."""
     # 1. Create a config file
     config_file = tmp_path / "app.json"
@@ -158,12 +159,13 @@ def test_combined_sources_integration(tmp_path):
     assert config.workers == 10  # from file
 
 
-def test_deep_merge():
+def test_deep_merge() -> None:
     """Test deep merging of nested configurations."""
+    from typing import Any
 
     class NestedConfig(Config):
-        database: dict = field(default_factory=dict)
-        features: dict = field(default_factory=dict)
+        database: dict[str, Any] = field(default_factory=dict)
+        features: dict[str, Any] = field(default_factory=dict)
 
     source1 = {
         "database": {

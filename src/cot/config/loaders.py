@@ -26,10 +26,7 @@ def load_toml(path: Path | str) -> dict[str, Any]:
     :param path: Path to TOML file
     :returns: Parsed configuration dictionary
     """
-    try:
-        import tomllib  # type: ignore
-    except ImportError:
-        import tomli as tomllib  # type: ignore
+    import tomllib
 
     path = Path(path)
     with path.open("rb") as f:
@@ -45,11 +42,12 @@ def load_yaml(path: Path | str) -> dict[str, Any]:
     :raises ImportError: If PyYAML is not installed
     """
     try:
-        import yaml  # type: ignore
-    except ImportError:
+        import yaml
+    except ImportError as exc:
         raise ImportError(
-            "PyYAML is required to load YAML files. Install it with: pip install PyYAML"
-        )
+            "PyYAML is required to load YAML files. "
+            "Install it with: pip install PyYAML"
+        ) from exc
 
     path = Path(path)
     with path.open("r") as f:
@@ -99,11 +97,12 @@ def save_toml(data: dict[str, Any], path: Path | str) -> None:
     :raises ImportError: If tomli_w is not installed
     """
     try:
-        import tomli_w  # type: ignore
-    except ImportError:
+        import tomli_w
+    except ImportError as exc:
         raise ImportError(
-            "tomli_w is required to save TOML files. Install it with: pip install tomli_w"
-        )
+            "tomli_w is required to save TOML files. "
+            "Install it with: pip install tomli_w"
+        ) from exc
 
     path = Path(path)
     with path.open("wb") as f:
@@ -119,11 +118,12 @@ def save_yaml(data: dict[str, Any], path: Path | str) -> None:
     :raises ImportError: If PyYAML is not installed
     """
     try:
-        import yaml  # type: ignore
-    except ImportError:
+        import yaml
+    except ImportError as exc:
         raise ImportError(
-            "PyYAML is required to save YAML files. Install it with: pip install PyYAML"
-        )
+            "PyYAML is required to save YAML files. "
+            "Install it with: pip install PyYAML"
+        ) from exc
 
     path = Path(path)
     with path.open("w") as f:

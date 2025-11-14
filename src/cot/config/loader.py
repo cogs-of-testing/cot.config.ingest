@@ -4,19 +4,23 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
+from typing_extensions import Self
+
+from ._name_mapping import field_to_cli_name
 from .adapters.argparse import ConfigToArgparseAdapter
 from .adapters.environment import EnvironmentAdapter
 from .loaders import load_file
 from .source_info import ConfigDebugInfo, SourceType
-from ._name_mapping import field_to_cli_name
 
 if TYPE_CHECKING:
     from . import Config
 
+ConfigType = TypeVar("ConfigType", bound="Config")
 
-class ConfigLoader:
+
+class ConfigLoader(Generic[ConfigType]):
     """
     Loader for configuration from multiple sources with tracking.
 
@@ -27,7 +31,7 @@ class ConfigLoader:
 
     def __init__(
         self,
-        config_class: type[Config],
+        config_class: type[ConfigType],
         *,
         env_prefix: str | None = None,
         enable_env: bool = True,
@@ -69,7 +73,7 @@ class ConfigLoader:
         *,
         required: bool = True,
         merge: bool = True,
-    ) -> ConfigLoader:
+    ) -> Self:
         """
         Load configuration from a file.
 
@@ -97,7 +101,7 @@ class ConfigLoader:
 
         return self
 
-    def load_files(self, *paths: Path | str, required: bool = False) -> ConfigLoader:
+    def load_files(self, *paths: Path | str, required: bool = False) -> Self:
         """
         Load configuration from multiple files.
 
@@ -109,7 +113,7 @@ class ConfigLoader:
             self.load_file(path, required=required)
         return self
 
-    def load_env(self, environ: dict[str, str] | None = None) -> ConfigLoader:
+    def load_env(self, environ: dict[str, str] | None = None) -> Self:
         """
         Load configuration from environment variables.
 
@@ -137,7 +141,7 @@ class ConfigLoader:
         args: list[str] | None = None,
         *,
         parser: argparse.ArgumentParser | None = None,
-    ) -> ConfigLoader:
+    ) -> Self:
         """
         Load configuration from command-line arguments.
 
@@ -163,7 +167,7 @@ class ConfigLoader:
 
         return self
 
-    def set_values(self, **values: Any) -> ConfigLoader:
+    def set_values(self, **values: Any) -> Self:
         """
         Set configuration values programmatically.
 
@@ -203,7 +207,7 @@ class ConfigLoader:
 
         return self._cli_parser
 
-    def build(self) -> Config:
+    def build(self) -> ConfigType:
         """
         Build the configuration instance from all loaded sources.
 
@@ -268,10 +272,14 @@ class ConfigLoader:
 
             # If the new value is a dict, recurse to record leaf provenance
             if isinstance(value, dict):
-                curr_sub = current_data.get(key, {}) if isinstance(current_data, dict) else {}
+                curr_sub = (
+                    current_data.get(key, {}) if isinstance(current_data, dict) else {}
+                )
                 if not isinstance(curr_sub, dict):
                     curr_sub = {}
-                self._track_source_values(curr_sub, value, source_type, prefix=field_path)
+                self._track_source_values(
+                    curr_sub, value, source_type, prefix=field_path
+                )
                 continue
 
             # If the adapter returned a sub-config instance (e.g. EnvironmentAdapter
@@ -291,16 +299,25 @@ class ConfigLoader:
                         from .descriptors import FieldDescriptor
 
                         for sub_name, sub_field_obj in sub_fields.items():
-                            if hasattr(value, sub_name) and isinstance(sub_field_obj, FieldDescriptor):
+                            if hasattr(value, sub_name) and isinstance(
+                                sub_field_obj, FieldDescriptor
+                            ):
                                 val = getattr(value, sub_name)
                                 default_val = sub_field_obj.get_default()
-                                # Treat default (including None) as "not provided" by the source
+                                # Treat default (including None) as "not
+                                # provided" by the source
                                 if val != default_val:
                                     sub_map[sub_name] = val
 
                         if sub_map:
-                            curr_sub = current_data.get(key, {}) if isinstance(current_data, dict) else {}
-                            self._track_source_values(curr_sub, sub_map, source_type, prefix=field_path)
+                            curr_sub = (
+                                current_data.get(key, {})
+                                if isinstance(current_data, dict)
+                                else {}
+                            )
+                            self._track_source_values(
+                                curr_sub, sub_map, source_type, prefix=field_path
+                            )
                             continue
 
             # Determine location based on source type
@@ -350,8 +367,12 @@ class ConfigLoader:
 
     def _merge_data(self, target: dict[str, Any], source: dict[str, Any]) -> None:
         """Deep merge source dictionary into target dictionary."""
+
         def to_mapping(val: Any) -> Any:
-            """Convert sub-config instances to dicts for merging, otherwise return as-is."""
+            """
+            Convert sub-config instances to dicts for merging,
+            otherwise return as-is.
+            """
             # If it's already a dict, use it
             if isinstance(val, dict):
                 return val
@@ -392,7 +413,11 @@ class ConfigLoader:
                             # Skip overriding with None (treat as absent)
                             continue
 
-                        if sub_k in tmap and isinstance(tmap[sub_k], dict) and isinstance(sub_v, dict):
+                        if (
+                            sub_k in tmap
+                            and isinstance(tmap[sub_k], dict)
+                            and isinstance(sub_v, dict)
+                        ):
                             self._merge_data(tmap[sub_k], sub_v)
                         else:
                             tmap[sub_k] = sub_v
@@ -420,7 +445,7 @@ class ConfigLoader:
         return self._debug_info.generate_report()
 
 
-class LazyConfigLoader:
+class LazyConfigLoader(Generic[ConfigType]):
     """
     Lazy configuration loader that defers loading until accessed.
 
@@ -428,7 +453,7 @@ class LazyConfigLoader:
     loading but defer the actual loading until needed.
     """
 
-    def __init__(self, config_class: type[Config], **kwargs: Any):
+    def __init__(self, config_class: type[ConfigType], **kwargs: Any):
         """
         Initialize the lazy loader.
 
@@ -437,16 +462,16 @@ class LazyConfigLoader:
         """
         self.config_class = config_class
         self.loader_kwargs = kwargs
-        self._loader: ConfigLoader | None = None
-        self._config: Config | None = None
+        self._loader: ConfigLoader[ConfigType] | None = None
+        self._config: ConfigType | None = None
 
-    def get_loader(self) -> ConfigLoader:
+    def get_loader(self) -> ConfigLoader[ConfigType]:
         """Get or create the ConfigLoader instance."""
         if self._loader is None:
             self._loader = ConfigLoader(self.config_class, **self.loader_kwargs)
         return self._loader
 
-    def get_config(self) -> Config:
+    def get_config(self) -> ConfigType:
         """Get the configuration instance, loading if necessary."""
         if self._config is None:
             self._config = self.get_loader().build()

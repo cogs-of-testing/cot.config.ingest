@@ -1,11 +1,9 @@
 """Test from_parent field value propagation functionality."""
 
-import pytest
-
 from cot.config import Config, field, from_parent, sub_config
 
 
-def test_from_parent_value_propagation():
+def test_from_parent_value_propagation() -> None:
     """Test that from_parent fields get values from parent config instance."""
 
     class LogConfig(Config):
@@ -27,11 +25,13 @@ def test_from_parent_value_propagation():
 
     # Sub-config fields marked with from_parent should get values from parent instance
     assert app.logging.level == "DEBUG"  # Got value from parent's level field
-    assert app.logging.format == "%(levelname)s: %(message)s"  # Got value from parent's format field
+    assert (
+        app.logging.format == "%(levelname)s: %(message)s"
+    )  # Got value from parent's format field
     assert app.logging.enabled is False  # Used its own default
 
 
-def test_from_parent_with_explicit_override():
+def test_from_parent_with_explicit_override() -> None:
     """Test that explicit values override from_parent."""
 
     class SubConfig(Config):
@@ -42,7 +42,7 @@ def test_from_parent_with_explicit_override():
         sub: SubConfig = sub_config(SubConfig)
 
     # When sub-config is explicitly provided with a value
-    config = ParentConfig(sub={"value": "explicit"})
+    config = ParentConfig(sub={"value": "explicit"})  # type: ignore[arg-type]
     assert config.sub.value == "explicit"  # Explicit value wins
 
     # When no explicit value, should get from parent
@@ -50,7 +50,7 @@ def test_from_parent_with_explicit_override():
     assert config.sub.value == "parent_value"  # Got from parent
 
 
-def test_from_parent_missing_in_parent():
+def test_from_parent_missing_in_parent() -> None:
     """Test from_parent when parent doesn't have matching field."""
 
     class SubConfig(Config):
@@ -66,7 +66,7 @@ def test_from_parent_missing_in_parent():
     assert config.sub.missing_field == "fallback"
 
 
-def test_from_parent_with_multiple_sub_configs():
+def test_from_parent_with_multiple_sub_configs() -> None:
     """Test from_parent with multiple sub-configurations."""
 
     class LogConfig(Config):
@@ -90,7 +90,7 @@ def test_from_parent_with_multiple_sub_configs():
     assert config.console_log.format == "[%(levelname)s] %(message)s"
 
 
-def test_from_parent_with_custom_parent_values():
+def test_from_parent_with_custom_parent_values() -> None:
     """Test from_parent when parent values are customized."""
 
     class SubConfig(Config):
@@ -109,7 +109,7 @@ def test_from_parent_with_custom_parent_values():
     assert config.sub.enabled is True
 
 
-def test_from_parent_with_none_values():
+def test_from_parent_with_none_values() -> None:
     """Test from_parent handles None values correctly."""
 
     class SubConfig(Config):
@@ -128,7 +128,7 @@ def test_from_parent_with_none_values():
     assert config.sub.value == "explicit"
 
 
-def test_readme_logging_example_simplified():
+def test_readme_logging_example_simplified() -> None:
     """Test simplified version of the logging configuration example from README."""
 
     DEFAULT_LOG_FORMAT = "%(levelname)-8s %(name)s:%(filename)s:%(lineno)d %(message)s"
@@ -171,13 +171,17 @@ def test_readme_logging_example_simplified():
     # CLI sub-config should get from_parent field values from parent instance
     assert config.cli.level == "WARNING"  # from parent's level
     assert config.cli.format == DEFAULT_LOG_FORMAT  # from parent's format
-    assert config.cli.date_format == DEFAULT_LOG_DATE_FORMAT  # from parent's date_format
+    assert (
+        config.cli.date_format == DEFAULT_LOG_DATE_FORMAT
+    )  # from parent's date_format
     assert config.cli.enable is False  # own default
 
     # File sub-config should get from_parent field values from parent instance
     assert config.file.level == "WARNING"  # from parent's level
     assert config.file.format == DEFAULT_LOG_FORMAT  # from parent's format
-    assert config.file.date_format == DEFAULT_LOG_DATE_FORMAT  # from parent's date_format
+    assert (
+        config.file.date_format == DEFAULT_LOG_DATE_FORMAT
+    )  # from parent's date_format
     assert config.file.path is None  # own default
     assert config.file.mode == "w"  # own default
 
@@ -185,7 +189,7 @@ def test_readme_logging_example_simplified():
     config = LoggingPluginConfig(
         level="DEBUG",
         format="%(message)s",
-        cli={"enable": True}
+        cli={"enable": True},  # type: ignore[arg-type]
     )
 
     # Sub-configs get new parent values
@@ -197,7 +201,7 @@ def test_readme_logging_example_simplified():
     assert config.file.format == "%(message)s"  # from parent's custom format
 
 
-def test_from_parent_with_data_sources():
+def test_from_parent_with_data_sources() -> None:
     """Test from_parent with from_data() method."""
 
     class SubConfig(Config):
@@ -222,7 +226,7 @@ def test_from_parent_with_data_sources():
     assert config.sub.own_value == "from_env"  # from env_data
 
 
-def test_from_parent_initialization_order():
+def test_from_parent_initialization_order() -> None:
     """Test that from_parent values are resolved during initialization."""
 
     class SubConfig(Config):
@@ -233,7 +237,7 @@ def test_from_parent_initialization_order():
         sub: SubConfig = sub_config(SubConfig)
 
     # Initialize with dict for sub-config (without explicit value)
-    config = ParentConfig(value="custom", sub={})
+    config = ParentConfig(value="custom", sub={})  # type: ignore[arg-type]
     assert config.sub.value == "custom"  # Should get from parent
 
     # Initialize with SubConfig instance

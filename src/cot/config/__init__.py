@@ -48,7 +48,7 @@ def get_fields_config(config_class: type) -> FieldsConfig:
     :param config_class: The Config class to extract from
     :returns: FieldsConfig instance
     """
-    return getattr(config_class, "_Config__fields_config")
+    return config_class._get_fields_config()  # type: ignore[attr-defined, no-any-return]
 
 
 @typing_extensions.dataclass_transform()
@@ -84,7 +84,7 @@ class Config:
 
         # Process current class - look for field descriptors
         for name, value in cls.__dict__.items():
-            if isinstance(value, (FieldDescriptor, SubConfigDescriptor)):
+            if isinstance(value, FieldDescriptor | SubConfigDescriptor):
                 fields[name] = value
                 # Set the name on the descriptor
                 if isinstance(value, FieldDescriptor):
@@ -97,7 +97,7 @@ class Config:
                         pass
 
         # Store fields and prefix in FieldsConfig (using mangled name)
-        cls._Config__fields_config = FieldsConfig(fields, prefix)
+        cls.__fields_config = FieldsConfig(fields, prefix)
 
         # Call __set_name__ on all fields to finalize them
         for field_name, field_obj in fields.items():
@@ -123,7 +123,9 @@ class Config:
                     # Convert dict to sub-config instance if needed
                     if isinstance(value, dict):
                         # Merge parent values into sub-config kwargs
-                        sub_kwargs = self._merge_parent_values(value, field_obj.config_class)
+                        sub_kwargs = self._merge_parent_values(
+                            value, field_obj.config_class
+                        )
                         value = field_obj.config_class(**sub_kwargs)
                     # If it's already an instance, use as-is
                 else:
@@ -145,7 +147,9 @@ class Config:
     def __eq__(self, other: object) -> bool:
         return isinstance(other, self.__class__) and vars(self) == vars(other)
 
-    def _merge_parent_values(self, sub_kwargs: dict[str, Any], sub_config_class: type[Config]) -> dict[str, Any]:
+    def _merge_parent_values(
+        self, sub_kwargs: dict[str, Any], sub_config_class: type[Config]
+    ) -> dict[str, Any]:
         """
         Merge parent values into sub-config kwargs for fields marked with from_parent.
 
@@ -157,17 +161,20 @@ class Config:
         result = sub_kwargs.copy()
 
         # Get sub-config's field descriptors
-        sub_fields = sub_config_class.__fields_config
+        sub_fields = sub_config_class._get_fields_config()
 
         # Process all from_parent fields
         for field_name, field_obj in sub_fields.items():
-            if isinstance(field_obj, FieldDescriptor) and field_obj.from_parent:
-                # This field should get its value from parent if not explicitly provided
-                if field_name not in result:
-                    # Look for the value in the parent (self)
-                    if hasattr(self, field_name):
-                        parent_value = getattr(self, field_name)
-                        result[field_name] = parent_value
+            if (
+                isinstance(field_obj, FieldDescriptor)
+                and field_obj.from_parent
+                and field_name not in result
+                and hasattr(self, field_name)
+            ):
+                # This field should get its value from parent
+                # Look for the value in the parent (self)
+                parent_value = getattr(self, field_name)
+                result[field_name] = parent_value
 
         return result
 

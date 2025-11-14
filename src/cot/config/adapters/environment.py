@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
-import json
 import os
 from typing import TYPE_CHECKING, Any
 
 from .._name_mapping import field_to_env_name
 from ..descriptors import FieldDescriptor, SubConfigDescriptor
+from ._parsing import (
+    ParseError,
+    parse_boolean,
+    parse_float,
+    parse_int,
+    parse_list,
+    parse_toml,
+)
 
 if TYPE_CHECKING:
     from .. import Config
@@ -20,21 +27,15 @@ class EnvironmentAdapter:
         self,
         config_class: type[Config],
         env_prefix: str | None = None,
-        load_json: bool = True,
-        load_toml: bool = False,
     ):
         """
         Initialize the environment adapter.
 
         :param config_class: The Config class to adapt
         :param env_prefix: Global prefix for all environment variables
-        :param load_json: Parse JSON strings from environment variables
-        :param load_toml: Parse TOML strings from environment variables
         """
         self.config_class = config_class
         self.env_prefix = env_prefix or config_class._get_fields_config().prefix
-        self.load_json = load_json
-        self.load_toml = load_toml
 
     def extract_config(self, environ: dict[str, str] | None = None) -> dict[str, Any]:
         """
@@ -54,7 +55,8 @@ class EnvironmentAdapter:
                 if value is not None:
                     config_data[field_name] = value
 
-            elif isinstance(field_obj, SubConfigDescriptor):
+            else:
+                assert isinstance(field_obj, SubConfigDescriptor)
                 sub_data = self._get_subconfig_from_env(environ, field_name, field_obj)
                 if sub_data:
                     config_data[field_name] = field_obj.config_class(**sub_data)
@@ -117,6 +119,16 @@ class EnvironmentAdapter:
         """
         Parse environment variable value based on field metadata.
 
+        Orchestrates parsing through specialized helper functions in order:
+        1. Empty string handling
+        2. Boolean parsing
+        3. Integer parsing (if value looks like an integer)
+        4. Float parsing (if value looks like a float)
+        5. TOML parsing (always attempted)
+        6. List parsing (for append-action fields)
+        7. Choices validation
+        8. String return (default)
+
         :param raw_value: Raw string from environment
         :param field: Field descriptor with metadata
         :returns: Parsed value
@@ -125,43 +137,32 @@ class EnvironmentAdapter:
         if not raw_value:
             return None
 
-        # Handle boolean strings first
-        if raw_value.lower() in ("true", "yes", "1", "on"):
-            return True
-        elif raw_value.lower() in ("false", "no", "0", "off"):
-            return False
+        # Try boolean parsing first (handles common bool strings)
+        bool_result = parse_boolean(raw_value)
+        if bool_result is not None:
+            return bool_result
 
-        # Try to parse as JSON if enabled
-        if self.load_json:
-            try:
-                return json.loads(raw_value)
-            except (json.JSONDecodeError, ValueError):
-                pass
+        # Try integer parsing (for numeric strings)
+        try:
+            return parse_int(raw_value)
+        except ParseError:
+            pass
 
-        # Try to parse as TOML if enabled
-        if self.load_toml:
-            try:
-                try:
-                    import tomllib  # type: ignore
-                except ImportError:
-                    import tomli as tomllib  # type: ignore
+        # Try float parsing (for decimal numbers)
+        try:
+            return parse_float(raw_value)
+        except ParseError:
+            pass
 
-                # TOML requires key-value format
-                toml_str = f"value = {raw_value}"
-                parsed = tomllib.loads(toml_str)
-                return parsed.get("value")
-            except Exception:
-                pass
+        # Try TOML parsing (always enabled)
+        try:
+            return parse_toml(raw_value)
+        except ParseError:
+            pass
 
         # Handle list fields with action="append"
         if field.action == "append":
-            # Split by comma or semicolon
-            if "," in raw_value:
-                return [v.strip() for v in raw_value.split(",")]
-            elif ";" in raw_value:
-                return [v.strip() for v in raw_value.split(";")]
-            else:
-                return [raw_value]
+            return parse_list(raw_value)
 
         # Validate against choices
         if field.choices and raw_value not in field.choices:

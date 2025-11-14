@@ -1,6 +1,7 @@
 """Test ConfigLoader and debug functionality."""
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -30,7 +31,7 @@ class SampleConfig(Config, prefix="sample"):
     paths: list[str] = field(default_factory=list, action="append")
 
 
-def test_loader_basic():
+def test_loader_basic() -> None:
     """Test basic loader functionality."""
     loader = ConfigLoader(SampleConfig)
     config = loader.build()
@@ -41,7 +42,7 @@ def test_loader_basic():
     assert config.debug is False
 
 
-def test_loader_with_values():
+def test_loader_with_values() -> None:
     """Test loader with programmatically set values."""
     loader = ConfigLoader(SampleConfig)
     loader.set_values(name="test_app", port=9000)
@@ -52,7 +53,7 @@ def test_loader_with_values():
     assert config.host == "localhost"  # still default
 
 
-def test_loader_from_file(tmp_path):
+def test_loader_from_file(tmp_path: Path) -> None:
     """Test loading from a configuration file."""
     config_file = tmp_path / "config.json"
     with config_file.open("w") as f:
@@ -74,7 +75,7 @@ def test_loader_from_file(tmp_path):
     assert config.port == 3000
 
 
-def test_loader_from_env():
+def test_loader_from_env() -> None:
     """Test loading from environment variables."""
     env = {
         "SAMPLE_NAME": "env_app",
@@ -91,7 +92,7 @@ def test_loader_from_env():
     assert config.debug is True
 
 
-def test_loader_from_cli():
+def test_loader_from_cli() -> None:
     """Test loading from CLI arguments."""
     loader = ConfigLoader(SampleConfig)
     loader.load_cli(["--sample-name", "cli_app", "--sample-workers", "8"])
@@ -101,7 +102,7 @@ def test_loader_from_cli():
     assert config.workers == 8
 
 
-def test_loader_precedence(tmp_path):
+def test_loader_precedence(tmp_path: Path) -> None:
     """Test that sources are merged with correct precedence."""
     # Create a config file
     config_file = tmp_path / "config.json"
@@ -138,7 +139,7 @@ def test_loader_precedence(tmp_path):
     assert config.workers == 2  # from file
 
 
-def test_debug_info_basic():
+def test_debug_info_basic() -> None:
     """Test basic debug information tracking."""
     loader = ConfigLoader(SampleConfig, debug=True)
     loader.set_values(name="test_app")
@@ -155,7 +156,7 @@ def test_debug_info_basic():
     assert source.source.source_type == SourceType.CODE
 
 
-def test_debug_info_overrides(tmp_path):
+def test_debug_info_overrides(tmp_path: Path) -> None:
     """Test tracking of value overrides."""
     config_file = tmp_path / "config.json"
     with config_file.open("w") as f:
@@ -179,7 +180,7 @@ def test_debug_info_overrides(tmp_path):
     assert config.port == 3000
 
 
-def test_debug_report(tmp_path):
+def test_debug_report(tmp_path: Path) -> None:
     """Test generation of debug report."""
     config_file = tmp_path / "config.json"
     with config_file.open("w") as f:
@@ -199,7 +200,7 @@ def test_debug_report(tmp_path):
     assert "environment" in report
 
 
-def test_load_order():
+def test_load_order() -> None:
     """Test tracking of load order."""
     loader = ConfigLoader(SampleConfig, debug=True)
     loader.load_env({})
@@ -212,7 +213,7 @@ def test_load_order():
     assert order[1][0] == "cli"
 
 
-def test_non_default_values():
+def test_non_default_values() -> None:
     """Test getting non-default values."""
     loader = ConfigLoader(SampleConfig, debug=True)
     loader.set_values(name="custom", port=9999)
@@ -224,7 +225,7 @@ def test_non_default_values():
     assert "host" not in non_defaults  # using default
 
 
-def test_overridden_values():
+def test_overridden_values() -> None:
     """Test getting overridden values."""
     loader = ConfigLoader(SampleConfig, debug=True)
     loader.load_env({"SAMPLE_PORT": "2222"})
@@ -236,7 +237,7 @@ def test_overridden_values():
     assert config.port == 3333  # The actual value (CODE overrides ENV)
 
 
-def test_no_debug_info():
+def test_no_debug_info() -> None:
     """Test that debug functions handle missing debug info gracefully."""
     loader = ConfigLoader(SampleConfig, debug=False)  # debug disabled
     config = loader.build()
@@ -253,7 +254,7 @@ def test_no_debug_info():
         get_config_report(config)
 
 
-def test_lazy_loader():
+def test_lazy_loader() -> None:
     """Test LazyConfigLoader functionality."""
     lazy = LazyConfigLoader(SampleConfig, debug=True)
 
@@ -275,7 +276,7 @@ def test_lazy_loader():
     assert new_config.name == "default_name"  # back to default
 
 
-def test_loader_chaining():
+def test_loader_chaining() -> None:
     """Test that loader methods can be chained."""
     loader = ConfigLoader(SampleConfig)
     config = loader.set_values(name="chained").load_env({"SAMPLE_PORT": "7777"}).build()
@@ -284,7 +285,7 @@ def test_loader_chaining():
     assert config.port == 7777
 
 
-def test_optional_file_loading(tmp_path):
+def test_optional_file_loading(tmp_path: Path) -> None:
     """Test loading optional files that may not exist."""
     missing_file = tmp_path / "missing.json"
     existing_file = tmp_path / "existing.json"

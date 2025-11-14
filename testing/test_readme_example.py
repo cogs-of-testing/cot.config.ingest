@@ -3,11 +3,8 @@
 from pathlib import Path
 from typing import Literal
 
-import pytest
-
 from cot.config import Config, field, from_parent, sub_config
 from cot.config.adapters.argparse import ConfigToArgparseAdapter
-
 
 DEFAULT_LOG_FORMAT = "%(levelname)-8s %(name)s:%(filename)s:%(lineno)d %(message)s"
 DEFAULT_LOG_DATE_FORMAT = "%H:%M:%S"
@@ -23,13 +20,13 @@ class LogBaseConfig(Config):
             "Level of messages to catch/display. "
             "Not set by default, so it depends on the root/parent log handler's "
             'effective level, where it is "WARNING" by default.'
-        )
+        ),
     )
     date_format: str = field(from_parent, default=DEFAULT_LOG_DATE_FORMAT)
     format: str = field(
         from_parent,
         default=DEFAULT_LOG_FORMAT,
-        help="Log format used by the logging module"
+        help="Log format used by the logging module",
     )
 
 
@@ -39,15 +36,19 @@ class LogCliConfig(LogBaseConfig):
     enable: bool = field(
         default=False,
         action="store_true",
-        help='Enable log display during test run (also known as "live logging")'
+        help='Enable log display during test run (also known as "live logging")',
     )
 
 
 class LogFileConfig(LogBaseConfig):
     """Configuration for file logging."""
 
-    path: Path | None = field(default=None, help="Path to a file when logging will be written to")
-    mode: Literal["w", "a"] = field(default="w", choices=["w", "a"], help="Log file open mode")
+    path: Path | None = field(
+        default=None, help="Path to a file when logging will be written to"
+    )
+    mode: Literal["w", "a"] = field(
+        default="w", choices=["w", "a"], help="Log file open mode"
+    )
 
 
 class LoggingPluginConfig(Config, prefix="log"):
@@ -66,16 +67,16 @@ class LoggingPluginConfig(Config, prefix="log"):
     auto_indent: bool | int | None = field(
         default=None,
         help="Auto-indent multiline messages passed to the logging module. "
-             "Accepts true|on, false|off or an integer."
+        "Accepts true|on, false|off or an integer.",
     )
     disable: list[str] = field(
         default_factory=list,
         action="append",
-        help="Disable a logger by name. Can be passed multiple times."
+        help="Disable a logger by name. Can be passed multiple times.",
     )
 
 
-def test_logging_config_defaults():
+def test_logging_config_defaults() -> None:
     """Test default configuration values."""
     config = LoggingPluginConfig()
 
@@ -102,12 +103,12 @@ def test_logging_config_defaults():
     assert config.disable == []
 
 
-def test_logging_config_with_custom_parent_values():
+def test_logging_config_with_custom_parent_values() -> None:
     """Test that sub-configs inherit custom parent values."""
     config = LoggingPluginConfig(
         level="DEBUG",
         format="[%(levelname)s] %(message)s",
-        date_format="%Y-%m-%d %H:%M:%S"
+        date_format="%Y-%m-%d %H:%M:%S",
     )
 
     # Parent has custom values
@@ -126,13 +127,13 @@ def test_logging_config_with_custom_parent_values():
     assert config.file.date_format == "%Y-%m-%d %H:%M:%S"
 
 
-def test_logging_config_with_sub_config_overrides():
+def test_logging_config_with_sub_config_overrides() -> None:
     """Test that explicit sub-config values override inheritance."""
     config = LoggingPluginConfig(
         level="WARNING",
         format="parent format",
-        cli={"level": "DEBUG", "enable": True},
-        file={"level": "ERROR", "path": "/tmp/test.log"}
+        cli={"level": "DEBUG", "enable": True},  # type: ignore[arg-type]
+        file={"level": "ERROR", "path": "/tmp/test.log"},  # type: ignore[arg-type]
     )
 
     # Parent values
@@ -147,25 +148,19 @@ def test_logging_config_with_sub_config_overrides():
     # File has explicit override for level
     assert config.file.level == "ERROR"  # Explicit override
     assert config.file.format == "parent format"  # Inherited
-    assert config.file.path == "/tmp/test.log"  # Explicitly set
+    assert str(config.file.path) == "/tmp/test.log"  # Explicitly set
 
 
-def test_logging_config_from_data():
+def test_logging_config_from_data() -> None:
     """Test loading configuration from multiple data sources."""
     # Simulate data from different sources
-    file_data = {
-        "level": "INFO",
-        "format": "file format"
-    }
+    file_data = {"level": "INFO", "format": "file format"}
 
-    env_data = {
-        "cli": {"enable": True},
-        "auto_indent": True
-    }
+    env_data = {"cli": {"enable": True}, "auto_indent": True}
 
     cli_data = {
         "file": {"path": "/var/log/app.log", "mode": "a"},
-        "disable": ["module1", "module2"]
+        "disable": ["module1", "module2"],
     }
 
     config = LoggingPluginConfig.from_data(file_data, env_data, cli_data)
@@ -182,7 +177,7 @@ def test_logging_config_from_data():
     # File inherits from parent and gets path/mode from cli_data
     assert config.file.level == "INFO"  # Inherited from parent
     assert config.file.format == "file format"  # Inherited from parent
-    assert config.file.path == "/var/log/app.log"  # From cli_data
+    assert str(config.file.path) == "/var/log/app.log"  # From cli_data
     assert config.file.mode == "a"  # From cli_data
 
     # Other values
@@ -190,22 +185,27 @@ def test_logging_config_from_data():
     assert config.disable == ["module1", "module2"]  # From cli_data
 
 
-def test_logging_config_with_argparse():
+def test_logging_config_with_argparse() -> None:
     """Test that the configuration works with argparse adapter."""
-    import argparse
 
     # Create adapter and parser
     adapter = ConfigToArgparseAdapter(LoggingPluginConfig)
     parser = adapter.create_parser(description="Test logging configuration")
 
     # Parse some arguments
-    args = parser.parse_args([
-        "--log-level", "DEBUG",
-        "--log-cli-enable",
-        "--log-file-path", "/tmp/test.log",
-        "--log-disable", "module1",
-        "--log-disable", "module2"
-    ])
+    args = parser.parse_args(
+        [
+            "--log-level",
+            "DEBUG",
+            "--log-cli-enable",
+            "--log-file-path",
+            "/tmp/test.log",
+            "--log-disable",
+            "module1",
+            "--log-disable",
+            "module2",
+        ]
+    )
 
     # Extract config from parsed args
     config_data = adapter.extract_config(args)
@@ -218,7 +218,9 @@ def test_logging_config_with_argparse():
     # Check values
     assert config.level == "DEBUG"
     assert config.cli.enable is True
-    assert str(config.file.path) == "/tmp/test.log"  # Convert Path to str for comparison
+    assert (
+        str(config.file.path) == "/tmp/test.log"
+    )  # Convert Path to str for comparison
     assert config.disable == ["module1", "module2"]
 
     # Check inheritance works
@@ -226,21 +228,20 @@ def test_logging_config_with_argparse():
     assert config.file.level == "DEBUG"  # Inherited from parent
 
 
-def test_logging_config_complex_inheritance():
+def test_logging_config_complex_inheritance() -> None:
     """Test complex inheritance scenarios."""
 
     class ExtendedLogConfig(LogBaseConfig):
         """Extended config with additional fields."""
+
         buffer_size: int = field(default=1000)
 
     class AdvancedLoggingConfig(LoggingPluginConfig):
         """Advanced config with extended sub-configs."""
+
         network: ExtendedLogConfig = sub_config(ExtendedLogConfig)
 
-    config = AdvancedLoggingConfig(
-        level="ERROR",
-        format="[%(name)s] %(message)s"
-    )
+    config = AdvancedLoggingConfig(level="ERROR", format="[%(name)s] %(message)s")
 
     # Network sub-config inherits from parent
     assert config.network.level == "ERROR"  # Inherited

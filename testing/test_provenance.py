@@ -1,7 +1,8 @@
 import json
+from pathlib import Path
 
-from cot.config.loader import ConfigLoader
 from cot.config import Config, field, sub_config
+from cot.config.loader import ConfigLoader
 from cot.config.source_info import SourceType
 
 
@@ -15,7 +16,7 @@ class AppConfig(Config):
     name = field(default=None)
 
 
-def test_nested_provenance(tmp_path):
+def test_nested_provenance(tmp_path: Path) -> None:
     data = {"db": {"host": "filehost", "port": 123}, "name": "myapp"}
     json_file = tmp_path / "config.json"
     json_file.write_text(json.dumps(data))
@@ -28,7 +29,7 @@ def test_nested_provenance(tmp_path):
     loader.load_env(environ)
 
     cfg = loader.build()
-    dbg = cfg._debug_info
+    dbg = cfg._debug_info  # type: ignore[attr-defined]
 
     # Effective values
     assert cfg.db.host == "envhost"

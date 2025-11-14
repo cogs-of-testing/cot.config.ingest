@@ -25,7 +25,7 @@ class AppConfig(Config, prefix="app"):
     workers: int = field(default=4, help="Number of workers")
 
 
-def test_argparse_adapter_basic():
+def test_argparse_adapter_basic() -> None:
     """Test basic argparse adapter functionality."""
     adapter = ConfigToArgparseAdapter(SimpleConfig)
     parser = argparse.ArgumentParser()
@@ -43,7 +43,7 @@ def test_argparse_adapter_basic():
     assert args.paths == ["path1", "path2"]
 
 
-def test_argparse_adapter_with_prefix():
+def test_argparse_adapter_with_prefix() -> None:
     """Test argparse adapter with prefix."""
     adapter = ConfigToArgparseAdapter(AppConfig)
     parser = argparse.ArgumentParser()
@@ -58,7 +58,7 @@ def test_argparse_adapter_with_prefix():
     assert args.app_workers == 4  # default
 
 
-def test_argparse_extract_config():
+def test_argparse_extract_config() -> None:
     """Test extracting config from parsed arguments."""
     adapter = ConfigToArgparseAdapter(SimpleConfig)
     parser = argparse.ArgumentParser()
@@ -73,7 +73,7 @@ def test_argparse_extract_config():
     # paths not in config_data because it's using default
 
 
-def test_argparse_create_parser():
+def test_argparse_create_parser() -> None:
     """Test creating a parser directly."""
     adapter = ConfigToArgparseAdapter(AppConfig)
     parser = adapter.create_parser(
@@ -88,7 +88,7 @@ def test_argparse_create_parser():
     assert config_data["port"] == 9999
 
 
-def test_argparse_with_subconfig():
+def test_argparse_with_subconfig() -> None:
     """Test argparse adapter with sub-configuration."""
 
     class DatabaseConfig(Config):
@@ -117,7 +117,7 @@ def test_argparse_with_subconfig():
     assert config_data["db"]["port"] == 5433
 
 
-def test_argparse_field_dest():
+def test_argparse_field_dest() -> None:
     """Test field destination naming."""
     adapter = ConfigToArgparseAdapter(AppConfig)
 

@@ -1,12 +1,12 @@
 """Test field features and descriptors."""
-from cot.config import get_fields_config
 
 import pytest
 
-from cot.config import Config, field, from_parent, sub_config
+from cot.config import Config, field, from_parent, get_fields_config, sub_config
+from cot.config.descriptors import FieldDescriptor
 
 
-def test_field_default_value():
+def test_field_default_value() -> None:
     """Test field with default value."""
 
     class TestConfig(Config):
@@ -23,7 +23,7 @@ def test_field_default_value():
     assert config.count == 100
 
 
-def test_field_default_factory():
+def test_field_default_factory() -> None:
     """Test field with default factory."""
 
     class TestConfig(Config):
@@ -41,17 +41,19 @@ def test_field_default_factory():
     assert config2.data == {}  # Not shared
 
 
-def test_field_with_help():
+def test_field_with_help() -> None:
     """Test field help text is stored."""
 
     class TestConfig(Config):
         option: str = field(default="test", help="This is help text")
 
     fields = get_fields_config(TestConfig)
-    assert fields["option"].help == "This is help text"
+    field_desc = fields["option"]
+    assert isinstance(field_desc, FieldDescriptor)
+    assert field_desc.help == "This is help text"
 
 
-def test_field_with_choices():
+def test_field_with_choices() -> None:
     """Test field with restricted choices."""
 
     class TestConfig(Config):
@@ -68,7 +70,7 @@ def test_field_with_choices():
         TestConfig(level="invalid")
 
 
-def test_field_from_parent():
+def test_field_from_parent() -> None:
     """Test from_parent marker."""
 
     class BaseConfig(Config):
@@ -84,12 +86,12 @@ def test_field_from_parent():
     assert config.enabled is True
 
     # Check that from_parent is marked
-    assert get_fields_config(BaseConfig)["format"].from_parent is True
-    assert get_fields_config(BaseConfig)["level"].from_parent is True
-    assert get_fields_config(ChildConfig)["enabled"].from_parent is False
+    assert get_fields_config(BaseConfig)["format"].from_parent is True  # type: ignore[union-attr]
+    assert get_fields_config(BaseConfig)["level"].from_parent is True  # type: ignore[union-attr]
+    assert get_fields_config(ChildConfig)["enabled"].from_parent is False  # type: ignore[union-attr]
 
 
-def test_field_action():
+def test_field_action() -> None:
     """Test field action for CLI."""
 
     class TestConfig(Config):
@@ -97,11 +99,11 @@ def test_field_action():
         paths: list[str] = field(default_factory=list, action="append")
 
     fields = get_fields_config(TestConfig)
-    assert fields["verbose"].action == "store_true"
-    assert fields["paths"].action == "append"
+    assert fields["verbose"].action == "store_true"  # type: ignore[union-attr]
+    assert fields["paths"].action == "append"  # type: ignore[union-attr]
 
 
-def test_field_required():
+def test_field_required() -> None:
     """Test required field marker."""
 
     class TestConfig(Config):
@@ -109,23 +111,23 @@ def test_field_required():
         optional_field: str = field(default="optional")
 
     fields = get_fields_config(TestConfig)
-    assert fields["required_field"].required is True
-    assert fields["optional_field"].required is False
+    assert fields["required_field"].required is True  # type: ignore[union-attr]
+    assert fields["optional_field"].required is False  # type: ignore[union-attr]
 
 
-def test_field_metavar():
+def test_field_metavar() -> None:
     """Test field metavar for CLI help."""
 
     class TestConfig(Config):
-        file: str = field(default=None, metavar="FILE")
+        file: str | None = field(default=None, metavar="FILE")
         count: int = field(default=1, metavar="N")
 
     fields = get_fields_config(TestConfig)
-    assert fields["file"].metavar == "FILE"
-    assert fields["count"].metavar == "N"
+    assert fields["file"].metavar == "FILE"  # type: ignore[union-attr]
+    assert fields["count"].metavar == "N"  # type: ignore[union-attr]
 
 
-def test_sub_config_basic():
+def test_sub_config_basic() -> None:
     """Test basic sub-configuration."""
 
     class SubConfig(Config):
@@ -146,7 +148,7 @@ def test_sub_config_basic():
     assert config.sub.value == "custom"
 
 
-def test_sub_config_primary():
+def test_sub_config_primary() -> None:
     """Test sub-config with primary field."""
 
     class FeatureConfig(Config):
@@ -157,10 +159,10 @@ def test_sub_config_primary():
         feature: FeatureConfig = sub_config(FeatureConfig, primary="enabled")
 
     fields = get_fields_config(AppConfig)
-    assert fields["feature"].primary == "enabled"
+    assert fields["feature"].primary == "enabled"  # type: ignore[union-attr]
 
 
-def test_config_inheritance():
+def test_config_inheritance() -> None:
     """Test configuration class inheritance."""
 
     class BaseConfig(Config):
@@ -179,7 +181,7 @@ def test_config_inheritance():
     assert "derived_field" in fields
 
 
-def test_config_prefix():
+def test_config_prefix() -> None:
     """Test configuration prefix."""
 
     class PrefixedConfig(Config, prefix="myprefix"):
@@ -193,14 +195,14 @@ def test_config_prefix():
     assert get_fields_config(NoPrefixConfig).prefix is None
 
 
-def test_field_cannot_have_both_default_and_factory():
+def test_field_cannot_have_both_default_and_factory() -> None:
     """Test that field cannot have both default and default_factory."""
     err_msg = "Cannot specify both default and default_factory"
     with pytest.raises(ValueError, match=err_msg):
-        field(default="test", default_factory=list)
+        field(default="test", default_factory=list)  # type: ignore[call-overload]
 
 
-def test_field_descriptor_get_default():
+def test_field_descriptor_get_default() -> None:
     """Test FieldDescriptor.get_default method."""
     from cot.config.descriptors import FieldDescriptor
 

@@ -1,12 +1,11 @@
 """Test the pytest logging configuration example."""
-from cot.config import get_fields_config
 
 from pathlib import Path
 from typing import Literal
 
 import pytest
 
-from cot.config import Config, field, from_parent, sub_config
+from cot.config import Config, field, from_parent, get_fields_config, sub_config
 
 DEFAULT_LOG_FORMAT = "%(levelname)-8s %(name)s:%(filename)s:%(lineno)d %(message)s"
 DEFAULT_LOG_DATE_FORMAT = "%H:%M:%S"
@@ -88,7 +87,7 @@ class LoggingPluginConfig(Config, prefix="log"):
     )
 
 
-def test_logging_config_basic():
+def test_logging_config_basic() -> None:
     """Test basic logging configuration creation."""
     config = LoggingPluginConfig()
 
@@ -109,7 +108,7 @@ def test_logging_config_basic():
     assert config.file.mode == "w"
 
 
-def test_logging_config_with_values():
+def test_logging_config_with_values() -> None:
     """Test logging configuration with custom values."""
     config = LoggingPluginConfig(
         level="DEBUG",
@@ -128,29 +127,29 @@ def test_logging_config_with_values():
     assert config.disable == ["requests", "urllib3"]
 
 
-def test_field_metadata():
+def test_field_metadata() -> None:
     """Test that field metadata is preserved."""
     # Access field metadata through the class
     fields = get_fields_config(LoggingPluginConfig)
 
     assert "level" in fields
     level_field = fields["level"]
-    assert level_field.help is not None
-    assert "WARNING" in level_field.help
+    assert level_field.help is not None  # type: ignore[union-attr]
+    assert "WARNING" in level_field.help  # type: ignore[union-attr]
 
     assert "disable" in fields
     disable_field = fields["disable"]
-    assert disable_field.action == "append"
-    assert disable_field.default_factory is not None
+    assert disable_field.action == "append"  # type: ignore[union-attr]
+    assert disable_field.default_factory is not None  # type: ignore[union-attr]
 
 
-def test_config_prefix():
+def test_config_prefix() -> None:
     """Test that config prefix is stored."""
     assert get_fields_config(LoggingPluginConfig).prefix == "log"
     assert get_fields_config(LogBaseConfig).prefix is None
 
 
-def test_field_choices_validation():
+def test_field_choices_validation() -> None:
     """Test that field choices are validated."""
     # This should work
     config = LogFileConfig(mode="w")
@@ -161,4 +160,4 @@ def test_field_choices_validation():
 
     # This should raise an error
     with pytest.raises(ValueError, match="Invalid value.*Must be one of"):
-        LogFileConfig(mode="x")
+        LogFileConfig(mode="x")  # type: ignore[arg-type]

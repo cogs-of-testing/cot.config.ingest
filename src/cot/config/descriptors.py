@@ -93,6 +93,8 @@ def field(
     help: str | None = None,
     choices: list[T] | None = None,
     metavar: str | None = None,
+    action: str | None = None,
+    required: bool = False,
 ) -> T: ...
 
 
@@ -103,6 +105,8 @@ def field(
     help: str | None = None,
     choices: list[T] | None = None,
     metavar: str | None = None,
+    action: str | None = None,
+    required: bool = False,
 ) -> T: ...
 
 
@@ -114,6 +118,8 @@ def field(
     help: str | None = None,
     choices: list[T] | None = None,
     metavar: str | None = None,
+    action: str | None = None,
+    required: bool = False,
 ) -> T: ...
 
 
@@ -123,9 +129,9 @@ def field(
     help: str | None = None,
     choices: list[T] | None = None,
     metavar: str | None = None,
+    action: str | None = None,
+    required: bool = False,
 ) -> Any: ...
-
-
 def field(
     from_parent: FromParentMarker | None = None,
     *,
