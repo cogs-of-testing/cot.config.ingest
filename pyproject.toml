@@ -24,17 +24,18 @@ test = [
   "pytest>=7",
   "pytest-cov>=4",
 ]
+docs = [
+  "mkdocs>=1.5",
+  "mkdocs-material>=9",
+  "mkdocstrings[python]>=0.24",
+]
+
 typing = [
   "mypy>=1",
   "types-setuptools",
 ]
 lint = [
   "ruff>=0.5",
-]
-docs = [
-  "mkdocs>=1.5",
-  "mkdocs-material>=9",
-  "mkdocstrings[python]>=0.24",
 ]
 
 [tool.hatch.version]
