@@ -230,7 +230,7 @@ class Config:
         :param paths: File paths to load configuration from
         :returns: Config instance with merged data from all files
         """
-        from .loaders import load_file
+        from .loaders import load_file  # Avoid circular import
 
         sources = []
         for path in paths:
@@ -240,22 +240,7 @@ class Config:
 
         return cls.from_data(*sources)
 
-    @classmethod
-    def from_env(
-        cls, prefix: str | None = None, environ: dict[str, str] | None = None
-    ) -> Self:
-        """
-        Load configuration from environment variables.
 
-        :param prefix: Prefix for environment variables
-        :param environ: Environment dictionary (defaults to os.environ)
-        :returns: Config instance with data from environment
-        """
-        from .adapters.environment import EnvironmentAdapter
-
-        adapter = EnvironmentAdapter(cls, env_prefix=prefix)
-        data = adapter.extract_config(environ)
-        return cls(**data)
 
 
 __all__ = [
