@@ -21,7 +21,7 @@ dependencies = [
 
 [dependency-groups]
 test = [
-  "pytest>=7",
+  "pytest>=9",
   "pytest-cov>=4",
 ]
 docs = [

@@ -17,7 +17,10 @@ repos:
     rev: v1.13.0
     hooks:
     -   id: mypy
-        additional_dependencies: [ "types-requests", "types-PyYAML" ]
+        additional_dependencies: 
+        - types-requests
+        - types-PyYAML
+        - pytest>=9
 - repo: https://github.com/tox-dev/pyproject-fmt
   rev: "v2.5.0"
   hooks:

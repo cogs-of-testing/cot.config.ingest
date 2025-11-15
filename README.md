@@ -147,8 +147,10 @@ DEFAULT_LOG_FORMAT = "%(levelname)-8s %(name)s:%(filename)s:%(lineno)d %(message
 DEFAULT_LOG_DATE_FORMAT = "%H:%M:%S"
 
 
+
+
 class LogBaseConfig(Config):
-    level: int | str | None = field(from_parent, default=None, help=(
+    level: Annotated[int | str | None, from_parent, Help  = None, help=(
             "Level of messages to catch/display."
             " Not set by default, so it depends on the root/parent log handler's"
             ' effective level, where it is "WARNING" by default.'
