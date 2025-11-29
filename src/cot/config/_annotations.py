@@ -73,6 +73,55 @@ class ConfigSourceMarker(_MarkerMixin):
 config_source = ConfigSourceMarker()
 
 
+class BootstrapOnlyMarker(_MarkerMixin):
+    """
+    Marker to indicate a field that can only be set during bootstrap.
+
+    Fields marked with `bootstrap_only` cannot be set via addopts or other
+    late-stage configuration sources. They must be set via CLI args or
+    early bootstrap fragments.
+
+    This is useful for fields like config_file where it's too late to
+    change them once the config file has been loaded.
+
+    Example:
+        class PytestConfig(ConfigPart):
+            config_file: Annotated[Path | None, config_source, bootstrap_only] = None
+    """
+
+    def __repr__(self) -> str:
+        return "<BootstrapOnly>"
+
+
+bootstrap_only = BootstrapOnlyMarker()
+
+
+class AddoptsMarker(_MarkerMixin):
+    """
+    Marker to indicate a field whose value should be re-parsed as CLI args.
+
+    When a field is annotated with `addopts_field`, after loading its value
+    from sources, the value will be parsed as CLI arguments and applied to
+    other config fields (with precedence between file and CLI).
+
+    Example:
+        class PytestConfig(ConfigPart):
+            addopts: Annotated[str, addopts_field] = ""
+    """
+
+    precedence: int
+
+    def __init__(self, precedence: int = 18) -> None:
+        # Default precedence 18: file(15) < addopts(18) < env(20) < cli(25)
+        self.precedence = precedence
+
+    def __repr__(self) -> str:
+        return f"<AddoptsField precedence={self.precedence}>"
+
+
+addopts_field = AddoptsMarker()
+
+
 __all__ = [
     "FromParentMarker",
     "from_parent",
@@ -81,4 +130,8 @@ __all__ = [
     "help",
     "ConfigSourceMarker",
     "config_source",
+    "BootstrapOnlyMarker",
+    "bootstrap_only",
+    "AddoptsMarker",
+    "addopts_field",
 ]

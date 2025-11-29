@@ -64,7 +64,37 @@ class SubConfig(_FrozenFromKwargsMixin):
     """
 
 
+class InvocationConfig(ConfigPart):
+    """
+    Bootstrap fragment providing invocation context.
+
+    This is typically the first fragment passed to ConfigManager to provide
+    the invocation directory (where command was run) and CLI arguments.
+
+    Example:
+        invocation = InvocationConfig(
+            invocation_dir=Path.cwd(),
+            args=sys.argv[1:],
+        )
+        manager = ConfigManager(bootstrap_fragments=[invocation])
+    """
+
+    from pathlib import Path
+
+    invocation_dir: Path
+    args: list[str]
+
+    @classmethod
+    def from_defaults(cls) -> InvocationConfig:
+        """Create InvocationConfig with default values (cwd and sys.argv)."""
+        import sys
+        from pathlib import Path
+
+        return cls(invocation_dir=Path.cwd(), args=sys.argv[1:])
+
+
 __all__ = [
     "ConfigPart",
     "SubConfig",
+    "InvocationConfig",
 ]

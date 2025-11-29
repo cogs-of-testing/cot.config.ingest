@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
-from ._annotations import config_source, from_parent, help
-from ._bases import ConfigPart, SubConfig
+from ._annotations import (
+    addopts_field,
+    bootstrap_only,
+    config_source,
+    from_parent,
+    help,
+)
+from ._bases import ConfigPart, InvocationConfig, SubConfig
 from ._manager import ConfigManager, ConfigSource, Discoverable
 from ._sources import CLISource, EnvSource, IniSource, TomlSource
 
@@ -11,6 +17,7 @@ __all__ = [
     # Base classes
     "ConfigPart",
     "SubConfig",
+    "InvocationConfig",
     # Manager
     "ConfigManager",
     "ConfigSource",
@@ -24,4 +31,6 @@ __all__ = [
     "help",
     "from_parent",
     "config_source",
+    "bootstrap_only",
+    "addopts_field",
 ]

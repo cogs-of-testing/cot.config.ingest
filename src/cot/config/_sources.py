@@ -6,6 +6,7 @@ import configparser
 import os
 import sys
 import types
+from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Union, get_origin, get_type_hints
 
@@ -132,102 +133,210 @@ class IniSource:
 
 
 class CLISource:
-    """Load configuration from command-line arguments."""
+    """
+    Load configuration from command-line arguments.
 
-    def __init__(
-        self,
-        args: list[str] | None = None,
-        *,
-        precedence: int = 25,
-    ) -> None:
+    CLISource manages CLI argument parsing with support for:
+    - Initial args from InvocationConfig (via configure_from_fragments)
+    - Addopts prepended from config files/env
+    - Single parser built from all registered fragment types
+    - Tracking of unknown/unconsumed args
+
+    Flow:
+    1. Create empty CLISource
+    2. configure_from_fragments() extracts args/invocation_dir from bootstrap fragments
+    3. register_fragment_type() for each ConfigPart (builds parser)
+    4. prepend_addopts() after loading config files
+    5. freeze_sources() to prevent further addopts
+    6. load() to get values for each fragment type
+    7. get_unknown_args() to get unconsumed args
+    """
+
+    def __init__(self, *, precedence: int = 25) -> None:
         """
-        Create a CLI argument configuration source.
+        Create an empty CLI argument source.
 
         Args:
-            args: Command line arguments (defaults to sys.argv[1:])
             precedence: Higher values override lower values (default: 25)
-        """
-        import sys
-
-        self._args = args if args is not None else sys.argv[1:]
-        self._precedence = precedence
-        self._parsed: dict[str, Any] | None = None
-
-    @property
-    def precedence(self) -> int:
-        return self._precedence
-
-    @property
-    def args(self) -> list[str]:
-        return self._args
-
-    def load(self, part_type: type[ConfigPart]) -> dict[str, Any]:
-        """
-        Load configuration data for a ConfigPart type from CLI args.
-
-        Maps CLI arguments to field names:
-        - --field-name value -> field_name = value
-        - -f value -> short form (if defined)
-        - --prefix-field value -> {"prefix": {"field": value}}
-
-        Uses argparse internally to parse arguments based on type hints.
         """
         import argparse
 
-        result: dict[str, Any] = {}
+        self._precedence = precedence
+        self._initial_args: list[str] = []
+        self._addopts: list[str] = []
+        self._invocation_dir: Path = Path.cwd()
+        self._parser = argparse.ArgumentParser(add_help=False)
+        self._registered_fields: dict[str, type[Any]] = {}  # field_name -> field_type
+        self._unknown_args: list[str] = []
+        self._sources_frozen: bool = False
+        self._parsed: bool = False
+
+    def configure_from_fragments(
+        self, fragments: Sequence[ConfigPart]
+    ) -> None:
+        """
+        Configure CLI source from bootstrap fragments.
+
+        Extracts args and invocation_dir from fragments that have them
+        (typically InvocationConfig).
+
+        Args:
+            fragments: Bootstrap ConfigPart instances
+        """
+        for fragment in fragments:
+            if hasattr(fragment, "args"):
+                self._initial_args = list(fragment.args)
+            if hasattr(fragment, "invocation_dir"):
+                self._invocation_dir = fragment.invocation_dir
+
+    def prepend_addopts(self, addopts: str | list[str]) -> None:
+        """
+        Prepend addopts to the argument list (like pytest's PYTEST_ADDOPTS).
+
+        Args:
+            addopts: Additional options as string or list
+
+        Raises:
+            RuntimeError: If called after sources are frozen
+        """
+        if self._sources_frozen:
+            raise RuntimeError("Cannot add addopts after config sources are frozen")
+
+        if isinstance(addopts, str):
+            import shlex
+
+            try:
+                parsed = shlex.split(addopts)
+            except ValueError:
+                parsed = addopts.split()
+            self._addopts = parsed + self._addopts
+        else:
+            self._addopts = list(addopts) + self._addopts
+
+        # Reset parsing since args changed
+        self._parsed = False
+
+    def freeze_sources(self) -> None:
+        """
+        Freeze config sources - no more addopts can be added after this.
+
+        Called after bootstrap phase is complete.
+        """
+        self._sources_frozen = True
+
+    def register_fragment_type(self, part_type: type[ConfigPart]) -> None:
+        """
+        Register a ConfigPart type's fields with the parser.
+
+        This adds the type's fields to the shared parser so they can be
+        parsed from CLI args. Call this for all fragment types before
+        calling load().
+
+        Args:
+            part_type: ConfigPart class to register
+        """
         type_hints = _get_resolved_type_hints(part_type)
 
-        # Build argparse parser from type hints
-        parser = argparse.ArgumentParser(add_help=False)
-
         for field_name, field_type in type_hints.items():
+            if field_name in self._registered_fields:
+                # Already registered (possibly from another fragment)
+                continue
+
             cli_name = field_name.replace("_", "-")
+
             # Handle Optional types
+            actual_type = field_type
             origin = get_origin(field_type)
             if origin is Union or origin is types.UnionType:
-                args = getattr(field_type, "__args__", ())
-                non_none_args = [a for a in args if a is not type(None)]
+                type_args = getattr(field_type, "__args__", ())
+                non_none_args = [a for a in type_args if a is not type(None)]
                 if non_none_args:
-                    field_type = non_none_args[0]
+                    actual_type = non_none_args[0]
 
             # Add argument based on type
-            if field_type is bool:
-                parser.add_argument(
+            if actual_type is bool:
+                self._parser.add_argument(
                     f"--{cli_name}",
                     dest=field_name,
                     action="store_true",
                     default=None,
                 )
             else:
-                parser.add_argument(
+                self._parser.add_argument(
                     f"--{cli_name}",
                     dest=field_name,
                     default=None,
                 )
 
-        # Parse known args (ignore unknown)
-        parsed, _ = parser.parse_known_args(self._args)
+            self._registered_fields[field_name] = field_type
 
-        # Collect non-None values
-        for field_name in type_hints:
-            value = getattr(parsed, field_name, None)
+    @property
+    def precedence(self) -> int:
+        return self._precedence
+
+    @property
+    def invocation_dir(self) -> Path:
+        return self._invocation_dir
+
+    @property
+    def args(self) -> list[str]:
+        """Final args: addopts prepended to initial args."""
+        return self._addopts + self._initial_args
+
+    def _ensure_parsed(self) -> None:
+        """Parse args if not already done."""
+        if self._parsed:
+            return
+
+        parsed, unknown = self._parser.parse_known_args(self.args)
+        self._parsed_namespace = parsed
+        self._unknown_args = unknown
+        self._parsed = True
+
+    def load(self, part_type: type[ConfigPart]) -> dict[str, Any]:
+        """
+        Load configuration data for a ConfigPart type from CLI args.
+
+        Args:
+            part_type: ConfigPart class to load data for
+
+        Returns:
+            Dict of field names to values from CLI args
+        """
+        self._ensure_parsed()
+
+        result: dict[str, Any] = {}
+        type_hints = _get_resolved_type_hints(part_type)
+
+        for field_name, field_type in type_hints.items():
+            value = getattr(self._parsed_namespace, field_name, None)
             if value is not None:
-                field_type = type_hints[field_name]
-                # Handle Optional types
+                # Handle Optional types for conversion
+                actual_type = field_type
                 origin = get_origin(field_type)
                 if origin is Union or origin is types.UnionType:
-                    args = getattr(field_type, "__args__", ())
-                    non_none_args = [a for a in args if a is not type(None)]
+                    type_args = getattr(field_type, "__args__", ())
+                    non_none_args = [a for a in type_args if a is not type(None)]
                     if non_none_args:
-                        field_type = non_none_args[0]
+                        actual_type = non_none_args[0]
 
                 # Convert value if needed
-                if field_type is not bool and isinstance(value, str):
-                    result[field_name] = _parse_value(value, field_type)
+                if actual_type is not bool and isinstance(value, str):
+                    result[field_name] = _parse_value(value, actual_type)
                 else:
                     result[field_name] = value
 
         return result
+
+    def get_unknown_args(self) -> list[str]:
+        """
+        Get args not consumed by any registered fragment type.
+
+        Returns:
+            List of unconsumed command line arguments
+        """
+        self._ensure_parsed()
+        return list(self._unknown_args)
 
 
 class EnvSource:

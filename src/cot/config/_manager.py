@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import (
     Any,
     Protocol,
@@ -12,7 +13,12 @@ from typing import (
     runtime_checkable,
 )
 
-from ._annotations import ConfigSourceMarker, FromParentMarker
+from ._annotations import (
+    AddoptsMarker,
+    BootstrapOnlyMarker,
+    ConfigSourceMarker,
+    FromParentMarker,
+)
 from ._bases import ConfigPart, SubConfig
 
 _T = TypeVar("_T", bound=ConfigPart)
@@ -65,58 +71,49 @@ class ConfigManager:
     and builds final ConfigPart instances.
 
     Example:
-        manager = ConfigManager(
+        invocation = InvocationConfig(
             invocation_dir=Path.cwd(),
             args=sys.argv[1:],
         )
+        manager = ConfigManager(bootstrap_fragments=[invocation])
         manager.register_fragment_type(PytestConfig)
         config = manager.get_fragment(PytestConfig)
     """
 
     def __init__(
         self,
-        invocation_dir: Any | None = None,
-        args: list[str] | None = None,
-        *,
-        bootstrap_fragments: list[ConfigPart] | None = None,
+        bootstrap_fragments: Sequence[ConfigPart] = (),
     ) -> None:
         """
-        Create ConfigManager with invocation context.
+        Create ConfigManager with optional bootstrap fragments.
 
         Args:
-            invocation_dir: Directory where command was invoked (for resolving
-                relative config file paths). Defaults to current directory.
-            args: Command line arguments. Defaults to sys.argv[1:].
             bootstrap_fragments: Pre-built ConfigPart instances that
-                provide initial context (e.g., invocation directory, CLI args)
+                provide initial context (e.g., invocation directory, CLI args).
+                Use InvocationConfig for invocation_dir and args.
+
+        If an InvocationConfig (or any fragment with args/invocation_dir) is
+        provided, a CLISource is automatically created and added as a source.
         """
-        import sys
-        from pathlib import Path
+        from ._bases import InvocationConfig
+        from ._sources import CLISource
 
         self._fragments: dict[type[ConfigPart], ConfigPart] = {}
         self._sources: list[ConfigSource] = []
+        self._cli_source: CLISource | None = None
 
-        # Store invocation context
-        self._invocation_dir = (
-            Path(invocation_dir) if invocation_dir is not None else Path.cwd()
-        )
-        self._args = args if args is not None else sys.argv[1:]
+        # Store bootstrap fragments
+        for fragment in bootstrap_fragments:
+            self._fragments[type(fragment)] = fragment
 
-        # Store bootstrap fragments and process config_source markers
-        if bootstrap_fragments:
-            for fragment in bootstrap_fragments:
-                self._fragments[type(fragment)] = fragment
-                self._process_config_sources(fragment)
+            # InvocationConfig triggers CLI source creation
+            if isinstance(fragment, InvocationConfig):
+                self._cli_source = CLISource(precedence=25)
+                self._cli_source.configure_from_fragments([fragment])
+                self.add_source(self._cli_source)
 
-    @property
-    def invocation_dir(self) -> Any:
-        """Directory where command was invoked."""
-        return self._invocation_dir
-
-    @property
-    def args(self) -> list[str]:
-        """Command line arguments."""
-        return self._args
+            # Process any config_source markers on bootstrap fragments
+            self._process_config_sources(fragment)
 
     def add_source(self, source: ConfigSource) -> None:
         """
@@ -135,13 +132,15 @@ class ConfigManager:
         Register a ConfigPart type and return the loaded instance.
 
         Process:
-        1. Load CLI args for this type (highest precedence)
-        2. If type has discover(), call it to add sources (e.g., config files)
-        3. Load data from all sources + CLI
-        4. Process config_source markers to add discovered config files
-        5. Re-load with new sources
-        6. Build instance with defaults merged with loaded data
-        7. Store and return the final instance
+        1. Register fragment type with CLI source (adds fields to parser)
+        2. Load bootstrap fields from CLI (config_source, etc.)
+        3. If type has discover(), call it to add sources
+        4. Process config_source markers to add config files
+        5. Load from file/env sources to get addopts
+        6. Prepend addopts to CLI source
+        7. Load final values from all sources + CLI
+        8. Build instance with defaults merged with loaded data
+        9. Store and return the final instance
 
         Args:
             fragment_type: ConfigPart class to register
@@ -149,31 +148,38 @@ class ConfigManager:
         Returns:
             Loaded ConfigPart instance
         """
-        from ._sources import CLISource
+        # Get field defaults from type annotations
+        defaults = _get_field_defaults(fragment_type)
 
-        # Load CLI args for this type
-        cli_source = CLISource(self._args, precedence=25)
-        cli_data = cli_source.load(fragment_type)
+        # Register with CLI source and load CLI args if available
+        cli_data: dict[str, Any] = {}
+        if self._cli_source is not None:
+            self._cli_source.register_fragment_type(fragment_type)
+            cli_data = self._cli_source.load(fragment_type)
 
         # Call discover if available (adds sources before loading)
         discover_method = getattr(fragment_type, "discover", None)
         if discover_method is not None and callable(discover_method):
             discover_method(self)
 
-        # Load data from all registered sources
+        # Check for config_source markers in CLI data and add sources
+        bootstrap_merged = {**defaults, **cli_data}
+        self._process_config_source_fields(fragment_type, bootstrap_merged)
+
+        # Load from file/env sources to get addopts
         loaded = self.load_for_part(fragment_type)
 
-        # Get field defaults from type annotations
-        defaults = _get_field_defaults(fragment_type)
+        # Process addopts fields - prepend to CLI source (if available)
+        self._process_addopts_fields(fragment_type, {**defaults, **loaded, **cli_data})
+
+        # Now load final CLI data (includes addopts) if CLI source available
+        if self._cli_source is not None:
+            cli_data = self._cli_source.load(fragment_type)
+
+        # Re-load from all sources
+        loaded = self.load_for_part(fragment_type)
 
         # Merge: defaults < sources < cli (cli has highest precedence)
-        merged = {**defaults, **loaded, **cli_data}
-
-        # Check for config_source markers and add sources
-        self._process_config_source_fields(fragment_type, merged)
-
-        # Re-load from sources now that config files may have been added
-        loaded = self.load_for_part(fragment_type)
         merged = {**defaults, **loaded, **cli_data}
 
         # Build nested SubConfigs from type hints
@@ -267,7 +273,12 @@ class ConfigManager:
 
             # If it's a relative path, resolve against invocation_dir
             if isinstance(value, Path) and not value.is_absolute():
-                value = self._invocation_dir / value
+                invocation_dir = (
+                    self._cli_source.invocation_dir
+                    if self._cli_source is not None
+                    else Path.cwd()
+                )
+                value = invocation_dir / value
 
             # Check file exists - error if explicitly specified but missing
             if isinstance(value, Path):
@@ -278,6 +289,77 @@ class ConfigManager:
                     )
                 if value.suffix in (".toml",):
                     self.add_source(TomlSource(value, precedence=marker.precedence))
+
+    def _process_addopts_fields(
+        self,
+        fragment_type: type[ConfigPart],
+        data: dict[str, Any],
+    ) -> None:
+        """
+        Process fields marked with addopts_field annotation.
+
+        For each field with the addopts_field marker, prepend its value
+        to the CLI source's args.
+
+        Also validates that no bootstrap_only fields are being set via addopts.
+
+        Args:
+            fragment_type: ConfigPart class being registered
+            data: Merged data from all sources
+
+        Raises:
+            ValueError: If addopts tries to set a bootstrap_only field
+        """
+        hints = get_type_hints(fragment_type, include_extras=True)
+
+        # Find bootstrap_only fields
+        bootstrap_only_fields = _get_bootstrap_only_fields(hints)
+
+        # Find addopts fields and process them
+        for field_name, field_type in hints.items():
+            marker = _get_addopts_marker(field_type)
+            if marker is None:
+                continue
+
+            value = data.get(field_name)
+            if not value:
+                continue
+
+            # Handle both string and list addopts (TOML can have lists)
+            addopts: str | list[str]
+            if isinstance(value, (str, list)):
+                addopts = value
+            else:
+                continue
+
+            # Check for bootstrap_only violations before prepending
+            # We need to parse to check, but we'll use the CLI source to do it
+            import shlex
+
+            if isinstance(addopts, str):
+                try:
+                    addopts_list = shlex.split(addopts)
+                except ValueError:
+                    addopts_list = addopts.split()
+            else:
+                addopts_list = list(addopts)
+
+            # Check each arg for bootstrap_only fields
+            for arg in addopts_list:
+                if arg.startswith("--"):
+                    # Extract field name from --field-name or --field-name=value
+                    field_part = arg[2:].split("=")[0]
+                    field_as_python = field_part.replace("-", "_")
+                    if field_as_python in bootstrap_only_fields:
+                        raise ValueError(
+                            f"Cannot set bootstrap-only field '{field_as_python}' "
+                            f"via addopts. Field '{field_as_python}' must be set "
+                            f"via CLI arguments, not in config file addopts."
+                        )
+
+            # Prepend addopts to CLI source (if available)
+            if self._cli_source is not None:
+                self._cli_source.prepend_addopts(addopts)
 
     def _process_config_sources(self, fragment: ConfigPart) -> None:
         """
@@ -454,6 +536,33 @@ def _has_from_parent_marker(field_type: Any) -> bool:
             if isinstance(arg, FromParentMarker):
                 return True
     return False
+
+
+def _get_bootstrap_only_fields(hints: dict[str, Any]) -> set[str]:
+    """Get the set of field names marked with bootstrap_only."""
+    from typing import Annotated
+
+    result: set[str] = set()
+    for field_name, field_type in hints.items():
+        if get_origin(field_type) is Annotated:
+            args = get_args(field_type)
+            for arg in args[1:]:
+                if isinstance(arg, BootstrapOnlyMarker):
+                    result.add(field_name)
+                    break
+    return result
+
+
+def _get_addopts_marker(field_type: Any) -> AddoptsMarker | None:
+    """Get the addopts_field marker from a field type if present."""
+    from typing import Annotated
+
+    if get_origin(field_type) is Annotated:
+        args = get_args(field_type)
+        for arg in args[1:]:
+            if isinstance(arg, AddoptsMarker):
+                return arg
+    return None
 
 
 def _get_config_source_marker(field_type: Any) -> ConfigSourceMarker | None:
