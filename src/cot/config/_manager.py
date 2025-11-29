@@ -1,0 +1,350 @@
+"""ConfigManager for orchestrating configuration loading."""
+
+from __future__ import annotations
+
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Protocol,
+    TypeVar,
+    get_args,
+    get_origin,
+    get_type_hints,
+    runtime_checkable,
+)
+
+from ._annotations import FromParentMarker
+from ._bases import ConfigPart, SubConfig
+
+if TYPE_CHECKING:
+    from typing_extensions import Self
+
+_T = TypeVar("_T", bound=ConfigPart)
+
+
+@runtime_checkable
+class ConfigSource(Protocol):
+    """Protocol for configuration sources."""
+
+    @property
+    def precedence(self) -> int:
+        """Higher values override lower values."""
+        ...
+
+    def load(self, part_type: type[ConfigPart]) -> dict[str, Any]:
+        """Load configuration data for a ConfigPart type."""
+        ...
+
+
+@runtime_checkable
+class Discoverable(Protocol):
+    """Protocol for ConfigParts that implement discovery."""
+
+    def discover(self, manager: ConfigManager) -> Self:
+        """Discover and return updated instance."""
+        ...
+
+
+class ConfigManager:
+    """
+    Orchestrates configuration loading from multiple sources.
+
+    The ConfigManager coordinates the bootstrap process, manages sources,
+    and builds final ConfigPart instances.
+
+    Example:
+        invocation = InvocationConfig(
+            invocation_dir=Path.cwd(),
+            invocation_args=sys.argv[1:],
+        )
+        manager = ConfigManager(bootstrap_fragments=[invocation])
+        manager.register_fragment_type(LoggingConfig)
+        config = manager.get_fragment(LoggingConfig)
+    """
+
+    def __init__(
+        self,
+        bootstrap_fragments: list[ConfigPart] | None = None,
+    ) -> None:
+        """
+        Create ConfigManager with optional bootstrap fragments.
+
+        Args:
+            bootstrap_fragments: Pre-built ConfigPart instances that
+                provide initial context (e.g., invocation directory, CLI args)
+        """
+        self._fragments: dict[type[ConfigPart], ConfigPart] = {}
+        self._sources: list[ConfigSource] = []
+
+        # Store bootstrap fragments
+        if bootstrap_fragments:
+            for fragment in bootstrap_fragments:
+                self._fragments[type(fragment)] = fragment
+
+    def add_source(self, source: ConfigSource) -> None:
+        """
+        Add a configuration source.
+
+        Sources are kept sorted by precedence (lowest first).
+        """
+        self._sources.append(source)
+        self._sources.sort(key=lambda s: s.precedence)
+
+    def register_fragment_type(
+        self,
+        fragment_type: type[_T],
+    ) -> _T:
+        """
+        Register a ConfigPart type and return the discovered instance.
+
+        Process:
+        1. Create default instance with field defaults
+        2. If instance has discover(), call it and use returned instance
+        3. Otherwise, load from sources and create instance
+        4. Store and return the final instance
+
+        Args:
+            fragment_type: ConfigPart class to register
+
+        Returns:
+            Discovered/loaded ConfigPart instance
+        """
+        # Load data from all sources
+        loaded = self.load_for_part(fragment_type)
+
+        # Get field defaults from type annotations
+        defaults = _get_field_defaults(fragment_type)
+
+        # Merge defaults with loaded data
+        merged = {**defaults, **loaded}
+
+        # Build nested SubConfigs from type hints
+        merged = _build_nested_subconfigs(fragment_type, merged)
+
+        # Create instance
+        instance = fragment_type(**merged)
+
+        # Call discover if available
+        if isinstance(instance, Discoverable):
+            instance = instance.discover(self)
+
+        # Store
+        self._fragments[fragment_type] = instance
+
+        return instance
+
+    def get_fragment(self, fragment_type: type[_T]) -> _T:
+        """
+        Get a stored fragment by type.
+
+        Args:
+            fragment_type: ConfigPart class to retrieve
+
+        Returns:
+            The stored ConfigPart instance
+
+        Raises:
+            KeyError: If fragment type not registered
+        """
+        if fragment_type not in self._fragments:
+            raise KeyError(f"Fragment type {fragment_type.__name__} not registered")
+        return self._fragments[fragment_type]  # type: ignore[return-value]
+
+    def load_for_part(
+        self,
+        fragment_type: type[ConfigPart],
+    ) -> dict[str, Any]:
+        """
+        Load data for a ConfigPart from all active sources.
+
+        Merges data from all sources in precedence order.
+        Used by discover() methods to get source data.
+
+        Args:
+            fragment_type: ConfigPart class to load data for
+
+        Returns:
+            Dict of field names to values
+        """
+        merged: dict[str, Any] = {}
+        for source in self._sources:
+            data = source.load(fragment_type)
+            _deep_merge(merged, data)
+        return merged
+
+    @property
+    def sources(self) -> list[ConfigSource]:
+        """Get list of registered sources (sorted by precedence)."""
+        return list(self._sources)
+
+
+def _get_field_defaults(cls: type[ConfigPart]) -> dict[str, Any]:
+    """Extract field defaults from a ConfigPart class, including inherited fields."""
+    defaults: dict[str, Any] = {}
+
+    # Walk MRO to get all annotations (child classes first, so they override)
+    for klass in reversed(cls.__mro__):
+        annotations = getattr(klass, "__annotations__", {})
+        for field_name in annotations:
+            # Skip ClassVar and other special types
+            if field_name.startswith("_"):
+                continue
+            if hasattr(klass, field_name):
+                value = getattr(klass, field_name)
+                # Don't include class methods or other descriptors
+                if not callable(value):
+                    defaults[field_name] = value
+
+    return defaults
+
+
+def _is_subconfig_type(field_type: Any) -> bool:
+    """Check if a type annotation is a SubConfig subclass."""
+    # Handle raw class types
+    return isinstance(field_type, type) and issubclass(field_type, SubConfig)
+
+
+def _build_nested_subconfigs(
+    cls: type[ConfigPart] | type[SubConfig],
+    data: dict[str, Any],
+) -> dict[str, Any]:
+    """
+    Recursively convert nested dicts to SubConfig instances.
+
+    For each field annotated as a SubConfig type, if the value is a dict,
+    convert it to the appropriate SubConfig instance.
+
+    Also handles parent-to-child cascade: if the parent has a field with
+    the same name as a SubConfig field (e.g., parent.level), that value
+    cascades to children that don't explicitly set it.
+    """
+    try:
+        hints = get_type_hints(cls)
+    except Exception:
+        hints = getattr(cls, "__annotations__", {})
+
+    result = dict(data)
+
+    # Collect parent values that could cascade to children
+    # These are non-SubConfig fields in the parent data
+    cascade_values: dict[str, Any] = {}
+    for field_name, field_type in hints.items():
+        if not _is_subconfig_type(field_type) and field_name in result:
+            cascade_values[field_name] = result[field_name]
+
+    for field_name, field_type in hints.items():
+        if not _is_subconfig_type(field_type):
+            continue
+
+        value = result.get(field_name)
+
+        # Get SubConfig's own field names to know what can cascade
+        subconfig_hints = _get_subconfig_hints(field_type)
+
+        if isinstance(value, dict):
+            # Get defaults for the SubConfig type
+            subconfig_defaults = _get_subconfig_defaults(field_type)
+            # Apply cascade: parent values fill in for missing child values
+            cascaded = _apply_cascade(cascade_values, subconfig_hints, value)
+            # Merge: class defaults < cascade < explicit values
+            merged_value = {**subconfig_defaults, **cascaded}
+            # Recursively build nested SubConfigs
+            merged_value = _build_nested_subconfigs(field_type, merged_value)
+            # Create the SubConfig instance
+            result[field_name] = field_type(**merged_value)
+        elif value is None or field_name not in result:
+            # Create with defaults when missing or None
+            subconfig_defaults = _get_subconfig_defaults(field_type)
+            # Apply cascade even when child section is missing
+            cascaded = _apply_cascade(cascade_values, subconfig_hints, {})
+            merged_value = {**subconfig_defaults, **cascaded}
+            merged_value = _build_nested_subconfigs(field_type, merged_value)
+            result[field_name] = field_type(**merged_value)
+
+    return result
+
+
+def _get_subconfig_hints(cls: type[SubConfig]) -> dict[str, Any]:
+    """Get type hints for a SubConfig class, preserving Annotated metadata."""
+    try:
+        # include_extras=True preserves Annotated wrappers
+        return get_type_hints(cls, include_extras=True)
+    except Exception:
+        return getattr(cls, "__annotations__", {})
+
+
+def _apply_cascade(
+    parent_values: dict[str, Any],
+    child_hints: dict[str, Any],
+    child_data: dict[str, Any],
+) -> dict[str, Any]:
+    """
+    Apply parent values to child where child doesn't have explicit value.
+
+    Only cascades values for fields that:
+    1. Are marked with `from_parent` annotation
+    2. Exist in the parent's data
+    3. Are not already set in the child's data
+
+    Child's explicit values take precedence over cascaded values.
+    """
+    result = dict(child_data)
+    for field_name, field_type in child_hints.items():
+        # Only cascade if field is marked with from_parent and not already set
+        if (
+            field_name not in result
+            and field_name in parent_values
+            and _has_from_parent_marker(field_type)
+        ):
+            result[field_name] = parent_values[field_name]
+    return result
+
+
+def _has_from_parent_marker(field_type: Any) -> bool:
+    """Check if a field type has the from_parent marker annotation."""
+    from typing import Annotated
+
+    # Check if it's an Annotated type
+    if get_origin(field_type) is Annotated:
+        args = get_args(field_type)
+        # args[0] is the actual type, args[1:] are the annotations
+        for arg in args[1:]:
+            if isinstance(arg, FromParentMarker):
+                return True
+    return False
+
+
+def _get_subconfig_defaults(cls: type[SubConfig]) -> dict[str, Any]:
+    """Extract field defaults from a SubConfig class, including inherited fields."""
+    defaults: dict[str, Any] = {}
+
+    # Walk MRO to get all annotations (child classes first, so they override)
+    for klass in reversed(cls.__mro__):
+        annotations = getattr(klass, "__annotations__", {})
+        for field_name in annotations:
+            # Skip ClassVar and other special types
+            if field_name.startswith("_"):
+                continue
+            if hasattr(klass, field_name):
+                value = getattr(klass, field_name)
+                # Don't include class methods or other descriptors
+                if not callable(value):
+                    defaults[field_name] = value
+
+    return defaults
+
+
+def _deep_merge(target: dict[str, Any], source: dict[str, Any]) -> None:
+    """Deep merge source into target, modifying target in place."""
+    for key, value in source.items():
+        if key in target and isinstance(target[key], dict) and isinstance(value, dict):
+            _deep_merge(target[key], value)
+        else:
+            target[key] = value
+
+
+__all__ = [
+    "ConfigManager",
+    "ConfigSource",
+    "Discoverable",
+]

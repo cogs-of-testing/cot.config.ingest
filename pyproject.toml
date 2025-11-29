@@ -17,6 +17,7 @@ classifiers = [
 dynamic = [ "version" ]
 dependencies = [
   "typing-extensions>=4",
+  "tomli>=2; python_version < '3.11'",
 ]
 
 [dependency-groups]

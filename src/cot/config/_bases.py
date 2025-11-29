@@ -27,7 +27,8 @@ class _FrozenFromKwargsMixin:
             setattr(self, key, value)
 
     def __setattr__(self, name: str, value: object) -> None:
-        if hasattr(self, name):
+        # Check instance __dict__, not class attributes (which include defaults)
+        if name in self.__dict__:
             raise AttributeError(f"Cannot modify frozen attribute '{name}'")
         super().__setattr__(name, value)
 

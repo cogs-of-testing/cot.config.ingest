@@ -1,0 +1,309 @@
+"""
+Tests for configuration sources (TOML, INI, Environment).
+
+These tests verify the basic functionality of loading configuration
+from various sources with type conversion and precedence handling.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from textwrap import dedent
+
+from cot.config import (
+    ConfigManager,
+    ConfigPart,
+    EnvSource,
+    IniSource,
+    TomlSource,
+)
+
+
+class TestTomlSource:
+    """Test loading config from TOML files."""
+
+    def test_load_flat_config(self, tmp_path: Path) -> None:
+        """Load a simple flat configuration."""
+
+        class SimpleConfig(ConfigPart, prefix="app"):
+            debug: bool = False
+            log_level: str = "INFO"
+            name: str = "myapp"
+
+        toml_file = tmp_path / "config.toml"
+        toml_file.write_text(
+            dedent("""
+            [app]
+            debug = true
+            log_level = "DEBUG"
+            name = "testapp"
+        """)
+        )
+
+        manager = ConfigManager()
+        manager.add_source(TomlSource(toml_file))
+
+        config = manager.register_fragment_type(SimpleConfig)
+
+        assert config.debug is True
+        assert config.log_level == "DEBUG"
+        assert config.name == "testapp"
+
+    def test_defaults_when_missing(self, tmp_path: Path) -> None:
+        """Defaults are used when values are not in config."""
+
+        class SimpleConfig(ConfigPart, prefix="app"):
+            debug: bool = False
+            log_level: str = "INFO"
+
+        toml_file = tmp_path / "config.toml"
+        toml_file.write_text(
+            dedent("""
+            [app]
+            debug = true
+        """)
+        )
+
+        manager = ConfigManager()
+        manager.add_source(TomlSource(toml_file))
+
+        config = manager.register_fragment_type(SimpleConfig)
+
+        assert config.debug is True
+        assert config.log_level == "INFO"  # default
+
+    def test_missing_file_returns_empty(self, tmp_path: Path) -> None:
+        """Missing config file returns empty dict, uses defaults."""
+
+        class AppConfig(ConfigPart, prefix="app"):
+            debug: bool = False
+            log_level: str = "WARNING"
+
+        manager = ConfigManager()
+        manager.add_source(TomlSource(tmp_path / "nonexistent.toml"))
+
+        config = manager.register_fragment_type(AppConfig)
+
+        # All defaults
+        assert config.debug is False
+        assert config.log_level == "WARNING"
+
+
+class TestIniSource:
+    """Test loading config from INI files (pytest.ini style)."""
+
+    def test_load_from_ini(self, tmp_path: Path) -> None:
+        """Load config from INI file."""
+
+        class PytestConfig(ConfigPart, prefix="pytest"):
+            addopts: str = ""
+            testpaths: str = "tests"
+            python_files: str = "test_*.py"
+
+        ini_file = tmp_path / "pytest.ini"
+        ini_file.write_text(
+            dedent("""
+            [pytest]
+            addopts = -v --tb=short
+            testpaths = testing
+        """)
+        )
+
+        manager = ConfigManager()
+        manager.add_source(IniSource(ini_file))
+
+        config = manager.register_fragment_type(PytestConfig)
+
+        assert config.addopts == "-v --tb=short"
+        assert config.testpaths == "testing"
+        assert config.python_files == "test_*.py"  # default
+
+    def test_ini_boolean_values(self, tmp_path: Path) -> None:
+        """INI source handles various boolean formats."""
+
+        class FlagsConfig(ConfigPart, prefix="flags"):
+            enabled: bool = False
+            verbose: bool = False
+
+        ini_file = tmp_path / "config.ini"
+        ini_file.write_text(
+            dedent("""
+            [flags]
+            enabled = yes
+            verbose = true
+        """)
+        )
+
+        manager = ConfigManager()
+        manager.add_source(IniSource(ini_file))
+
+        config = manager.register_fragment_type(FlagsConfig)
+
+        assert config.enabled is True
+        assert config.verbose is True
+
+
+class TestEnvSource:
+    """Test loading config from environment variables."""
+
+    def test_load_from_env(self) -> None:
+        """Load config from environment variables."""
+
+        class AppConfig(ConfigPart, prefix="APP"):
+            debug: bool = False
+            log_level: str = "INFO"
+            name: str = "default"
+
+        env = {
+            "APP_DEBUG": "true",
+            "APP_LOG_LEVEL": "ERROR",
+            "APP_NAME": "testapp",
+        }
+
+        manager = ConfigManager()
+        manager.add_source(EnvSource(environ=env))
+
+        config = manager.register_fragment_type(AppConfig)
+
+        assert config.debug is True
+        assert config.log_level == "ERROR"
+        assert config.name == "testapp"
+
+    def test_env_prefix_from_class(self) -> None:
+        """Environment variables use ConfigPart prefix."""
+
+        class DbConfig(ConfigPart, prefix="DB"):
+            host: str = "localhost"
+            port: int = 5432
+
+        env = {
+            "DB_HOST": "production.db",
+            "DB_PORT": "3306",
+        }
+
+        manager = ConfigManager()
+        manager.add_source(EnvSource(environ=env))
+
+        config = manager.register_fragment_type(DbConfig)
+
+        assert config.host == "production.db"
+        assert config.port == 3306
+
+
+class TestSourcePrecedence:
+    """Test that sources are merged with correct precedence."""
+
+    def test_env_overrides_file(self, tmp_path: Path) -> None:
+        """Environment variables override file config."""
+
+        class AppConfig(ConfigPart, prefix="app"):
+            debug: bool = False
+            log_level: str = "INFO"
+            name: str = "default"
+
+        toml_file = tmp_path / "config.toml"
+        toml_file.write_text(
+            dedent("""
+            [app]
+            debug = false
+            log_level = "DEBUG"
+            name = "from-file"
+        """)
+        )
+
+        env = {
+            "APP_DEBUG": "true",
+            "APP_LOG_LEVEL": "ERROR",
+        }
+
+        manager = ConfigManager()
+        manager.add_source(TomlSource(toml_file, precedence=10))
+        manager.add_source(EnvSource(environ=env, precedence=20))
+
+        config = manager.register_fragment_type(AppConfig)
+
+        # Env overrides
+        assert config.debug is True
+        assert config.log_level == "ERROR"
+        # File value preserved where no env override
+        assert config.name == "from-file"
+
+    def test_multiple_files_merge(self, tmp_path: Path) -> None:
+        """Multiple config files merge with precedence."""
+
+        class AppConfig(ConfigPart, prefix="app"):
+            debug: bool = False
+            log_level: str = "WARNING"
+            format: str = "default"
+
+        base_config = tmp_path / "base.toml"
+        base_config.write_text(
+            dedent("""
+            [app]
+            debug = false
+            log_level = "DEBUG"
+            format = "base format"
+        """)
+        )
+
+        local_config = tmp_path / "local.toml"
+        local_config.write_text(
+            dedent("""
+            [app]
+            debug = true
+            log_level = "INFO"
+        """)
+        )
+
+        manager = ConfigManager()
+        manager.add_source(TomlSource(base_config, precedence=5))
+        manager.add_source(TomlSource(local_config, precedence=10))
+
+        config = manager.register_fragment_type(AppConfig)
+
+        # Local overrides base
+        assert config.debug is True
+        assert config.log_level == "INFO"
+        # Base value preserved where no local override
+        assert config.format == "base format"
+
+
+class TestBootstrapFragment:
+    """Test using bootstrap fragments for initial context."""
+
+    def test_bootstrap_provides_context(self, tmp_path: Path) -> None:
+        """Bootstrap fragment provides initial context."""
+
+        class InvocationConfig(ConfigPart):
+            invocation_dir: Path
+            config_file: Path | None = None
+
+        class AppConfig(ConfigPart, prefix="app"):
+            debug: bool = False
+
+        invocation = InvocationConfig(
+            invocation_dir=tmp_path,
+            config_file=tmp_path / "config.ini",
+        )
+
+        # Create config file
+        ini_file = tmp_path / "config.ini"
+        ini_file.write_text(
+            dedent("""
+            [app]
+            debug = true
+        """)
+        )
+
+        manager = ConfigManager(bootstrap_fragments=[invocation])
+
+        # Bootstrap fragment is accessible
+        inv = manager.get_fragment(InvocationConfig)
+        assert inv.invocation_dir == tmp_path
+
+        # Can use it to add sources
+        if inv.config_file:
+            manager.add_source(IniSource(inv.config_file))
+
+        config = manager.register_fragment_type(AppConfig)
+        assert config.debug is True
