@@ -1,369 +1,310 @@
-# Config Manager Design
+# ConfigManager
 
 ## Overview
 
-The Config Manager is responsible for orchestrating the loading of configuration from multiple sources while maintaining proper precedence, supporting plugin discovery, and handling complex override semantics.
+The ConfigManager orchestrates configuration loading from multiple sources. It coordinates the bootstrap process, manages sources, and builds final ConfigPart instances.
 
 ## Core Responsibilities
 
-### 1. Source Management
+1. **Store bootstrap fragments** - Initial context provided at construction
+2. **Manage sources** - Track active configuration sources (files, env, CLI)
+3. **Register ConfigParts** - Handle type registration and discovery
+4. **Load and merge** - Load data from sources with proper precedence
+5. **Build instances** - Create final ConfigPart instances
 
-The Config Manager coordinates multiple configuration sources in precedence order:
+## API
 
-```
-1. Default values (lowest precedence)
-2. Config files (TOML/YAML/JSON)
-3. INI files (pytest-style)
-4. Environment variables
-5. Command-line arguments (highest precedence)
-```
-
-### 2. Configuration Loading Process
-
-*To be designed*
-
-### 3. Type Model to Format Mapping
-
-#### To Structured Formats (TOML/YAML/JSON)
-
-```python
-ConfigPart -> nested dict structure
-  field: str = "value"           -> {"field": "value"}
-  sub: SubConfig                 -> {"sub": {...}}
-  items: list[str]               -> {"items": ["a", "b"]}
-```
-
-**Mapping Rules:**
-- Flat fields map directly to keys
-- SubConfig instances become nested dicts
-- Lists serialize as arrays
-- Type annotations guide parsing direction
-
-#### To CLI Sequences
-
-```python
-ConfigPart fields -> CLI arguments
-  field: str                     -> --field VALUE
-  flag: bool                     -> --flag / --no-flag
-  items: list[str]               -> --items A --items B
-  
-With prefix="app":
-  field: str                     -> --app-field VALUE
-```
-
-**Mapping Rules:**
-- Field names converted to kebab-case with optional prefix
-- Boolean fields get flag variants
-- Lists support multiple invocations OR comma-separated
-- SubConfig fields flattened with underscore: `database_host` -> `--database-host`
-
-### 4. Override Semantics
-
-#### Simple Override
-```
-file:    field = "a"
-cli:     --field b
-result:  field = "b"
-```
-
-#### Nested Override (Deep Merge)
-```
-file:    database = {host: "localhost", port: 5432}
-cli:     --database-port 3306
-result:  database = {host: "localhost", port: 3306}
-```
-
-#### List Handling
-
-**Three modes:**
-
-1. **Append Mode** (default for lists)
-```
-file:    items = ["a", "b"]
-cli:     --items c
-result:  items = ["a", "b", "c"]
-```
-
-2. **Replace Mode** (explicit reset)
-```
-file:    items = ["a", "b"]
-cli:     --items-reset --items c
-result:  items = ["c"]
-```
-
-3. **Extend Mode** (pytest addopts-style)
-```
-file:    addopts = "-v"
-cli:     --addopts "-x"
-result:  addopts = "-v -x"  # string concatenation
-```
-
-**List Override Strategies:**
-- `append`: Add to existing list (default)
-- `replace`: Replace entire list
-- `extend`: String concatenation for space-separated options
-- `reset`: CLI provides `--field-reset` to clear before appending
-
-### 5. Special Features
-
-#### addopts Support (pytest-style)
-
-```python
-class PytestConfig(ConfigPart):
-    addopts: str = ""  # Special: space-separated options
-    
-# Behavior:
-# pytest.ini:  addopts = -v --tb=short
-# pyproject.toml: addopts = "-x"
-# Result:      "-v --tb=short -x"
-# 
-# Note: addopts is only used in config files, not CLI
-# CLI can directly specify options instead
-```
-
-#### INI File Integration
-
-Support pytest-style ini files where:
-- Section headers define groups
-- Keys can be boolean flags or values
-- Some keys have special parsing (e.g., `addopts`)
-
-```ini
-[pytest]
-addopts = -v
-testpaths = tests
-python_files = test_*.py
-```
-
-Maps to:
-```python
-class PytestConfig(ConfigPart):
-    addopts: str = ""
-    testpaths: list[str] = []
-    python_files: list[str] = []
-```
-
-## Architecture Components
-
-### ConfigManager
+### Construction
 
 ```python
 class ConfigManager:
-    """Two-phase configuration manager."""
-    
-    def __init__(self):
-        self.config_parts: dict[str, type[ConfigPart]] = {}
-        self.bootstrap_config: dict[str, Any] = {}
-        self.sources: list[ConfigSource] = []
-    
-    def register_part(self, part_class: type[ConfigPart]) -> None:
-        """Register a ConfigPart class."""
-        name = part_class.__name__
-        self.config_parts[name] = part_class
-    
-    def bootstrap(
-        self, 
-        args: list[str],
-        bootstrap_parts: list[type[ConfigPart]],
-    ) -> dict[str, Any]:
-        """Phase 1: Bootstrap configuration."""
-        # (Implementation shown above)
-        pass
-    
-    def load_full(self) -> None:
-        """Phase 2: Full configuration load."""
-        # (Implementation shown above)
-        pass
-    
-    def build(self) -> dict[str, ConfigPart]:
+    def __init__(
+        self,
+        bootstrap_fragments: list[ConfigPart] | None = None,
+    ) -> None:
         """
-        Build final config instances.
-        
-        Returns dict mapping ConfigPart names to instances.
+        Create ConfigManager with optional bootstrap fragments.
+
+        Args:
+            bootstrap_fragments: Pre-built ConfigPart instances that
+                provide initial context (e.g., invocation directory, CLI args)
         """
-        if not self.sources:
-            raise RuntimeError("Must call load_full() before build()")
-        
-        # Merge all sources
-        merged = {}
-        for source in self.sources:
-            data = source.load(self.config_parts)
-            self._merge_data(merged, data)
-        
-        # Build instances
-        instances = {}
-        for name, part_class in self.config_parts.items():
-            part_data = merged.get(name, {})
-            instances[name] = part_class(**part_data)
-        
-        return instances
-    
-    def _merge_data(self, target: dict[str, Any], source: dict[str, Any]) -> None:
-        """Deep merge source into target."""
-        # (same as before)
-        pass
 ```
 
-### TypeMapper
+**Example:**
+```python
+invocation = InvocationConfig(
+    invocation_dir=Path.cwd(),
+    invocation_args=sys.argv[1:],
+)
+manager = ConfigManager(bootstrap_fragments=[invocation])
+```
+
+### Registering ConfigParts
 
 ```python
-class TypeMapper:
-    """Maps between type model and various formats."""
-    
-    def to_dict(self, config: ConfigPart) -> dict[str, Any]:
-        """Convert config to dict (for serialization)."""
-        
-    def from_dict(self, data: dict[str, Any], config_class: type[ConfigPart]) -> ConfigPart:
-        """Convert dict to config instance."""
-        
-    def to_cli_args(self, config: ConfigPart, prefix: str | None = None) -> list[str]:
-        """Generate CLI args from config."""
-        
-    def cli_arg_name(self, field_path: str, prefix: str | None = None) -> str:
-        """Convert field path to CLI arg name."""
-        
-    def env_var_name(self, field_path: str, prefix: str | None = None) -> str:
-        """Convert field path to env var name."""
+def register_fragment_type(
+    self,
+    fragment_type: type[ConfigPart],
+) -> ConfigPart:
+    """
+    Register a ConfigPart type and return the discovered instance.
+
+    Process:
+    1. Create default instance: fragment_type()
+    2. If instance has discover(), call it and use returned instance
+    3. Otherwise, load from sources and update instance
+    4. Store and return the final instance
+
+    Args:
+        fragment_type: ConfigPart class to register
+
+    Returns:
+        Discovered/loaded ConfigPart instance
+    """
 ```
 
-### OverrideHandler
+**Example:**
+```python
+# Register and get instance in one call
+config_files = manager.register_fragment_type(ConfigFileConfig)
+logging = manager.register_fragment_type(LoggingConfig)
+```
+
+### Accessing Fragments
 
 ```python
-class OverrideHandler:
-    """Handles complex override semantics."""
-    
-    def merge(self, base: dict[str, Any], override: dict[str, Any], 
-              config_class: type[ConfigPart]) -> dict[str, Any]:
-        """Deep merge with field-specific rules."""
-        
-    def merge_list(self, base: list[Any], override: list[Any], 
-                   mode: ListMergeMode) -> list[Any]:
-        """Merge lists according to mode."""
-        
-    def handle_reset(self, field_name: str, value: Any) -> tuple[bool, Any]:
-        """Check for reset markers and return (was_reset, value)."""
+def get_fragment(self, fragment_type: type[T]) -> T:
+    """
+    Get a stored fragment by type.
+
+    Args:
+        fragment_type: ConfigPart class to retrieve
+
+    Returns:
+        The stored ConfigPart instance
+
+    Raises:
+        KeyError: If fragment type not registered
+    """
 ```
 
-### PluginDiscovery
+**Example:**
+```python
+invocation = manager.get_fragment(InvocationConfig)
+print(f"Working dir: {invocation.invocation_dir}")
+```
+
+### Loading from Sources
 
 ```python
-class PluginDiscovery:
-    """Discovers and loads plugin-contributed config parts."""
-    
-    def discover_entry_points(self, group: str = "cot.config.plugins") -> list[type[ConfigPart]]:
-        """Discover config parts via entry points."""
-        
-    def discover_from_module(self, module_name: str) -> list[type[ConfigPart]]:
-        """Discover config parts from a module."""
+def load_for_part(
+    self,
+    fragment_type: type[ConfigPart],
+) -> dict[str, Any]:
+    """
+    Load data for a ConfigPart from all active sources.
+
+    Merges data from all sources in precedence order.
+    Used by discover() methods to get source data.
+
+    Args:
+        fragment_type: ConfigPart class to load data for
+
+    Returns:
+        Dict of field names to values
+    """
 ```
 
-## Usage Examples
+**Example:**
+```python
+class MyConfig(ConfigPart):
+    def discover(self, manager: ConfigManager) -> Self:
+        # Load what sources have for this ConfigPart
+        loaded = manager.load_for_part(type(self))
+        return replace(self, **loaded)
+```
+
+## Source Management
+
+### Source Types
+
+The manager coordinates multiple source types:
+
+| Source | Description | Precedence |
+|--------|-------------|------------|
+| `DefaultSource` | Field defaults from ConfigPart | Lowest |
+| `FileSource` | Config files (TOML, JSON, YAML) | Low |
+| `EnvSource` | Environment variables | Medium |
+| `CLISource` | Command-line arguments | Highest |
+
+### Adding Sources
+
+Sources are typically added through the bootstrap process:
+
+```python
+# Manager adds sources automatically when ConfigParts discover files
+class ConfigFileConfig(ConfigPart):
+    config_files: list[Path] = []
+
+    def discover(self, manager: ConfigManager) -> Self:
+        # ... discover files ...
+        return replace(self, config_files=found_files)
+
+# When discover_files=True marker is set, manager adds FileSource
+# for each file in config_files
+```
+
+### Precedence Order
+
+When the same field is set in multiple sources, higher precedence wins:
+
+```
+1. Default values      (lowest)
+2. System config files
+3. User config files
+4. Local config files
+5. Environment variables
+6. CLI arguments       (highest)
+```
+
+## Override Semantics
+
+### Simple Override
+
+```python
+# config.toml: debug = false
+# CLI: --debug
+# Result: debug = true (CLI wins)
+```
+
+### Deep Merge for Nested Config
+
+```python
+# config.toml:
+#   [database]
+#   host = "localhost"
+#   port = 5432
+
+# CLI: --database-port 3306
+
+# Result:
+#   database.host = "localhost"  (from file)
+#   database.port = 3306         (from CLI)
+```
+
+### List Handling
+
+Lists support multiple merge modes:
+
+**Append (default):**
+```python
+# config.toml: plugins = ["a", "b"]
+# CLI: --plugins c
+# Result: plugins = ["a", "b", "c"]
+```
+
+**Replace (with reset):**
+```python
+# config.toml: plugins = ["a", "b"]
+# CLI: --plugins-reset --plugins c
+# Result: plugins = ["c"]
+```
+
+**Extend (string concat for addopts-style):**
+```python
+# pytest.ini: addopts = "-v"
+# pyproject.toml: addopts = "-x"
+# Result: addopts = "-v -x"
+```
+
+## Type Mapping
+
+The manager handles mapping between ConfigPart field names and source-specific names:
+
+| ConfigPart Field | CLI Argument | Environment Variable | Config File Key |
+|------------------|--------------|---------------------|-----------------|
+| `log_level` | `--log-level` | `LOG_LEVEL` | `log_level` |
+| `debug_mode` | `--debug-mode` | `DEBUG_MODE` | `debug_mode` |
+
+With prefix `app`:
+| ConfigPart Field | CLI Argument | Environment Variable |
+|------------------|--------------|---------------------|
+| `log_level` | `--app-log-level` | `APP_LOG_LEVEL` |
+
+See [Name Matching](name-matching.md) for full mapping rules.
+
+## Internal State
+
+```python
+class ConfigManager:
+    fragments: dict[type[ConfigPart], ConfigPart]  # Stored instances
+    sources: list[ConfigSource]                     # Active sources
+    config_parts: dict[str, type[ConfigPart]]      # Registered types
+```
+
+## Usage Patterns
+
+### Basic Bootstrap Sequence
+
+```python
+from pathlib import Path
+import sys
+
+# 1. Create bootstrap fragment
+invocation = InvocationConfig(
+    invocation_dir=Path.cwd(),
+    invocation_args=sys.argv[1:],
+)
+
+# 2. Create manager
+manager = ConfigManager(bootstrap_fragments=[invocation])
+
+# 3. Discover config files (adds FileSource for found files)
+manager.register_fragment_type(ConfigFileConfig)
+
+# 4. Register application ConfigParts
+manager.register_fragment_type(LoggingConfig)
+manager.register_fragment_type(DatabaseConfig)
+
+# 5. Access configuration
+logging = manager.get_fragment(LoggingConfig)
+database = manager.get_fragment(DatabaseConfig)
+```
+
+### With Plugin Discovery
+
+```python
+# After config files discovered
+manager.register_fragment_type(PluginConfig)
+# PluginConfig.discover() registers plugin ConfigParts
+
+# Plugin configs now available
+pytest_config = manager.get_fragment(PytestConfig)
+```
+
+### Dynamic Registration
+
+```python
+# ConfigParts can be registered at any time
+manager.register_fragment_type(AppConfig)
+
+# New sources are re-evaluated for all parts
+manager.register_fragment_type(NewPluginConfig)
+```
+
+## Error Handling
 
 *To be designed*
 
-### Dynamic Part Registration
+Considerations:
+- What if `discover()` raises an exception?
+- What if a required field has no value from any source?
+- What if type conversion fails?
 
-```python
-# Can add parts at any time
-manager = ConfigManager()
-manager.add_source(FileSource(Path("config.toml")))
+## Related Documents
 
-# Initially just one part
-manager.register_part(AppConfig)
-
-# Load discovers plugins field
-manager.discover()
-
-# Plugin system adds more parts dynamically
-plugin = load_plugin("pytest")
-manager.register_part(plugin.PytestConfig)
-
-# All sources are re-evaluated with new parts
-config = manager.build()
-```
-
-### List Override Examples
-
-```python
-# File: config.toml
-# plugins = ["pytest_cov", "pytest_xdist"]
-
-# CLI 1: Append
-# --plugins pytest_timeout
-# Result: ["pytest_cov", "pytest_xdist", "pytest_timeout"]
-
-# CLI 2: Replace
-# --plugins-reset --plugins pytest_timeout
-# Result: ["pytest_timeout"]
-
-# CLI 3: Multiple values
-# --plugins pytest_timeout --plugins pytest_html
-# Result: ["pytest_cov", "pytest_xdist", "pytest_timeout", "pytest_html"]
-```
-
-### addopts Style
-
-```python
-class PytestConfig(ConfigPart):
-    addopts: str @ help("Additional pytest options")
-
-# pytest.ini:       addopts = -v --tb=short
-# pyproject.toml:   addopts = "-x --pdb"
-# Result:           addopts = "-v --tb=short -x --pdb"
-#
-# Note: addopts only exists in config files for convenience
-# It allows accumulating options across multiple config files
-# CLI doesn't need --addopts since it can directly use the options
-# Implementation treats this as string concat with space separator
-```
-
-## Implementation Phases
-
-### Phase 1: Core Infrastructure
-- [ ] ConfigManager basic structure with bootstrap
-- [ ] ConfigPart discovery hooks (discover_config_locations, discover_plugins)
-- [ ] TypeMapper for dict conversion
-- [ ] Simple file loading (TOML/JSON)
-- [ ] Basic CLI mapping
-
-### Phase 2: Discovery Process
-- [ ] Multi-phase bootstrap implementation
-- [ ] Config file discovery (pytest-style directory walking)
-- [ ] Plugin loading mechanism
-- [ ] Plugin entry point discovery
-
-### Phase 3: Override Semantics
-- [ ] Deep merge for nested configs
-- [ ] List handling (append/replace modes)
-- [ ] Reset marker support
-- [ ] Environment variable loading
-
-### Phase 4: Advanced Features
-- [ ] INI file support
-- [ ] addopts-style string concat
-- [ ] Full argparse integration
-- [ ] Environment variable loading
-
-### Phase 5: Polish
-- [ ] Error messages and validation
-- [ ] Provenance tracking (which source set each value)
-- [ ] Debug mode for config inspection
-- [ ] Documentation and examples
-
-## Open Questions
-
-1. **List merge default**: Should lists append by default, or require explicit `action="append"` marker?
-
-2. **Reset syntax**: Should reset be `--field-reset` flag, or `--field=[]` value?
-
-3. **Type validation**: When should type checking happen? At load time or build time?
-
-4. **Nested prefix handling**: How should prefixes work for nested SubConfigs?
-   ```python
-   class AppConfig(ConfigPart, prefix="app"):
-       db: DatabaseConfig  # Do db fields get "app_db_" prefix?
-   ```
-
-5. **Plugin ordering**: If two plugins provide conflicting defaults, who wins?
-
-6. **INI special syntax**: Should we support pytest's `key =` (empty value) meaning "remove from list"?
+- [Bootstrap Process](bootstrap-process.md) - How bootstrap stages work
+- [ConfigParts](config-parts.md) - ConfigPart specification
+- [Feedback Loops](feedback-loops.md) - Source addition feedback
+- [Name Matching](name-matching.md) - Field to source name mapping
