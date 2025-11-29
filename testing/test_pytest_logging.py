@@ -5,13 +5,13 @@ This test demonstrates a real-world use case: how the configuration
 system can handle pytest-style logging configuration from multiple
 sources using nested SubConfig structures with inheritance.
 
-The pytest logging plugin has three log outputs:
-- CLI (live logging to terminal)
-- File (logging to a file)
-- Capture (captured logs shown on test failure)
+The pytest logging plugin has two log output handlers with specific settings:
+- CLI (live logging to terminal) - log_cli, log_cli_level, log_cli_format, etc.
+- File (logging to a file) - log_file, log_file_level, log_file_format, etc.
 
-Each shares common settings (level, format, date_format) but has
-output-specific options (cli.enabled, file.path).
+The top-level settings (log_level, log_format, log_date_format) serve as:
+1. Settings for captured logs (shown on test failure)
+2. Defaults that cascade to cli/file when their specific settings aren't set
 
 Key pytest behaviors demonstrated:
 1. Child configs inherit from parent (e.g., log_cli_level defaults to log_level)
@@ -84,24 +84,24 @@ class LoggingConfig(LogOutputConfig, ConfigPart, prefix="log"):
     Pytest-style logging configuration using nested SubConfigs.
 
     Inherits from LogOutputConfig to get the shared fields (level, format,
-    date_format) which then cascade to the nested SubConfigs.
+    date_format) which serve as settings for captured logs AND as defaults
+    that cascade to the nested SubConfigs when their fields aren't set.
 
     Maps to pytest's log_* options:
-        log.level          -> log_level (default for all outputs)
-        log.format         -> log_format (default for all outputs)
-        log.date_format    -> log_date_format (default for all outputs)
+        log.level          -> log_level (capture level + default for outputs)
+        log.format         -> log_format (capture format + default for outputs)
+        log.date_format    -> log_date_format (capture date format + default)
         log.cli.enabled    -> log_cli
         log.cli.level      -> log_cli_level (defaults to log.level)
         log.cli.format     -> log_cli_format (defaults to log.format)
         log.file.path      -> log_file
         log.file.level     -> log_file_level (defaults to log.level)
-        log.capture.level  -> (uses log.level if not set)
+        log.file.format    -> log_file_format (defaults to log.format)
     """
 
     # Nested configs - will inherit from top-level if not explicitly set
     cli: LogCliConfig
     file: LogFileConfig
-    capture: LogOutputConfig
 
 
 class TestParentValueCascade:
@@ -128,16 +128,14 @@ class TestParentValueCascade:
         manager.add_source(TomlSource(toml_file))
         config = manager.register_fragment_type(LoggingConfig)
 
-        # Top-level values should cascade to all children
+        # Top-level values should cascade to cli and file
         assert config.level == "DEBUG"
         assert config.cli.level == "DEBUG"
         assert config.file.level == "DEBUG"
-        assert config.capture.level == "DEBUG"
 
         assert config.format == "%(asctime)s %(message)s"
         assert config.cli.format == "%(asctime)s %(message)s"
         assert config.file.format == "%(asctime)s %(message)s"
-        assert config.capture.format == "%(asctime)s %(message)s"
 
     def test_child_override_takes_precedence(self, tmp_path: Path) -> None:
         """Child-specific value overrides parent cascade."""
@@ -162,12 +160,9 @@ class TestParentValueCascade:
         # Top-level
         assert config.level == "DEBUG"
 
-        # Children with explicit values
+        # Children with explicit values override cascade
         assert config.cli.level == "INFO"
         assert config.file.level == "ERROR"
-
-        # Child without explicit value gets parent's value
-        assert config.capture.level == "DEBUG"
 
     def test_env_can_set_parent_level(self) -> None:
         """Environment variable sets parent level, cascades to children."""
@@ -183,7 +178,6 @@ class TestParentValueCascade:
         assert config.level == "DEBUG"
         assert config.cli.level == "DEBUG"
         assert config.file.level == "DEBUG"
-        assert config.capture.level == "DEBUG"
 
 
 class TestFromParentBehavior:
@@ -219,27 +213,23 @@ class TestFromParentBehavior:
         """Different child SubConfigs don't share instance state."""
         cli = LogCliConfig(level="DEBUG")
         file = LogFileConfig(level="ERROR")
-        capture = LogOutputConfig(level="INFO")
 
         # Each has its own level
         assert cli.level == "DEBUG"
         assert file.level == "ERROR"
-        assert capture.level == "INFO"
 
     def test_nested_subconfigs_get_defaults_from_parent_class(self) -> None:
         """When loading config, nested SubConfigs use their class defaults."""
         manager = ConfigManager()
         config = manager.register_fragment_type(LoggingConfig)
 
-        # All three outputs inherit from LogOutputConfig defaults
+        # Both outputs inherit from LogOutputConfig defaults
         assert config.cli.level == "WARNING"
         assert config.file.level == "WARNING"
-        assert config.capture.level == "WARNING"
 
         # Each has the same inherited format
         assert config.cli.format == "%(levelname)s %(message)s"
         assert config.file.format == "%(levelname)s %(message)s"
-        assert config.capture.format == "%(levelname)s %(message)s"
 
     def test_partial_override_preserves_inherited_defaults(
         self, tmp_path: Path
@@ -335,6 +325,9 @@ class TestIniMapping:
         toml_file = tmp_path / "pyproject.toml"
         toml_file.write_text(
             dedent("""
+            [log]
+            level = "WARNING"
+
             [log.cli]
             enabled = true
             level = "DEBUG"
@@ -342,9 +335,6 @@ class TestIniMapping:
             [log.file]
             path = "pytest.log"
             level = "INFO"
-
-            [log.capture]
-            level = "WARNING"
         """)
         )
 
@@ -353,11 +343,11 @@ class TestIniMapping:
         config = manager.register_fragment_type(LoggingConfig)
 
         # Same data, but structured
+        assert config.level == "WARNING"  # capture level
         assert config.cli.enabled is True
         assert config.cli.level == "DEBUG"
         assert config.file.path == "pytest.log"
         assert config.file.level == "INFO"
-        assert config.capture.level == "WARNING"
 
 
 class TestPrecedenceOverride:
