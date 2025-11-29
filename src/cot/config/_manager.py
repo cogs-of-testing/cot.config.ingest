@@ -67,53 +67,46 @@ class ConfigManager:
     """
     Orchestrates configuration loading from multiple sources.
 
-    The ConfigManager coordinates the bootstrap process, manages sources,
-    and builds final ConfigPart instances.
+    The ConfigManager coordinates sources and builds final ConfigPart instances.
+    Sources handle all context (invocation_dir, args, env vars, config files).
 
     Example:
-        invocation = InvocationConfig(
-            invocation_dir=Path.cwd(),
-            args=sys.argv[1:],
+        cli = CLISource(args=sys.argv[1:], invocation_dir=Path.cwd())
+        env = EnvSource(prefix="MYAPP")
+        files = ConfigFileDiscoverySource(
+            invocation_dir=cli.invocation_dir,
+            cli_source=cli,
         )
-        manager = ConfigManager(bootstrap_fragments=[invocation])
-        manager.register_fragment_type(PytestConfig)
-        config = manager.get_fragment(PytestConfig)
+        manager = ConfigManager(sources=[cli, env, files])
+        config = manager.register_fragment_type(MyConfig)
     """
 
     def __init__(
         self,
-        bootstrap_fragments: Sequence[ConfigPart] = (),
+        sources: Sequence[ConfigSource] = (),
     ) -> None:
         """
-        Create ConfigManager with optional bootstrap fragments.
+        Create ConfigManager with sources.
 
         Args:
-            bootstrap_fragments: Pre-built ConfigPart instances that
-                provide initial context (e.g., invocation directory, CLI args).
-                Use InvocationConfig for invocation_dir and args.
+            sources: Configuration sources (CLI, env, files, etc.)
+                Sources are sorted by precedence. Higher precedence wins.
 
-        If an InvocationConfig (or any fragment with args/invocation_dir) is
-        provided, a CLISource is automatically created and added as a source.
+        Note: CLISource should be passed in directly if CLI args are needed.
+        The ConfigManager no longer creates sources automatically.
         """
-        from ._bases import InvocationConfig
         from ._sources import CLISource
 
         self._fragments: dict[type[ConfigPart], ConfigPart] = {}
         self._sources: list[ConfigSource] = []
         self._cli_source: CLISource | None = None
 
-        # Store bootstrap fragments
-        for fragment in bootstrap_fragments:
-            self._fragments[type(fragment)] = fragment
-
-            # InvocationConfig triggers CLI source creation
-            if isinstance(fragment, InvocationConfig):
-                self._cli_source = CLISource(precedence=25)
-                self._cli_source.configure_from_fragments([fragment])
-                self.add_source(self._cli_source)
-
-            # Process any config_source markers on bootstrap fragments
-            self._process_config_sources(fragment)
+        # Add all sources
+        for source in sources:
+            self.add_source(source)
+            # Track CLI source for registration and addopts
+            if isinstance(source, CLISource):
+                self._cli_source = source
 
     def add_source(self, source: ConfigSource) -> None:
         """
@@ -360,46 +353,6 @@ class ConfigManager:
             # Prepend addopts to CLI source (if available)
             if self._cli_source is not None:
                 self._cli_source.prepend_addopts(addopts)
-
-    def _process_config_sources(self, fragment: ConfigPart) -> None:
-        """
-        Process fields marked with config_source annotation on a fragment instance.
-
-        For each field with the config_source marker, if the value is a
-        valid path to a config file, add it as a source.
-        """
-        from pathlib import Path
-
-        from ._sources import TomlSource
-
-        hints = get_type_hints(type(fragment), include_extras=True)
-
-        for field_name, field_type in hints.items():
-            marker = _get_config_source_marker(field_type)
-            if marker is None:
-                continue
-
-            value = getattr(fragment, field_name, None)
-            if value is None:
-                continue
-
-            # Convert string to Path if needed
-            if isinstance(value, str):
-                value = Path(value)
-
-            # If it's a relative path and we have invocation_dir, resolve it
-            if isinstance(value, Path) and not value.is_absolute():
-                invocation_dir = getattr(fragment, "invocation_dir", None)
-                if invocation_dir is not None:
-                    value = invocation_dir / value
-
-            # Add as source if file exists and is a supported type
-            if (
-                isinstance(value, Path)
-                and value.exists()
-                and value.suffix in (".toml",)
-            ):
-                self.add_source(TomlSource(value, precedence=marker.precedence))
 
 
 def _get_field_defaults(cls: type[ConfigPart]) -> dict[str, Any]:

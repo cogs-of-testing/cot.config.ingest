@@ -268,23 +268,16 @@ class TestSourcePrecedence:
         assert config.format == "base format"
 
 
-class TestBootstrapFragment:
-    """Test using bootstrap fragments for initial context."""
+class TestSourcesOnly:
+    """Test the sources-only architecture."""
 
-    def test_bootstrap_provides_context(self, tmp_path: Path) -> None:
-        """Bootstrap fragment provides initial context."""
-
-        class InvocationConfig(ConfigPart):
-            invocation_dir: Path
-            config_file: Path | None = None
+    def test_sources_provide_context(self, tmp_path: Path) -> None:
+        """Sources provide all context directly."""
+        from cot.config import CLISource, ConfigFileDiscoverySource
 
         class AppConfig(ConfigPart, prefix="app"):
             debug: bool = False
-
-        invocation = InvocationConfig(
-            invocation_dir=tmp_path,
-            config_file=tmp_path / "config.ini",
-        )
+            config_file: str | None = None
 
         # Create config file
         ini_file = tmp_path / "config.ini"
@@ -295,15 +288,19 @@ class TestBootstrapFragment:
         """)
         )
 
-        manager = ConfigManager(bootstrap_fragments=[invocation])
+        # Sources hold all context
+        cli = CLISource(
+            args=["--config-file", "config.ini"],
+            invocation_dir=tmp_path,
+        )
+        files = ConfigFileDiscoverySource(
+            invocation_dir=tmp_path,
+            cli_source=cli,
+            filenames=["config.ini"],
+        )
 
-        # Bootstrap fragment is accessible
-        inv = manager.get_fragment(InvocationConfig)
-        assert inv.invocation_dir == tmp_path
-
-        # Can use it to add sources
-        if inv.config_file:
-            manager.add_source(IniSource(inv.config_file))
+        manager = ConfigManager(sources=[cli, files])
 
         config = manager.register_fragment_type(AppConfig)
         assert config.debug is True
+        assert config.config_file == "config.ini"

@@ -11,7 +11,13 @@ from ._annotations import (
 )
 from ._bases import ConfigPart, InvocationConfig, SubConfig
 from ._manager import ConfigManager, ConfigSource, Discoverable
-from ._sources import CLISource, EnvSource, IniSource, TomlSource
+from ._sources import (
+    CLISource,
+    ConfigFileDiscoverySource,
+    EnvSource,
+    IniSource,
+    TomlSource,
+)
 
 __all__ = [
     # Base classes
@@ -27,6 +33,7 @@ __all__ = [
     "IniSource",
     "CLISource",
     "EnvSource",
+    "ConfigFileDiscoverySource",
     # Annotations
     "help",
     "from_parent",

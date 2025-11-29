@@ -2,8 +2,8 @@
 Acceptance test for bootstrap workflow.
 
 This test demonstrates the complete bootstrap flow where:
-1. ConfigManager is created with invocation_dir and CLI args
-2. ConfigPart fields marked with config_source are auto-discovered as sources
+1. ConfigManager is created with sources (CLI, env, config files)
+2. ConfigFileDiscoverySource discovers config files from CLI/env/filesystem
 3. Configuration is loaded with proper precedence (CLI > env > file > defaults)
 
 This mirrors how pytest discovers pytest.ini/pyproject.toml based on
@@ -17,10 +17,11 @@ from textwrap import dedent
 from typing import Annotated
 
 from cot.config import (
+    CLISource,
+    ConfigFileDiscoverySource,
     ConfigManager,
     ConfigPart,
     EnvSource,
-    InvocationConfig,
     addopts_field,
     bootstrap_only,
     config_source,
@@ -68,12 +69,16 @@ class TestBootstrapConfigFileDiscovery:
         """)
         )
 
-        # ConfigManager with CLI args - config_source marker auto-adds the file
-        invocation = InvocationConfig(
-            invocation_dir=tmp_path,
+        # Create sources
+        cli = CLISource(
             args=["--config-file", "custom.toml"],
+            invocation_dir=tmp_path,
         )
-        manager = ConfigManager(bootstrap_fragments=[invocation])
+        files = ConfigFileDiscoverySource(
+            invocation_dir=tmp_path,
+            cli_source=cli,
+        )
+        manager = ConfigManager(sources=[cli, files])
         config = manager.register_fragment_type(PytestConfig)
 
         assert config.config_file == "custom.toml"
@@ -99,11 +104,15 @@ class TestBootstrapConfigFileDiscovery:
             "PYTEST_ADDOPTS": "-x --pdb",
         }
 
-        invocation = InvocationConfig(
-            invocation_dir=tmp_path,
+        cli = CLISource(
             args=["--config-file", "pytest.toml"],
+            invocation_dir=tmp_path,
         )
-        manager = ConfigManager(bootstrap_fragments=[invocation])
+        files = ConfigFileDiscoverySource(
+            invocation_dir=tmp_path,
+            cli_source=cli,
+        )
+        manager = ConfigManager(sources=[cli, files])
         manager.add_source(EnvSource(environ=env, precedence=20))
 
         config = manager.register_fragment_type(PytestConfig)
@@ -117,8 +126,8 @@ class TestBootstrapConfigFileDiscovery:
         """
         Without config file, defaults are used.
         """
-        invocation = InvocationConfig(invocation_dir=tmp_path, args=[])
-        manager = ConfigManager(bootstrap_fragments=[invocation])
+        cli = CLISource(args=[], invocation_dir=tmp_path)
+        manager = ConfigManager(sources=[cli])
         config = manager.register_fragment_type(PytestConfig)
 
         assert config.config_file is None
@@ -131,11 +140,15 @@ class TestBootstrapConfigFileDiscovery:
         """
         import pytest
 
-        invocation = InvocationConfig(
-            invocation_dir=tmp_path,
+        cli = CLISource(
             args=["--config-file", "nonexistent.toml"],
+            invocation_dir=tmp_path,
         )
-        manager = ConfigManager(bootstrap_fragments=[invocation])
+        files = ConfigFileDiscoverySource(
+            invocation_dir=tmp_path,
+            cli_source=cli,
+        )
+        manager = ConfigManager(sources=[cli, files])
 
         with pytest.raises(FileNotFoundError, match="nonexistent.toml"):
             manager.register_fragment_type(PytestConfig)
@@ -169,11 +182,15 @@ class TestAddoptsCombination:
             "PYTEST_ADDOPTS": "-x --pdb",
         }
 
-        invocation = InvocationConfig(
-            invocation_dir=tmp_path,
+        cli = CLISource(
             args=["--config-file", "pytest.toml"],
+            invocation_dir=tmp_path,
         )
-        manager = ConfigManager(bootstrap_fragments=[invocation])
+        files = ConfigFileDiscoverySource(
+            invocation_dir=tmp_path,
+            cli_source=cli,
+        )
+        manager = ConfigManager(sources=[cli, files])
         manager.add_source(EnvSource(environ=env, precedence=20))
 
         config = manager.register_fragment_type(PytestConfig)
@@ -193,11 +210,15 @@ class TestAddoptsCombination:
         """)
         )
 
-        invocation = InvocationConfig(
-            invocation_dir=tmp_path,
+        cli = CLISource(
             args=["--config-file", "pytest.toml"],
+            invocation_dir=tmp_path,
         )
-        manager = ConfigManager(bootstrap_fragments=[invocation])
+        files = ConfigFileDiscoverySource(
+            invocation_dir=tmp_path,
+            cli_source=cli,
+        )
+        manager = ConfigManager(sources=[cli, files])
 
         config = manager.register_fragment_type(PytestConfig)
 
@@ -211,8 +232,8 @@ class TestAddoptsCombination:
             "PYTEST_ADDOPTS": "-x --pdb",
         }
 
-        invocation = InvocationConfig(invocation_dir=tmp_path, args=[])
-        manager = ConfigManager(bootstrap_fragments=[invocation])
+        cli = CLISource(args=[], invocation_dir=tmp_path)
+        manager = ConfigManager(sources=[cli])
         manager.add_source(EnvSource(environ=env, precedence=20))
 
         config = manager.register_fragment_type(PytestConfig)
@@ -235,11 +256,15 @@ class TestAddoptsCombination:
             "PYTEST_ADDOPTS": "-x",
         }
 
-        invocation = InvocationConfig(
-            invocation_dir=tmp_path,
+        cli = CLISource(
             args=["--config-file", "pytest.toml", "--addopts=--pdb"],
+            invocation_dir=tmp_path,
         )
-        manager = ConfigManager(bootstrap_fragments=[invocation])
+        files = ConfigFileDiscoverySource(
+            invocation_dir=tmp_path,
+            cli_source=cli,
+        )
+        manager = ConfigManager(sources=[cli, files])
         manager.add_source(EnvSource(environ=env, precedence=20))
 
         config = manager.register_fragment_type(PytestConfig)
@@ -273,11 +298,15 @@ class TestAddoptsPropagation:
         """)
         )
 
-        invocation = InvocationConfig(
-            invocation_dir=tmp_path,
+        cli = CLISource(
             args=["--config-file", "pytest.toml"],
+            invocation_dir=tmp_path,
         )
-        manager = ConfigManager(bootstrap_fragments=[invocation])
+        files = ConfigFileDiscoverySource(
+            invocation_dir=tmp_path,
+            cli_source=cli,
+        )
+        manager = ConfigManager(sources=[cli, files])
         config = manager.register_fragment_type(PytestConfigWithVerbose)
 
         assert config.verbose is True
@@ -291,8 +320,8 @@ class TestAddoptsPropagation:
             "PYTEST_ADDOPTS": "--verbose",
         }
 
-        invocation = InvocationConfig(invocation_dir=tmp_path, args=[])
-        manager = ConfigManager(bootstrap_fragments=[invocation])
+        cli = CLISource(args=[], invocation_dir=tmp_path)
+        manager = ConfigManager(sources=[cli])
         manager.add_source(EnvSource(environ=env, precedence=20))
         config = manager.register_fragment_type(PytestConfigWithVerbose)
 
@@ -314,11 +343,15 @@ class TestAddoptsPropagation:
         )
 
         # CLI explicitly sets verbose=False (no -v flag)
-        invocation = InvocationConfig(
-            invocation_dir=tmp_path,
+        cli = CLISource(
             args=["--config-file", "pytest.toml"],  # no --verbose
+            invocation_dir=tmp_path,
         )
-        manager = ConfigManager(bootstrap_fragments=[invocation])
+        files = ConfigFileDiscoverySource(
+            invocation_dir=tmp_path,
+            cli_source=cli,
+        )
+        manager = ConfigManager(sources=[cli, files])
         config = manager.register_fragment_type(PytestConfigWithVerbose)
 
         # addopts -v sets it to True (since CLI didn't explicitly set it)
@@ -341,11 +374,15 @@ class TestAddoptsPropagation:
         """)
         )
 
-        invocation = InvocationConfig(
-            invocation_dir=tmp_path,
+        cli = CLISource(
             args=["--config-file", "pytest.toml"],
+            invocation_dir=tmp_path,
         )
-        manager = ConfigManager(bootstrap_fragments=[invocation])
+        files = ConfigFileDiscoverySource(
+            invocation_dir=tmp_path,
+            cli_source=cli,
+        )
+        manager = ConfigManager(sources=[cli, files])
 
         with pytest.raises(ValueError, match="config.file.*addopts|bootstrap"):
             manager.register_fragment_type(PytestConfigWithVerbose)
@@ -362,11 +399,15 @@ class TestAddoptsPropagation:
         """)
         )
 
-        invocation = InvocationConfig(
-            invocation_dir=tmp_path,
+        cli = CLISource(
             args=["--config-file", "pytest.toml"],
+            invocation_dir=tmp_path,
         )
-        manager = ConfigManager(bootstrap_fragments=[invocation])
+        files = ConfigFileDiscoverySource(
+            invocation_dir=tmp_path,
+            cli_source=cli,
+        )
+        manager = ConfigManager(sources=[cli, files])
         config = manager.register_fragment_type(PytestConfigWithVerbose)
 
         assert config.verbose is True

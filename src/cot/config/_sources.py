@@ -6,7 +6,6 @@ import configparser
 import os
 import sys
 import types
-from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Union, get_origin, get_type_hints
 
@@ -137,57 +136,65 @@ class CLISource:
     Load configuration from command-line arguments.
 
     CLISource manages CLI argument parsing with support for:
-    - Initial args from InvocationConfig (via configure_from_fragments)
+    - Initial args and invocation_dir passed directly to constructor
     - Addopts prepended from config files/env
     - Single parser built from all registered fragment types
+    - Generic -o/--override for any config option
     - Tracking of unknown/unconsumed args
 
     Flow:
-    1. Create empty CLISource
-    2. configure_from_fragments() extracts args/invocation_dir from bootstrap fragments
-    3. register_fragment_type() for each ConfigPart (builds parser)
-    4. prepend_addopts() after loading config files
-    5. freeze_sources() to prevent further addopts
-    6. load() to get values for each fragment type
-    7. get_unknown_args() to get unconsumed args
+    1. Create CLISource with args and invocation_dir
+    2. register_fragment_type() for each ConfigPart (builds parser)
+    3. prepend_addopts() after loading config files
+    4. freeze_sources() to prevent further addopts
+    5. load() to get values for each fragment type
+    6. get_unknown_args() to get unconsumed args
+
+    Override mechanism:
+    Use -o/--override for options that don't have dedicated CLI flags:
+        -o log.cli.level=DEBUG -o cache.dir=/tmp/cache
     """
 
-    def __init__(self, *, precedence: int = 25) -> None:
+    def __init__(
+        self,
+        args: list[str] | None = None,
+        *,
+        invocation_dir: Path | None = None,
+        precedence: int = 25,
+    ) -> None:
         """
-        Create an empty CLI argument source.
+        Create a CLI argument source.
 
         Args:
+            args: Command line arguments (defaults to empty list)
+            invocation_dir: Directory where command was invoked (defaults to cwd)
             precedence: Higher values override lower values (default: 25)
         """
         import argparse
 
         self._precedence = precedence
-        self._initial_args: list[str] = []
+        self._initial_args: list[str] = list(args) if args is not None else []
         self._addopts: list[str] = []
-        self._invocation_dir: Path = Path.cwd()
+        if invocation_dir is not None:
+            self._invocation_dir: Path = invocation_dir
+        else:
+            self._invocation_dir = Path.cwd()
         self._parser = argparse.ArgumentParser(add_help=False)
         self._registered_fields: dict[str, type[Any]] = {}  # field_name -> field_type
         self._unknown_args: list[str] = []
         self._sources_frozen: bool = False
         self._parsed: bool = False
+        self._overrides: dict[str, str] = {}  # dotted.path -> value
 
-    def configure_from_fragments(
-        self, fragments: Sequence[ConfigPart]
-    ) -> None:
-        """
-        Configure CLI source from bootstrap fragments.
-
-        Extracts args and invocation_dir from fragments that have them
-        (typically InvocationConfig).
-
-        Args:
-            fragments: Bootstrap ConfigPart instances
-        """
-        for fragment in fragments:
-            if hasattr(fragment, "args"):
-                self._initial_args = list(fragment.args)
-            if hasattr(fragment, "invocation_dir"):
-                self._invocation_dir = fragment.invocation_dir
+        # Add the generic override option
+        self._parser.add_argument(
+            "-o", "--override",
+            dest="_overrides",
+            action="append",
+            default=[],
+            metavar="KEY=VALUE",
+            help="Override any config option (e.g., -o log.level=DEBUG)",
+        )
 
     def prepend_addopts(self, addopts: str | list[str]) -> None:
         """
@@ -291,11 +298,21 @@ class CLISource:
         parsed, unknown = self._parser.parse_known_args(self.args)
         self._parsed_namespace = parsed
         self._unknown_args = unknown
+
+        # Process -o overrides into dict
+        self._overrides = {}
+        for override in getattr(parsed, "_overrides", []) or []:
+            if "=" in override:
+                key, value = override.split("=", 1)
+                self._overrides[key] = value
+
         self._parsed = True
 
     def load(self, part_type: type[ConfigPart]) -> dict[str, Any]:
         """
         Load configuration data for a ConfigPart type from CLI args.
+
+        Includes both dedicated CLI flags and -o overrides.
 
         Args:
             part_type: ConfigPart class to load data for
@@ -308,6 +325,16 @@ class CLISource:
         result: dict[str, Any] = {}
         type_hints = _get_resolved_type_hints(part_type)
 
+        # Get prefix for this part type
+        from ._annotations import PrefixMarker
+        prefix = None
+        markers = getattr(part_type, "_config_markers", ())
+        for marker in markers:
+            if isinstance(marker, PrefixMarker):
+                prefix = marker.prefix
+                break
+
+        # First, load from dedicated CLI flags
         for field_name, field_type in type_hints.items():
             value = getattr(self._parsed_namespace, field_name, None)
             if value is not None:
@@ -326,7 +353,51 @@ class CLISource:
                 else:
                     result[field_name] = value
 
+        # Then, apply -o overrides (they have highest precedence)
+        self._apply_overrides(result, type_hints, prefix)
+
         return result
+
+    def _apply_overrides(
+        self,
+        result: dict[str, Any],
+        type_hints: dict[str, Any],
+        prefix: str | None,
+    ) -> None:
+        """Apply -o overrides to the result dict."""
+        for key, raw_value in self._overrides.items():
+            # Handle prefixed keys (e.g., "pytest.verbose" or "log.cli.level")
+            parts = key.split(".")
+
+            # Check if first part matches prefix
+            if prefix and parts[0] == prefix:
+                parts = parts[1:]  # Remove prefix
+
+            if len(parts) == 1:
+                # Simple field: -o verbose=true or -o pytest.verbose=true
+                field_name = parts[0]
+                if field_name in type_hints:
+                    field_type = type_hints[field_name]
+                    result[field_name] = _parse_value(raw_value, field_type)
+            else:
+                # Nested field: -o log.cli.level=DEBUG
+                # Build nested dict structure
+                field_name = parts[0]
+                if field_name in type_hints:
+                    if field_name not in result:
+                        result[field_name] = {}
+                    if isinstance(result[field_name], dict):
+                        self._set_nested(result[field_name], parts[1:], raw_value)
+
+    def _set_nested(
+        self, target: dict[str, Any], parts: list[str], value: str
+    ) -> None:
+        """Set a nested value in a dict using dotted path parts."""
+        for part in parts[:-1]:
+            if part not in target:
+                target[part] = {}
+            target = target[part]
+        target[parts[-1]] = value
 
     def get_unknown_args(self) -> list[str]:
         """
@@ -340,7 +411,15 @@ class CLISource:
 
 
 class EnvSource:
-    """Load configuration from environment variables."""
+    """Load configuration from environment variables.
+
+    Supports TOML parsing for complex values:
+        APP_DATABASE='host = "localhost"\\nport = 5432'
+
+    When parse_toml=True, values that look like TOML (contain = or start with
+    [ or {) are parsed as TOML. This allows setting nested config from a single
+    env var.
+    """
 
     def __init__(
         self,
@@ -348,6 +427,7 @@ class EnvSource:
         *,
         precedence: int = 20,
         environ: dict[str, str] | None = None,
+        parse_toml: bool = False,
     ) -> None:
         """
         Create an environment variable configuration source.
@@ -356,10 +436,12 @@ class EnvSource:
             prefix: Prefix for environment variables (e.g., "APP" -> APP_*)
             precedence: Higher values override lower values (default: 20)
             environ: Environment dict to use (defaults to os.environ)
+            parse_toml: If True, attempt to parse values as TOML for complex types
         """
         self._prefix = prefix.upper()
         self._precedence = precedence
         self._environ = environ if environ is not None else os.environ
+        self._parse_toml = parse_toml
 
     @property
     def precedence(self) -> int:
@@ -377,6 +459,7 @@ class EnvSource:
         - PREFIX_FIELD_NAME -> field_name
         - PREFIX_NESTED_FIELD -> {"nested": {"field": value}}
         - Handles type conversion based on annotations
+        - If parse_toml=True, values can be TOML for complex types
         """
         from ._bases import SubConfig
 
@@ -392,7 +475,7 @@ class EnvSource:
             env_name = _field_to_env_name(field_name, effective_prefix)
             if env_name in self._environ:
                 raw_value = self._environ[env_name]
-                result[field_name] = _parse_env_value(raw_value, field_type)
+                result[field_name] = self._parse_value(raw_value, field_type)
 
         # Then handle nested SubConfig fields
         for field_name, field_type in type_hints.items():
@@ -408,6 +491,39 @@ class EnvSource:
 
         return result
 
+    def _parse_value(self, raw_value: str, field_type: type[Any] | None) -> Any:
+        """Parse a value, optionally trying TOML parsing first."""
+        if self._parse_toml and self._looks_like_toml(raw_value):
+            try:
+                # Wrap in a key to make it valid TOML
+                toml_str = f"value = {raw_value}"
+                parsed = tomllib.loads(toml_str)
+                return parsed.get("value", raw_value)
+            except Exception:
+                # If TOML parsing fails, try as inline table or fall through
+                try:
+                    # Try parsing the raw value directly if it looks like a table
+                    if raw_value.strip().startswith("{"):
+                        toml_str = f"value = {raw_value}"
+                        parsed = tomllib.loads(toml_str)
+                        return parsed.get("value", raw_value)
+                except Exception:
+                    pass
+        # Fall back to standard parsing
+        return _parse_env_value(raw_value, field_type)
+
+    def _looks_like_toml(self, value: str) -> bool:
+        """Check if a value looks like it might be TOML."""
+        value = value.strip()
+        # Check for inline table, array, or quoted string
+        return (
+            value.startswith("{")
+            or value.startswith("[")
+            or value.startswith('"')
+            or value.startswith("'")
+            or "=" in value
+        )
+
     def _load_nested(
         self, subconfig_type: type[SubConfig], prefix: str
     ) -> dict[str, Any]:
@@ -421,7 +537,7 @@ class EnvSource:
             env_name = _field_to_env_name(field_name, prefix)
             if env_name in self._environ:
                 raw_value = self._environ[env_name]
-                result[field_name] = _parse_env_value(raw_value, field_type)
+                result[field_name] = self._parse_value(raw_value, field_type)
 
         # Recursively handle nested SubConfigs
         for field_name, field_type in type_hints.items():
@@ -522,9 +638,178 @@ def _parse_env_value(raw_value: str, field_type: type[Any] | None) -> Any:
     return _parse_value(raw_value, field_type)
 
 
+class ConfigFileDiscoverySource:
+    """
+    Meta-source that discovers config files and delegates to TomlSource/IniSource.
+
+    This source:
+    1. Looks for explicit config file from CLI (--config-file) or env (PREFIX_CONFIG)
+    2. If not found, discovers config files in invocation_dir and ancestors
+    3. Creates appropriate sources (TOML, INI) for found files
+    4. Determines rootdir based on config file location
+
+    Example:
+        cli = CLISource(args=sys.argv[1:], invocation_dir=Path.cwd())
+        env = EnvSource(prefix="PYTEST")
+        files = ConfigFileDiscoverySource(
+            cli_source=cli,
+            env_source=env,
+            invocation_dir=cli.invocation_dir,
+            filenames=["pyproject.toml", "pytest.ini", "setup.cfg"],
+        )
+    """
+
+    def __init__(
+        self,
+        *,
+        invocation_dir: Path,
+        cli_source: CLISource | None = None,
+        env_source: EnvSource | None = None,
+        filenames: list[str] | None = None,
+        config_file_cli_arg: str = "config_file",
+        config_file_env_var: str | None = None,
+        precedence: int = 15,
+    ) -> None:
+        """
+        Create a config file discovery source.
+
+        Args:
+            invocation_dir: Directory to start searching from
+            cli_source: CLI source to check for --config-file
+            env_source: Env source to check for CONFIG env var
+            filenames: Config filenames to look for (default: pyproject.toml, setup.cfg)
+            config_file_cli_arg: CLI arg name for explicit config file
+            config_file_env_var: Env var name for explicit config file
+            precedence: Higher values override lower values (default: 15)
+        """
+        self._invocation_dir = invocation_dir
+        self._cli_source = cli_source
+        self._env_source = env_source
+        self._filenames = filenames or ["pyproject.toml", "setup.cfg"]
+        self._config_file_cli_arg = config_file_cli_arg
+        self._config_file_env_var = config_file_env_var
+        self._precedence = precedence
+        self._discovered_source: TomlSource | IniSource | None = None
+        self._rootdir: Path | None = None
+        self._config_file: Path | None = None
+
+    @property
+    def precedence(self) -> int:
+        return self._precedence
+
+    @property
+    def rootdir(self) -> Path | None:
+        """The determined rootdir (directory containing config file)."""
+        self._ensure_discovered()
+        return self._rootdir
+
+    @property
+    def config_file(self) -> Path | None:
+        """The discovered or specified config file path."""
+        self._ensure_discovered()
+        return self._config_file
+
+    def _ensure_discovered(self) -> None:
+        """Discover config file if not already done."""
+        if self._discovered_source is not None or self._config_file is not None:
+            return
+
+        # 1. Check CLI for explicit config file
+        config_path = self._get_config_from_cli()
+
+        # 2. Check env for explicit config file
+        if config_path is None:
+            config_path = self._get_config_from_env()
+
+        # 3. Auto-discover config file
+        if config_path is None:
+            config_path = self._discover_config_file()
+
+        if config_path is not None:
+            self._config_file = config_path
+            self._rootdir = config_path.parent
+            self._discovered_source = self._create_source(config_path)
+
+    def _get_config_from_cli(self) -> Path | None:
+        """Get config file path from CLI args."""
+        if self._cli_source is None:
+            return None
+
+        # Parse CLI to get the config file arg
+        self._cli_source._ensure_parsed()
+        value = getattr(
+            self._cli_source._parsed_namespace,
+            self._config_file_cli_arg,
+            None
+        )
+        if value is not None:
+            path = Path(value)
+            if not path.is_absolute():
+                path = self._invocation_dir / path
+            if not path.exists():
+                raise FileNotFoundError(
+                    f"Config file not found: {path} "
+                    f"(specified via --{self._config_file_cli_arg.replace('_', '-')})"
+                )
+            return path
+        return None
+
+    def _get_config_from_env(self) -> Path | None:
+        """Get config file path from environment variable."""
+        if self._env_source is None or self._config_file_env_var is None:
+            return None
+
+        value = self._env_source._environ.get(self._config_file_env_var)
+        if value is not None:
+            path = Path(value)
+            if not path.is_absolute():
+                path = self._invocation_dir / path
+            if not path.exists():
+                raise FileNotFoundError(
+                    f"Config file not found: {path} "
+                    f"(specified via {self._config_file_env_var})"
+                )
+            return path
+        return None
+
+    def _discover_config_file(self) -> Path | None:
+        """Search for config file in invocation_dir and ancestors."""
+        current = self._invocation_dir
+        while True:
+            for filename in self._filenames:
+                candidate = current / filename
+                if candidate.exists():
+                    return candidate
+
+            parent = current.parent
+            if parent == current:  # Reached root
+                break
+            current = parent
+
+        return None
+
+    def _create_source(self, path: Path) -> TomlSource | IniSource:
+        """Create appropriate source for the config file type."""
+        if path.suffix == ".toml":
+            return TomlSource(path, precedence=self._precedence)
+        elif path.suffix in (".ini", ".cfg"):
+            return IniSource(path, precedence=self._precedence)
+        else:
+            # Default to TOML for unknown extensions
+            return TomlSource(path, precedence=self._precedence)
+
+    def load(self, part_type: type[ConfigPart]) -> dict[str, Any]:
+        """Load configuration from discovered config file."""
+        self._ensure_discovered()
+        if self._discovered_source is None:
+            return {}
+        return self._discovered_source.load(part_type)
+
+
 __all__ = [
     "TomlSource",
     "IniSource",
     "CLISource",
     "EnvSource",
+    "ConfigFileDiscoverySource",
 ]
