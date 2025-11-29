@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from typing import (
-    TYPE_CHECKING,
     Any,
     Protocol,
     TypeVar,
@@ -13,11 +12,8 @@ from typing import (
     runtime_checkable,
 )
 
-from ._annotations import FromParentMarker
+from ._annotations import ConfigSourceMarker, FromParentMarker
 from ._bases import ConfigPart, SubConfig
-
-if TYPE_CHECKING:
-    from typing_extensions import Self
 
 _T = TypeVar("_T", bound=ConfigPart)
 
@@ -38,10 +34,26 @@ class ConfigSource(Protocol):
 
 @runtime_checkable
 class Discoverable(Protocol):
-    """Protocol for ConfigParts that implement discovery."""
+    """
+    Protocol for ConfigParts that can discover/modify sources before loading.
 
-    def discover(self, manager: ConfigManager) -> Self:
-        """Discover and return updated instance."""
+    The discover classmethod is called BEFORE the instance is created,
+    allowing it to add sources (e.g., discovered config files) that will
+    be used when loading the final instance.
+    """
+
+    @classmethod
+    def discover(cls, manager: ConfigManager) -> None:
+        """
+        Discover and add sources before instance creation.
+
+        This is called before loading data from sources, allowing the
+        ConfigPart to inspect bootstrap fragments and add new sources
+        (e.g., a config file path from CLI args).
+
+        Args:
+            manager: ConfigManager to add sources to
+        """
         ...
 
 
@@ -53,33 +65,58 @@ class ConfigManager:
     and builds final ConfigPart instances.
 
     Example:
-        invocation = InvocationConfig(
+        manager = ConfigManager(
             invocation_dir=Path.cwd(),
-            invocation_args=sys.argv[1:],
+            args=sys.argv[1:],
         )
-        manager = ConfigManager(bootstrap_fragments=[invocation])
-        manager.register_fragment_type(LoggingConfig)
-        config = manager.get_fragment(LoggingConfig)
+        manager.register_fragment_type(PytestConfig)
+        config = manager.get_fragment(PytestConfig)
     """
 
     def __init__(
         self,
+        invocation_dir: Any | None = None,
+        args: list[str] | None = None,
+        *,
         bootstrap_fragments: list[ConfigPart] | None = None,
     ) -> None:
         """
-        Create ConfigManager with optional bootstrap fragments.
+        Create ConfigManager with invocation context.
 
         Args:
+            invocation_dir: Directory where command was invoked (for resolving
+                relative config file paths). Defaults to current directory.
+            args: Command line arguments. Defaults to sys.argv[1:].
             bootstrap_fragments: Pre-built ConfigPart instances that
                 provide initial context (e.g., invocation directory, CLI args)
         """
+        import sys
+        from pathlib import Path
+
         self._fragments: dict[type[ConfigPart], ConfigPart] = {}
         self._sources: list[ConfigSource] = []
 
-        # Store bootstrap fragments
+        # Store invocation context
+        self._invocation_dir = (
+            Path(invocation_dir) if invocation_dir is not None else Path.cwd()
+        )
+        self._args = args if args is not None else sys.argv[1:]
+
+        # Store bootstrap fragments and process config_source markers
         if bootstrap_fragments:
             for fragment in bootstrap_fragments:
                 self._fragments[type(fragment)] = fragment
+                self._process_config_sources(fragment)
+
+    @property
+    def invocation_dir(self) -> Any:
+        """Directory where command was invoked."""
+        return self._invocation_dir
+
+    @property
+    def args(self) -> list[str]:
+        """Command line arguments."""
+        return self._args
 
     def add_source(self, source: ConfigSource) -> None:
         """
@@ -95,38 +132,55 @@ class ConfigManager:
         fragment_type: type[_T],
     ) -> _T:
         """
-        Register a ConfigPart type and return the discovered instance.
+        Register a ConfigPart type and return the loaded instance.
 
         Process:
-        1. Create default instance with field defaults
-        2. If instance has discover(), call it and use returned instance
-        3. Otherwise, load from sources and create instance
-        4. Store and return the final instance
+        1. Load CLI args for this type (highest precedence)
+        2. If type has discover(), call it to add sources (e.g., config files)
+        3. Load data from all sources + CLI
+        4. Process config_source markers to add discovered config files
+        5. Re-load with new sources
+        6. Build instance with defaults merged with loaded data
+        7. Store and return the final instance
 
         Args:
             fragment_type: ConfigPart class to register
 
         Returns:
-            Discovered/loaded ConfigPart instance
+            Loaded ConfigPart instance
         """
-        # Load data from all sources
+        from ._sources import CLISource
+
+        # Load CLI args for this type
+        cli_source = CLISource(self._args, precedence=25)
+        cli_data = cli_source.load(fragment_type)
+
+        # Call discover if available (adds sources before loading)
+        discover_method = getattr(fragment_type, "discover", None)
+        if discover_method is not None and callable(discover_method):
+            discover_method(self)
+
+        # Load data from all registered sources
         loaded = self.load_for_part(fragment_type)
 
         # Get field defaults from type annotations
         defaults = _get_field_defaults(fragment_type)
 
-        # Merge defaults with loaded data
-        merged = {**defaults, **loaded}
+        # Merge: defaults < sources < cli (cli has highest precedence)
+        merged = {**defaults, **loaded, **cli_data}
+
+        # Check for config_source markers and add sources
+        self._process_config_source_fields(fragment_type, merged)
+
+        # Re-load from sources now that config files may have been added
+        loaded = self.load_for_part(fragment_type)
+        merged = {**defaults, **loaded, **cli_data}
 
         # Build nested SubConfigs from type hints
         merged = _build_nested_subconfigs(fragment_type, merged)
 
         # Create instance
         instance = fragment_type(**merged)
-
-        # Call discover if available
-        if isinstance(instance, Discoverable):
-            instance = instance.discover(self)
 
         # Store
         self._fragments[fragment_type] = instance
@@ -176,6 +230,94 @@ class ConfigManager:
     def sources(self) -> list[ConfigSource]:
         """Get list of registered sources (sorted by precedence)."""
         return list(self._sources)
+
+    def _process_config_source_fields(
+        self, fragment_type: type[ConfigPart], data: dict[str, Any]
+    ) -> None:
+        """
+        Process fields marked with config_source annotation from merged data.
+
+        For each field with the config_source marker, if the value is a
+        path to a config file, add it as a source.
+
+        This is called during register_fragment_type BEFORE the instance
+        is created, using the merged data from defaults + sources + CLI.
+
+        Raises:
+            FileNotFoundError: If a config file is specified but doesn't exist
+        """
+        from pathlib import Path
+
+        from ._sources import TomlSource
+
+        hints = get_type_hints(fragment_type, include_extras=True)
+
+        for field_name, field_type in hints.items():
+            marker = _get_config_source_marker(field_type)
+            if marker is None:
+                continue
+
+            value = data.get(field_name)
+            if value is None:
+                continue
+
+            # Convert string to Path if needed
+            if isinstance(value, str):
+                value = Path(value)
+
+            # If it's a relative path, resolve against invocation_dir
+            if isinstance(value, Path) and not value.is_absolute():
+                value = self._invocation_dir / value
+
+            # Check file exists - error if explicitly specified but missing
+            if isinstance(value, Path):
+                if not value.exists():
+                    raise FileNotFoundError(
+                        f"Config file not found: {value} "
+                        f"(specified via {field_name})"
+                    )
+                if value.suffix in (".toml",):
+                    self.add_source(TomlSource(value, precedence=marker.precedence))
+
+    def _process_config_sources(self, fragment: ConfigPart) -> None:
+        """
+        Process fields marked with config_source annotation on a fragment instance.
+
+        For each field with the config_source marker, if the value is a
+        valid path to a config file, add it as a source.
+        """
+        from pathlib import Path
+
+        from ._sources import TomlSource
+
+        hints = get_type_hints(type(fragment), include_extras=True)
+
+        for field_name, field_type in hints.items():
+            marker = _get_config_source_marker(field_type)
+            if marker is None:
+                continue
+
+            value = getattr(fragment, field_name, None)
+            if value is None:
+                continue
+
+            # Convert string to Path if needed
+            if isinstance(value, str):
+                value = Path(value)
+
+            # If it's a relative path and we have invocation_dir, resolve it
+            if isinstance(value, Path) and not value.is_absolute():
+                invocation_dir = getattr(fragment, "invocation_dir", None)
+                if invocation_dir is not None:
+                    value = invocation_dir / value
+
+            # Add as source if file exists and is a supported type
+            if (
+                isinstance(value, Path)
+                and value.exists()
+                and value.suffix in (".toml",)
+            ):
+                self.add_source(TomlSource(value, precedence=marker.precedence))
 
 
 def _get_field_defaults(cls: type[ConfigPart]) -> dict[str, Any]:
@@ -312,6 +454,20 @@ def _has_from_parent_marker(field_type: Any) -> bool:
             if isinstance(arg, FromParentMarker):
                 return True
     return False
+
+
+def _get_config_source_marker(field_type: Any) -> ConfigSourceMarker | None:
+    """Get the config_source marker from a field type if present."""
+    from typing import Annotated
+
+    # Check if it's an Annotated type
+    if get_origin(field_type) is Annotated:
+        args = get_args(field_type)
+        # args[0] is the actual type, args[1:] are the annotations
+        for arg in args[1:]:
+            if isinstance(arg, ConfigSourceMarker):
+                return arg
+    return None
 
 
 def _get_subconfig_defaults(cls: type[SubConfig]) -> dict[str, Any]:

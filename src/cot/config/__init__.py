@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from ._annotations import from_parent, help
+from ._annotations import config_source, from_parent, help
 from ._bases import ConfigPart, SubConfig
 from ._manager import ConfigManager, ConfigSource, Discoverable
-from ._sources import EnvSource, IniSource, TomlSource
+from ._sources import CLISource, EnvSource, IniSource, TomlSource
 
 __all__ = [
     # Base classes
@@ -18,8 +18,10 @@ __all__ = [
     # Sources
     "TomlSource",
     "IniSource",
+    "CLISource",
     "EnvSource",
     # Annotations
     "help",
     "from_parent",
+    "config_source",
 ]

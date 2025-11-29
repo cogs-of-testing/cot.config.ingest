@@ -48,10 +48,37 @@ def help(text: str) -> HelpMarker:
     return HelpMarker(text)
 
 
+class ConfigSourceMarker(_MarkerMixin):
+    """
+    Marker to indicate a field whose value should become a config source.
+
+    When a field is annotated with `config_source`, its value (typically a
+    Path to a config file) will be automatically added as a source during
+    registration.
+
+    Example:
+        class InvocationConfig(ConfigPart):
+            config_file: Annotated[Path | None, config_source] = None
+    """
+
+    precedence: int
+
+    def __init__(self, precedence: int = 15) -> None:
+        self.precedence = precedence
+
+    def __repr__(self) -> str:
+        return f"<ConfigSource precedence={self.precedence}>"
+
+
+config_source = ConfigSourceMarker()
+
+
 __all__ = [
     "FromParentMarker",
     "from_parent",
     "PrefixMarker",
     "HelpMarker",
     "help",
+    "ConfigSourceMarker",
+    "config_source",
 ]

@@ -131,6 +131,105 @@ class IniSource:
         return result
 
 
+class CLISource:
+    """Load configuration from command-line arguments."""
+
+    def __init__(
+        self,
+        args: list[str] | None = None,
+        *,
+        precedence: int = 25,
+    ) -> None:
+        """
+        Create a CLI argument configuration source.
+
+        Args:
+            args: Command line arguments (defaults to sys.argv[1:])
+            precedence: Higher values override lower values (default: 25)
+        """
+        import sys
+
+        self._args = args if args is not None else sys.argv[1:]
+        self._precedence = precedence
+        self._parsed: dict[str, Any] | None = None
+
+    @property
+    def precedence(self) -> int:
+        return self._precedence
+
+    @property
+    def args(self) -> list[str]:
+        return self._args
+
+    def load(self, part_type: type[ConfigPart]) -> dict[str, Any]:
+        """
+        Load configuration data for a ConfigPart type from CLI args.
+
+        Maps CLI arguments to field names:
+        - --field-name value -> field_name = value
+        - -f value -> short form (if defined)
+        - --prefix-field value -> {"prefix": {"field": value}}
+
+        Uses argparse internally to parse arguments based on type hints.
+        """
+        import argparse
+
+        result: dict[str, Any] = {}
+        type_hints = _get_resolved_type_hints(part_type)
+
+        # Build argparse parser from type hints
+        parser = argparse.ArgumentParser(add_help=False)
+
+        for field_name, field_type in type_hints.items():
+            cli_name = field_name.replace("_", "-")
+            # Handle Optional types
+            origin = get_origin(field_type)
+            if origin is Union or origin is types.UnionType:
+                args = getattr(field_type, "__args__", ())
+                non_none_args = [a for a in args if a is not type(None)]
+                if non_none_args:
+                    field_type = non_none_args[0]
+
+            # Add argument based on type
+            if field_type is bool:
+                parser.add_argument(
+                    f"--{cli_name}",
+                    dest=field_name,
+                    action="store_true",
+                    default=None,
+                )
+            else:
+                parser.add_argument(
+                    f"--{cli_name}",
+                    dest=field_name,
+                    default=None,
+                )
+
+        # Parse known args (ignore unknown)
+        parsed, _ = parser.parse_known_args(self._args)
+
+        # Collect non-None values
+        for field_name in type_hints:
+            value = getattr(parsed, field_name, None)
+            if value is not None:
+                field_type = type_hints[field_name]
+                # Handle Optional types
+                origin = get_origin(field_type)
+                if origin is Union or origin is types.UnionType:
+                    args = getattr(field_type, "__args__", ())
+                    non_none_args = [a for a in args if a is not type(None)]
+                    if non_none_args:
+                        field_type = non_none_args[0]
+
+                # Convert value if needed
+                if field_type is not bool and isinstance(value, str):
+                    result[field_name] = _parse_value(value, field_type)
+                else:
+                    result[field_name] = value
+
+        return result
+
+
 class EnvSource:
     """Load configuration from environment variables."""
 
@@ -317,5 +416,6 @@ def _parse_env_value(raw_value: str, field_type: type[Any] | None) -> Any:
 __all__ = [
     "TomlSource",
     "IniSource",
+    "CLISource",
     "EnvSource",
 ]
