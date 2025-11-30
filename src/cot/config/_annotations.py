@@ -122,6 +122,34 @@ class AddoptsMarker(_MarkerMixin):
 addopts_field = AddoptsMarker()
 
 
+class ShortMarker(_MarkerMixin):
+    """
+    Marker to specify a short CLI option for a field.
+
+    When a field is annotated with `short("v")`, it can be set via `-v`
+    in addition to the long option `--field-name`.
+
+    Example:
+        class PytestConfig(ConfigPart):
+            verbose: Annotated[bool, short("v")] = False
+    """
+
+    char: str
+
+    def __init__(self, char: str) -> None:
+        if len(char) != 1:
+            raise ValueError("short option must be a single character")
+        self.char = char
+
+    def __repr__(self) -> str:
+        return f"<Short -{self.char}>"
+
+
+def short(char: str) -> ShortMarker:
+    """Create a short option marker for CLI parsing."""
+    return ShortMarker(char)
+
+
 __all__ = [
     "FromParentMarker",
     "from_parent",
@@ -134,4 +162,6 @@ __all__ = [
     "bootstrap_only",
     "AddoptsMarker",
     "addopts_field",
+    "ShortMarker",
+    "short",
 ]

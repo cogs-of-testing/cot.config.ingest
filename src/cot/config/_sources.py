@@ -14,7 +14,7 @@ if sys.version_info >= (3, 11):
 else:
     import tomli as tomllib  # type: ignore[import-not-found]
 
-from ._annotations import PrefixMarker
+from ._annotations import PrefixMarker, ShortMarker
 
 if TYPE_CHECKING:
     from ._bases import ConfigPart, SubConfig
@@ -138,13 +138,13 @@ class CLISource:
     CLISource manages CLI argument parsing with support for:
     - Initial args and invocation_dir passed directly to constructor
     - Addopts prepended from config files/env
-    - Single parser built from all registered fragment types
+    - Dynamic field registration from ConfigPart types
     - Generic -o/--override for any config option
     - Tracking of unknown/unconsumed args
 
     Flow:
     1. Create CLISource with args and invocation_dir
-    2. register_fragment_type() for each ConfigPart (builds parser)
+    2. register_fragment_type() for each ConfigPart (adds fields to parser)
     3. prepend_addopts() after loading config files
     4. freeze_sources() to prevent further addopts
     5. load() to get values for each fragment type
@@ -170,7 +170,7 @@ class CLISource:
             invocation_dir: Directory where command was invoked (defaults to cwd)
             precedence: Higher values override lower values (default: 25)
         """
-        import argparse
+        from ._cli_parser import CLIParser
 
         self._precedence = precedence
         self._initial_args: list[str] = list(args) if args is not None else []
@@ -179,22 +179,9 @@ class CLISource:
             self._invocation_dir: Path = invocation_dir
         else:
             self._invocation_dir = Path.cwd()
-        self._parser = argparse.ArgumentParser(add_help=False)
+        self._parser = CLIParser()
         self._registered_fields: dict[str, type[Any]] = {}  # field_name -> field_type
-        self._unknown_args: list[str] = []
         self._sources_frozen: bool = False
-        self._parsed: bool = False
-        self._overrides: dict[str, str] = {}  # dotted.path -> value
-
-        # Add the generic override option
-        self._parser.add_argument(
-            "-o", "--override",
-            dest="_overrides",
-            action="append",
-            default=[],
-            metavar="KEY=VALUE",
-            help="Override any config option (e.g., -o log.level=DEBUG)",
-        )
 
     def prepend_addopts(self, addopts: str | list[str]) -> None:
         """
@@ -220,9 +207,6 @@ class CLISource:
         else:
             self._addopts = list(addopts) + self._addopts
 
-        # Reset parsing since args changed
-        self._parsed = False
-
     def freeze_sources(self) -> None:
         """
         Freeze config sources - no more addopts can be added after this.
@@ -235,9 +219,9 @@ class CLISource:
         """
         Register a ConfigPart type's fields with the parser.
 
-        This adds the type's fields to the shared parser so they can be
-        parsed from CLI args. Call this for all fragment types before
-        calling load().
+        This adds the type's fields to the parser so they can be
+        parsed from CLI args. Fields are registered dynamically and
+        the parser re-parses on each load() call.
 
         Args:
             part_type: ConfigPart class to register
@@ -249,32 +233,14 @@ class CLISource:
                 # Already registered (possibly from another fragment)
                 continue
 
-            cli_name = field_name.replace("_", "-")
+            # Handle Optional types to get actual type
+            actual_type = _unwrap_optional(field_type)
 
-            # Handle Optional types
-            actual_type = field_type
-            origin = get_origin(field_type)
-            if origin is Union or origin is types.UnionType:
-                type_args = getattr(field_type, "__args__", ())
-                non_none_args = [a for a in type_args if a is not type(None)]
-                if non_none_args:
-                    actual_type = non_none_args[0]
+            # Extract short option from annotations if present
+            short_opt = _get_short_option(field_type)
 
-            # Add argument based on type
-            if actual_type is bool:
-                self._parser.add_argument(
-                    f"--{cli_name}",
-                    dest=field_name,
-                    action="store_true",
-                    default=None,
-                )
-            else:
-                self._parser.add_argument(
-                    f"--{cli_name}",
-                    dest=field_name,
-                    default=None,
-                )
-
+            # Register with parser
+            self._parser.add_field(field_name, actual_type, short=short_opt)
             self._registered_fields[field_name] = field_type
 
     @property
@@ -290,29 +256,12 @@ class CLISource:
         """Final args: addopts prepended to initial args."""
         return self._addopts + self._initial_args
 
-    def _ensure_parsed(self) -> None:
-        """Parse args if not already done."""
-        if self._parsed:
-            return
-
-        parsed, unknown = self._parser.parse_known_args(self.args)
-        self._parsed_namespace = parsed
-        self._unknown_args = unknown
-
-        # Process -o overrides into dict
-        self._overrides = {}
-        for override in getattr(parsed, "_overrides", []) or []:
-            if "=" in override:
-                key, value = override.split("=", 1)
-                self._overrides[key] = value
-
-        self._parsed = True
-
     def load(self, part_type: type[ConfigPart]) -> dict[str, Any]:
         """
         Load configuration data for a ConfigPart type from CLI args.
 
-        Includes both dedicated CLI flags and -o overrides.
+        Parses args fresh each time (no caching) to handle dynamic
+        field registration and addopts changes.
 
         Args:
             part_type: ConfigPart class to load data for
@@ -320,41 +269,29 @@ class CLISource:
         Returns:
             Dict of field names to values from CLI args
         """
-        self._ensure_parsed()
+        # Parse args (fresh each time - parser handles field registration)
+        parse_result = self._parser.parse(self.args)
 
         result: dict[str, Any] = {}
         type_hints = _get_resolved_type_hints(part_type)
 
-        # Get prefix for this part type
-        from ._annotations import PrefixMarker
-        prefix = None
-        markers = getattr(part_type, "_config_markers", ())
-        for marker in markers:
-            if isinstance(marker, PrefixMarker):
-                prefix = marker.prefix
-                break
+        # Get prefix for this part type (for -o override matching)
+        prefix = _get_part_prefix(part_type)
 
-        # First, load from dedicated CLI flags
+        # Load from dedicated CLI flags
         for field_name, field_type in type_hints.items():
-            value = getattr(self._parsed_namespace, field_name, None)
-            if value is not None:
-                # Handle Optional types for conversion
-                actual_type = field_type
-                origin = get_origin(field_type)
-                if origin is Union or origin is types.UnionType:
-                    type_args = getattr(field_type, "__args__", ())
-                    non_none_args = [a for a in type_args if a is not type(None)]
-                    if non_none_args:
-                        actual_type = non_none_args[0]
+            if field_name in parse_result.values:
+                raw_value = parse_result.values[field_name]
+                actual_type = _unwrap_optional(field_type)
 
-                # Convert value if needed
-                if actual_type is not bool and isinstance(value, str):
-                    result[field_name] = _parse_value(value, actual_type)
+                # Convert value if needed (booleans are already converted)
+                if actual_type is not bool and isinstance(raw_value, str):
+                    result[field_name] = _parse_value(raw_value, actual_type)
                 else:
-                    result[field_name] = value
+                    result[field_name] = raw_value
 
-        # Then, apply -o overrides (they have highest precedence)
-        self._apply_overrides(result, type_hints, prefix)
+        # Apply -o overrides (they have highest precedence)
+        self._apply_overrides(result, type_hints, prefix, parse_result.overrides)
 
         return result
 
@@ -363,9 +300,10 @@ class CLISource:
         result: dict[str, Any],
         type_hints: dict[str, Any],
         prefix: str | None,
+        overrides: dict[str, str],
     ) -> None:
         """Apply -o overrides to the result dict."""
-        for key, raw_value in self._overrides.items():
+        for key, raw_value in overrides.items():
             # Handle prefixed keys (e.g., "pytest.verbose" or "log.cli.level")
             parts = key.split(".")
 
@@ -406,8 +344,28 @@ class CLISource:
         Returns:
             List of unconsumed command line arguments
         """
-        self._ensure_parsed()
-        return list(self._unknown_args)
+        parse_result = self._parser.parse(self.args)
+        return parse_result.unknown_args
+
+    def get_raw_value(self, field_name: str) -> str | None:
+        """
+        Get the raw string value for a field from CLI args.
+
+        This is useful for sources that need to check CLI values before
+        full type conversion (e.g., ConfigFileDiscoverySource checking
+        for config_file path).
+
+        Args:
+            field_name: The field name to look up
+
+        Returns:
+            Raw string value if present, None otherwise
+        """
+        parse_result = self._parser.parse(self.args)
+        value = parse_result.values.get(field_name)
+        if isinstance(value, bool):
+            return str(value).lower() if value else None
+        return value
 
 
 class EnvSource:
@@ -551,9 +509,9 @@ class EnvSource:
 
 
 def _get_resolved_type_hints(cls: type[Any]) -> dict[str, Any]:
-    """Get resolved type hints for a class."""
+    """Get resolved type hints for a class, preserving Annotated metadata."""
     try:
-        return get_type_hints(cls)
+        return get_type_hints(cls, include_extras=True)
     except Exception:
         # Fallback to raw annotations if resolution fails
         return getattr(cls, "__annotations__", {})
@@ -583,6 +541,42 @@ def _field_to_env_name(field_name: str, prefix: str) -> str:
     if prefix:
         return f"{prefix.upper()}_{env_name}"
     return env_name
+
+
+def _unwrap_optional(field_type: type[Any]) -> type[Any]:
+    """Unwrap Optional/Union/Annotated types to get the actual type."""
+    from typing import Annotated
+
+    origin = get_origin(field_type)
+
+    # Unwrap Annotated first to get to the inner type
+    if origin is Annotated:
+        type_args = getattr(field_type, "__args__", ())
+        if type_args:
+            # First arg is the actual type, rest are annotations
+            return _unwrap_optional(type_args[0])
+
+    # Then handle Optional/Union
+    if origin is Union or origin is types.UnionType:
+        type_args = getattr(field_type, "__args__", ())
+        non_none_args = [a for a in type_args if a is not type(None)]
+        if non_none_args:
+            result: type[Any] = non_none_args[0]
+            return result
+    return field_type
+
+
+def _get_short_option(field_type: Any) -> str | None:
+    """Extract short option from Annotated type if present."""
+    # Check if it's an Annotated type
+    origin = get_origin(field_type)
+    if origin is not None:
+        # For Annotated types, __metadata__ contains the annotations
+        metadata = getattr(field_type, "__metadata__", ())
+        for item in metadata:
+            if isinstance(item, ShortMarker):
+                return item.char
+    return None
 
 
 def _parse_value(raw_value: str, field_type: type[Any] | None) -> Any:
@@ -735,13 +729,8 @@ class ConfigFileDiscoverySource:
         if self._cli_source is None:
             return None
 
-        # Parse CLI to get the config file arg
-        self._cli_source._ensure_parsed()
-        value = getattr(
-            self._cli_source._parsed_namespace,
-            self._config_file_cli_arg,
-            None
-        )
+        # Get config file value from CLI
+        value = self._cli_source.get_raw_value(self._config_file_cli_arg)
         if value is not None:
             path = Path(value)
             if not path.is_absolute():

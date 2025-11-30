@@ -8,6 +8,7 @@ from ._annotations import (
     config_source,
     from_parent,
     help,
+    short,
 )
 from ._bases import ConfigPart, InvocationConfig, SubConfig
 from ._manager import ConfigManager, ConfigSource, Discoverable
@@ -40,4 +41,5 @@ __all__ = [
     "config_source",
     "bootstrap_only",
     "addopts_field",
+    "short",
 ]

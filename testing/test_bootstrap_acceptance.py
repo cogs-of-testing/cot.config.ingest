@@ -25,6 +25,7 @@ from cot.config import (
     addopts_field,
     bootstrap_only,
     config_source,
+    short,
 )
 
 # --- Pytest-like ConfigPart with config file discovery ---
@@ -425,3 +426,67 @@ class PytestConfigWithVerbose(ConfigPart, prefix="pytest"):
     testpaths: str = "tests"
     verbose: bool = False
     tb: str = "auto"
+
+
+class TestShortOptions:
+    """Test short CLI options via annotations."""
+
+    def test_short_option_boolean_flag(self, tmp_path: Path) -> None:
+        """Short option -v sets verbose=True."""
+
+        class VerboseConfig(ConfigPart, prefix="test"):
+            verbose: Annotated[bool, short("v")] = False
+            quiet: Annotated[bool, short("q")] = False
+
+        cli = CLISource(args=["-v"], invocation_dir=tmp_path)
+        manager = ConfigManager(sources=[cli])
+        config = manager.register_fragment_type(VerboseConfig)
+
+        assert config.verbose is True
+        assert config.quiet is False
+
+    def test_short_option_with_value(self, tmp_path: Path) -> None:
+        """Short option -c sets config_file."""
+
+        class FileConfig(ConfigPart, prefix="test"):
+            config_file: Annotated[str | None, short("c")] = None
+
+        cli = CLISource(args=["-c", "custom.toml"], invocation_dir=tmp_path)
+        manager = ConfigManager(sources=[cli])
+        config = manager.register_fragment_type(FileConfig)
+
+        assert config.config_file == "custom.toml"
+
+    def test_combined_short_options(self, tmp_path: Path) -> None:
+        """Combined short options -vq sets both flags."""
+
+        class FlagsConfig(ConfigPart, prefix="test"):
+            verbose: Annotated[bool, short("v")] = False
+            quiet: Annotated[bool, short("q")] = False
+            debug: Annotated[bool, short("d")] = False
+
+        cli = CLISource(args=["-vq"], invocation_dir=tmp_path)
+        manager = ConfigManager(sources=[cli])
+        config = manager.register_fragment_type(FlagsConfig)
+
+        assert config.verbose is True
+        assert config.quiet is True
+        assert config.debug is False
+
+    def test_short_and_long_options_together(self, tmp_path: Path) -> None:
+        """Both short and long options work for same field."""
+
+        class MixedConfig(ConfigPart, prefix="test"):
+            verbose: Annotated[bool, short("v")] = False
+
+        # Test short option
+        cli1 = CLISource(args=["-v"], invocation_dir=tmp_path)
+        manager1 = ConfigManager(sources=[cli1])
+        config1 = manager1.register_fragment_type(MixedConfig)
+        assert config1.verbose is True
+
+        # Test long option
+        cli2 = CLISource(args=["--verbose"], invocation_dir=tmp_path)
+        manager2 = ConfigManager(sources=[cli2])
+        config2 = manager2.register_fragment_type(MixedConfig)
+        assert config2.verbose is True
