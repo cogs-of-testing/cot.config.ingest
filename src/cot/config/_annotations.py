@@ -31,6 +31,79 @@ class PrefixMarker(_MarkerMixin):
         return f"<Prefix {self.prefix!r}>"
 
 
+class NamePrefixMarker(_MarkerMixin):
+    """
+    Indicate a prefix that leads every *field name* of a ConfigPart.
+
+    This is distinct from `PrefixMarker`, which names the *section* a
+    ConfigPart occupies in a config file. A name prefix becomes part of the
+    option name itself, in every source.
+
+    pytest's logging plugin needs both: its options live in the `[pytest]`
+    section (`prefix`) but are individually called `log_cli_level`
+    (`name_prefix`), never `[log] cli_level`.
+
+    Example:
+        class LoggingConfig(ConfigPart, prefix="pytest", name_prefix="log"):
+            level: str = "WARNING"       # --log-level, ini log_level
+    """
+
+    name_prefix: str
+
+    def __init__(self, name_prefix: str) -> None:
+        self.name_prefix = name_prefix
+
+    def __repr__(self) -> str:
+        return f"<NamePrefix {self.name_prefix!r}>"
+
+
+class NameMarker(_MarkerMixin):
+    """
+    Override the derived name of a single field in every source.
+
+    Needed where a field's structural path and its conventional name diverge.
+    pytest calls the log file's path `log_file`, but structurally it is
+    `file.path`, which would derive `log_file_path`.
+
+    Example:
+        class LogFileConfig(SubConfig):
+            path: Annotated[str | None, named("log_file")] = None
+    """
+
+    name: str
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def __repr__(self) -> str:
+        return f"<Name {self.name!r}>"
+
+
+def named(name: str) -> NameMarker:
+    """Give a field an explicit name, overriding the derived one."""
+    return NameMarker(name)
+
+
+class NoCLIMarker(_MarkerMixin):
+    """
+    Mark a field as unreachable from the command line.
+
+    Some options are deliberately file-only. pytest's `log_cli` is an ini
+    option with no CLI flag: live logging is switched on via
+    `--log-cli-level` instead.
+
+    Example:
+        class LogCliConfig(SubConfig):
+            enabled: Annotated[bool, no_cli] = False
+    """
+
+    def __repr__(self) -> str:
+        return "<NoCLI>"
+
+
+no_cli = NoCLIMarker()
+
+
 class HelpMarker(_MarkerMixin):
     """marker to provide help text for configuration fields."""
 
@@ -57,7 +130,7 @@ class ConfigSourceMarker(_MarkerMixin):
     registration.
 
     Example:
-        class InvocationConfig(ConfigPart):
+        class PytestConfig(ConfigPart):
             config_file: Annotated[Path | None, config_source] = None
     """
 
@@ -154,6 +227,11 @@ __all__ = [
     "FromParentMarker",
     "from_parent",
     "PrefixMarker",
+    "NamePrefixMarker",
+    "NameMarker",
+    "named",
+    "NoCLIMarker",
+    "no_cli",
     "HelpMarker",
     "help",
     "ConfigSourceMarker",

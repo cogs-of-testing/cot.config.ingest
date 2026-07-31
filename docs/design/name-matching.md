@@ -1,4 +1,10 @@
-# Name Matching and Resolution
+# Name Matching
+
+> **Status: built.** The mapping lives in `src/cot/config/_names.py`
+> (`names_of`, `flat_index`, `expand_flat_keys`). Two class knobs shape it:
+> `prefix=` names the file section and env prefix, `name_prefix=` prefixes the
+> option names themselves. Per-field overrides use `named("...")`, and `no_cli`
+> suppresses a CLI option. Custom name transformers are still unimplemented. and Resolution
 
 ## Overview
 

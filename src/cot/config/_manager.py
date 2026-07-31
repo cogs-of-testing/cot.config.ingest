@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Sequence
 from typing import (
     Any,
     Protocol,
     TypeVar,
-    get_args,
-    get_origin,
-    get_type_hints,
     runtime_checkable,
 )
 
@@ -20,6 +18,15 @@ from ._annotations import (
     FromParentMarker,
 )
 from ._bases import ConfigPart, SubConfig
+from ._fields import (
+    MISSING,
+    field_defaults,
+    fields_of,
+    has_marker,
+    leaf_fields,
+    marker_of,
+)
+from ._origins import Origin, default_origin, generic_origin
 
 _T = TypeVar("_T", bound=ConfigPart)
 
@@ -100,6 +107,7 @@ class ConfigManager:
         self._fragments: dict[type[ConfigPart], ConfigPart] = {}
         self._sources: list[ConfigSource] = []
         self._cli_source: CLISource | None = None
+        self._origins: dict[type[ConfigPart], dict[str, Origin]] = {}
 
         # Add all sources
         for source in sources:
@@ -142,7 +150,7 @@ class ConfigManager:
             Loaded ConfigPart instance
         """
         # Get field defaults from type annotations
-        defaults = _get_field_defaults(fragment_type)
+        defaults = field_defaults(fragment_type)
 
         # Register with CLI source and load CLI args if available
         cli_data: dict[str, Any] = {}
@@ -169,11 +177,38 @@ class ConfigManager:
         if self._cli_source is not None:
             cli_data = self._cli_source.load(fragment_type)
 
-        # Re-load from all sources
-        loaded = self.load_for_part(fragment_type)
+        # Merge: defaults < sources < cli (cli has highest precedence).
+        # This must be a deep merge: CLI and file sources both produce nested
+        # dicts for SubConfigs, and a shallow update would let `--log-file-level`
+        # from the CLI wipe `log_file` from the config file.
+        #
+        # Provenance rides along with the merge: whichever source last wrote a
+        # path is the one that won it.
+        origins: dict[str, Origin] = {}
+        merged: dict[str, Any] = {}
 
-        # Merge: defaults < sources < cli (cli has highest precedence)
-        merged = {**defaults, **loaded, **cli_data}
+        _deep_merge(merged, defaults)
+        # Seed every leaf that declares a default, nested ones included, so a
+        # value nobody configured still reports *why* it has the value it has.
+        for field in leaf_fields(fragment_type):
+            if field.default is not MISSING:
+                origins[field.dotted] = default_origin(field.dotted)
+
+        for source in self._sources:
+            data = source.load(fragment_type)
+            _deep_merge(merged, data)
+            self._record_origins(origins, source, fragment_type, data)
+
+        if self._cli_source is not None:
+            _deep_merge(merged, cli_data)
+            self._record_origins(origins, self._cli_source, fragment_type, cli_data)
+
+        self._origins[fragment_type] = origins
+
+        # Keys a source produced that the ConfigPart does not declare are user
+        # error in a config file, not programmer error -- warn and drop them
+        # rather than letting the constructor reject the whole load.
+        merged = _drop_unknown_keys(fragment_type, merged)
 
         # Build nested SubConfigs from type hints
         merged = _build_nested_subconfigs(fragment_type, merged)
@@ -230,6 +265,104 @@ class ConfigManager:
         """Get list of registered sources (sorted by precedence)."""
         return list(self._sources)
 
+    def _record_origins(
+        self,
+        origins: dict[str, Origin],
+        source: ConfigSource,
+        fragment_type: type[ConfigPart],
+        data: dict[str, Any],
+    ) -> None:
+        """Attribute every path ``data`` supplied to ``source``."""
+        describe = getattr(source, "describe_origin", None)
+        fallback = generic_origin(source)
+
+        for dotted, path in _dotted_paths(data, with_paths=True):
+            origin: Origin | None = None
+            if callable(describe):
+                origin = describe(fragment_type, path)
+            origins[dotted] = origin if origin is not None else fallback
+
+    def format_help(self, *, prog: str | None = None) -> str:
+        """
+        Render help text for every option registered so far.
+
+        Returns the text; it never prints and never exits. Whether `--help`
+        was asked for is `help_requested()`, and what to do about it is the
+        application's decision.
+        """
+        if self._cli_source is None:
+            return "options:\n  (no CLI source configured)\n"
+        return self._cli_source.format_help(prog=prog)
+
+    def help_requested(self) -> bool:
+        """Whether -h/--help appeared in the command line arguments."""
+        if self._cli_source is None:
+            return False
+        return self._cli_source.help_requested()
+
+    def origin_of(self, fragment_type: type[ConfigPart], path: str) -> Origin:
+        """
+        Report where a field's final value came from.
+
+        Args:
+            fragment_type: A registered ConfigPart class.
+            path: Dotted field path, e.g. "cli.level".
+
+        Returns:
+            The Origin of the winning value.
+
+        Raises:
+            KeyError: If the type was never registered, or the path is unknown.
+        """
+        if fragment_type not in self._origins:
+            raise KeyError(f"Fragment type {fragment_type.__name__} not registered")
+        origins = self._origins[fragment_type]
+        if path not in origins:
+            raise KeyError(f"No origin recorded for {fragment_type.__name__}.{path}")
+        return origins[path]
+
+    def origins(self, fragment_type: type[ConfigPart]) -> dict[str, Origin]:
+        """Every recorded origin for a registered ConfigPart, keyed by path."""
+        if fragment_type not in self._origins:
+            raise KeyError(f"Fragment type {fragment_type.__name__} not registered")
+        return dict(self._origins[fragment_type])
+
+    def explain(self, fragment_type: type[ConfigPart]) -> str:
+        """
+        Render a table of every field's value and where it came from.
+
+        Intended for `--debug-config` style output: the whole point of merging
+        sources is that the winner is not obvious from any single one of them.
+        """
+        instance = self.get_fragment(fragment_type)
+        recorded = self._origins.get(fragment_type, {})
+
+        rows: list[tuple[str, str, str]] = []
+        for field in leaf_fields(fragment_type):
+            dotted = field.dotted
+            value: Any = instance
+            for segment in field.path:
+                value = getattr(value, segment, None)
+            origin = recorded.get(dotted)
+            rows.append((dotted, repr(value), str(origin) if origin else "unset"))
+
+        if not rows:
+            return f"{fragment_type.__name__}: no fields\n"
+
+        widths = [max(len(row[column]) for row in rows) for column in range(3)]
+        header = (
+            f"{'field'.ljust(widths[0])}  "
+            f"{'value'.ljust(widths[1])}  "
+            f"{'origin'.ljust(widths[2])}"
+        ).rstrip()
+
+        lines = [f"{fragment_type.__name__}:", header, "-" * len(header)]
+        lines.extend(
+            f"{name.ljust(widths[0])}  {value.ljust(widths[1])}  {origin}".rstrip()
+            for name, value, origin in rows
+        )
+        return "\n".join(lines) + "\n"
+
     def _process_config_source_fields(
         self, fragment_type: type[ConfigPart], data: dict[str, Any]
     ) -> None:
@@ -249,13 +382,12 @@ class ConfigManager:
 
         from ._sources import TomlSource
 
-        hints = get_type_hints(fragment_type, include_extras=True)
-
-        for field_name, field_type in hints.items():
-            marker = _get_config_source_marker(field_type)
+        for field in fields_of(fragment_type, recurse=False):
+            marker = marker_of(field, ConfigSourceMarker)
             if marker is None:
                 continue
 
+            field_name = field.name
             value = data.get(field_name)
             if value is None:
                 continue
@@ -277,8 +409,7 @@ class ConfigManager:
             if isinstance(value, Path):
                 if not value.exists():
                     raise FileNotFoundError(
-                        f"Config file not found: {value} "
-                        f"(specified via {field_name})"
+                        f"Config file not found: {value} (specified via {field_name})"
                     )
                 if value.suffix in (".toml",):
                     self.add_source(TomlSource(value, precedence=marker.precedence))
@@ -303,24 +434,26 @@ class ConfigManager:
         Raises:
             ValueError: If addopts tries to set a bootstrap_only field
         """
-        hints = get_type_hints(fragment_type, include_extras=True)
+        part_fields = fields_of(fragment_type, recurse=False)
 
         # Find bootstrap_only fields
-        bootstrap_only_fields = _get_bootstrap_only_fields(hints)
+        bootstrap_only_fields = {
+            f.name for f in part_fields if has_marker(f, BootstrapOnlyMarker)
+        }
 
         # Find addopts fields and process them
-        for field_name, field_type in hints.items():
-            marker = _get_addopts_marker(field_type)
+        for field in part_fields:
+            marker = marker_of(field, AddoptsMarker)
             if marker is None:
                 continue
 
-            value = data.get(field_name)
+            value = data.get(field.name)
             if not value:
                 continue
 
             # Handle both string and list addopts (TOML can have lists)
             addopts: str | list[str]
-            if isinstance(value, (str, list)):
+            if isinstance(value, str | list):
                 addopts = value
             else:
                 continue
@@ -355,30 +488,25 @@ class ConfigManager:
                 self._cli_source.prepend_addopts(addopts)
 
 
-def _get_field_defaults(cls: type[ConfigPart]) -> dict[str, Any]:
-    """Extract field defaults from a ConfigPart class, including inherited fields."""
-    defaults: dict[str, Any] = {}
-
-    # Walk MRO to get all annotations (child classes first, so they override)
-    for klass in reversed(cls.__mro__):
-        annotations = getattr(klass, "__annotations__", {})
-        for field_name in annotations:
-            # Skip ClassVar and other special types
-            if field_name.startswith("_"):
-                continue
-            if hasattr(klass, field_name):
-                value = getattr(klass, field_name)
-                # Don't include class methods or other descriptors
-                if not callable(value):
-                    defaults[field_name] = value
-
-    return defaults
+class UnknownConfigKeyWarning(UserWarning):
+    """A source supplied a key the ConfigPart does not declare."""
 
 
-def _is_subconfig_type(field_type: Any) -> bool:
-    """Check if a type annotation is a SubConfig subclass."""
-    # Handle raw class types
-    return isinstance(field_type, type) and issubclass(field_type, SubConfig)
+def _drop_unknown_keys(
+    fragment_type: type[ConfigPart],
+    data: dict[str, Any],
+) -> dict[str, Any]:
+    """Drop keys not declared on ``fragment_type``, warning about each."""
+    known = {field.name for field in fields_of(fragment_type, recurse=False)}
+    unknown = sorted(set(data) - known)
+    if unknown:
+        warnings.warn(
+            f"Unknown config option(s) for {fragment_type.__name__}: "
+            f"{', '.join(unknown)}",
+            UnknownConfigKeyWarning,
+            stacklevel=3,
+        )
+    return {key: value for key, value in data.items() if key in known}
 
 
 def _build_nested_subconfigs(
@@ -395,64 +523,44 @@ def _build_nested_subconfigs(
     the same name as a SubConfig field (e.g., parent.level), that value
     cascades to children that don't explicitly set it.
     """
-    try:
-        hints = get_type_hints(cls)
-    except Exception:
-        hints = getattr(cls, "__annotations__", {})
-
+    own_fields = fields_of(cls, recurse=False)
     result = dict(data)
 
-    # Collect parent values that could cascade to children
-    # These are non-SubConfig fields in the parent data
-    cascade_values: dict[str, Any] = {}
-    for field_name, field_type in hints.items():
-        if not _is_subconfig_type(field_type) and field_name in result:
-            cascade_values[field_name] = result[field_name]
+    # Collect parent values that could cascade to children.
+    # These are the non-SubConfig fields present in the parent data.
+    cascade_values = {
+        field.name: result[field.name]
+        for field in own_fields
+        if not field.is_sub_config and field.name in result
+    }
 
-    for field_name, field_type in hints.items():
-        if not _is_subconfig_type(field_type):
+    for field in own_fields:
+        if not field.is_sub_config:
             continue
 
-        value = result.get(field_name)
+        sub_type: type[SubConfig] = field.type
+        value = result.get(field.name)
 
-        # Get SubConfig's own field names to know what can cascade
-        subconfig_hints = _get_subconfig_hints(field_type)
+        if not isinstance(value, dict):
+            if value is not None and field.name in result:
+                # Already an instance (or something else the caller supplied).
+                continue
+            value = {}
 
-        if isinstance(value, dict):
-            # Get defaults for the SubConfig type
-            subconfig_defaults = _get_subconfig_defaults(field_type)
-            # Apply cascade: parent values fill in for missing child values
-            cascaded = _apply_cascade(cascade_values, subconfig_hints, value)
-            # Merge: class defaults < cascade < explicit values
-            merged_value = {**subconfig_defaults, **cascaded}
-            # Recursively build nested SubConfigs
-            merged_value = _build_nested_subconfigs(field_type, merged_value)
-            # Create the SubConfig instance
-            result[field_name] = field_type(**merged_value)
-        elif value is None or field_name not in result:
-            # Create with defaults when missing or None
-            subconfig_defaults = _get_subconfig_defaults(field_type)
-            # Apply cascade even when child section is missing
-            cascaded = _apply_cascade(cascade_values, subconfig_hints, {})
-            merged_value = {**subconfig_defaults, **cascaded}
-            merged_value = _build_nested_subconfigs(field_type, merged_value)
-            result[field_name] = field_type(**merged_value)
+        # Merge: class defaults < cascaded parent values < explicit values
+        merged_value = {
+            **field_defaults(sub_type),
+            **_apply_cascade(cascade_values, sub_type, value),
+        }
+        merged_value = _build_nested_subconfigs(sub_type, merged_value)
+        result[field.name] = sub_type(**merged_value)
 
     return result
 
 
-def _get_subconfig_hints(cls: type[SubConfig]) -> dict[str, Any]:
-    """Get type hints for a SubConfig class, preserving Annotated metadata."""
-    try:
-        # include_extras=True preserves Annotated wrappers
-        return get_type_hints(cls, include_extras=True)
-    except Exception:
-        return getattr(cls, "__annotations__", {})
-
-
 def _apply_cascade(
     parent_values: dict[str, Any],
-    child_hints: dict[str, Any],
+    child_type: type[SubConfig],
     child_data: dict[str, Any],
 ) -> dict[str, Any]:
     """
@@ -466,90 +574,36 @@ def _apply_cascade(
     Child's explicit values take precedence over cascaded values.
     """
     result = dict(child_data)
-    for field_name, field_type in child_hints.items():
-        # Only cascade if field is marked with from_parent and not already set
+    for field in fields_of(child_type, recurse=False):
         if (
-            field_name not in result
-            and field_name in parent_values
-            and _has_from_parent_marker(field_type)
+            field.name not in result
+            and field.name in parent_values
+            and has_marker(field, FromParentMarker)
         ):
-            result[field_name] = parent_values[field_name]
+            result[field.name] = parent_values[field.name]
     return result
 
 
-def _has_from_parent_marker(field_type: Any) -> bool:
-    """Check if a field type has the from_parent marker annotation."""
-    from typing import Annotated
+def _dotted_paths(
+    data: dict[str, Any],
+    *,
+    prefix: tuple[str, ...] = (),
+    with_paths: bool = False,
+) -> list[Any]:
+    """Every leaf path in a nested dict, as dotted strings.
 
-    # Check if it's an Annotated type
-    if get_origin(field_type) is Annotated:
-        args = get_args(field_type)
-        # args[0] is the actual type, args[1:] are the annotations
-        for arg in args[1:]:
-            if isinstance(arg, FromParentMarker):
-                return True
-    return False
-
-
-def _get_bootstrap_only_fields(hints: dict[str, Any]) -> set[str]:
-    """Get the set of field names marked with bootstrap_only."""
-    from typing import Annotated
-
-    result: set[str] = set()
-    for field_name, field_type in hints.items():
-        if get_origin(field_type) is Annotated:
-            args = get_args(field_type)
-            for arg in args[1:]:
-                if isinstance(arg, BootstrapOnlyMarker):
-                    result.add(field_name)
-                    break
+    With ``with_paths``, yields ``(dotted, path_tuple)`` pairs instead, which
+    is what origin lookup needs.
+    """
+    result: list[Any] = []
+    for key, value in data.items():
+        path = (*prefix, key)
+        if isinstance(value, dict):
+            result.extend(_dotted_paths(value, prefix=path, with_paths=with_paths))
+        else:
+            dotted = ".".join(path)
+            result.append((dotted, path) if with_paths else dotted)
     return result
-
-
-def _get_addopts_marker(field_type: Any) -> AddoptsMarker | None:
-    """Get the addopts_field marker from a field type if present."""
-    from typing import Annotated
-
-    if get_origin(field_type) is Annotated:
-        args = get_args(field_type)
-        for arg in args[1:]:
-            if isinstance(arg, AddoptsMarker):
-                return arg
-    return None
-
-
-def _get_config_source_marker(field_type: Any) -> ConfigSourceMarker | None:
-    """Get the config_source marker from a field type if present."""
-    from typing import Annotated
-
-    # Check if it's an Annotated type
-    if get_origin(field_type) is Annotated:
-        args = get_args(field_type)
-        # args[0] is the actual type, args[1:] are the annotations
-        for arg in args[1:]:
-            if isinstance(arg, ConfigSourceMarker):
-                return arg
-    return None
-
-
-def _get_subconfig_defaults(cls: type[SubConfig]) -> dict[str, Any]:
-    """Extract field defaults from a SubConfig class, including inherited fields."""
-    defaults: dict[str, Any] = {}
-
-    # Walk MRO to get all annotations (child classes first, so they override)
-    for klass in reversed(cls.__mro__):
-        annotations = getattr(klass, "__annotations__", {})
-        for field_name in annotations:
-            # Skip ClassVar and other special types
-            if field_name.startswith("_"):
-                continue
-            if hasattr(klass, field_name):
-                value = getattr(klass, field_name)
-                # Don't include class methods or other descriptors
-                if not callable(value):
-                    defaults[field_name] = value
-
-    return defaults
 
 
 def _deep_merge(target: dict[str, Any], source: dict[str, Any]) -> None:

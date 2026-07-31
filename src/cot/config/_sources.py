@@ -7,17 +7,35 @@ import os
 import sys
 import types
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Union, get_origin, get_type_hints
+from typing import TYPE_CHECKING, Any, Union, get_origin
 
 if sys.version_info >= (3, 11):
     import tomllib
 else:
-    import tomli as tomllib  # type: ignore[import-not-found]
+    import tomli as tomllib  # type: ignore[import-not-found,unused-ignore]
 
-from ._annotations import PrefixMarker, ShortMarker
+from ._annotations import HelpMarker, ShortMarker
+from ._fields import (
+    FieldInfo,
+    fields_of,
+    leaf_fields,
+    marker_of,
+    markers_of,
+    unwrap_type,
+)
+from ._names import (
+    FieldNames,
+    cli_visible,
+    expand_flat_keys,
+    named_leaf_fields,
+    part_prefix,
+    section_name,
+    set_path,
+)
+from ._origins import Origin
 
 if TYPE_CHECKING:
-    from ._bases import ConfigPart, SubConfig
+    from ._bases import ConfigPart
 
 
 class TomlSource:
@@ -57,11 +75,20 @@ class TomlSource:
         """
         Load configuration data for a ConfigPart type.
 
-        Looks for a section matching the ConfigPart class name.
+        Looks for a section matching the ConfigPart's prefix or class name.
+
+        Both spellings work: a nested sub-table (``[log.cli] level``) and a
+        flat prefixed key (``log_cli_level``) reach the same field.
         """
         data = self._load_file()
-        section_name = _get_section_name(part_type)
-        return dict(data.get(section_name, {}))
+        section = data.get(section_name(part_type), {})
+        return expand_flat_keys(part_type, dict(section))
+
+    def describe_origin(
+        self, part_type: type[ConfigPart], path: tuple[str, ...]
+    ) -> Origin | None:
+        """Name the file and the key inside it."""
+        return _file_origin(self._path, part_type, path, self._precedence)
 
 
 class IniSource:
@@ -103,17 +130,26 @@ class IniSource:
         Handles INI-specific parsing:
         - Boolean values: true/false, yes/no, on/off, 1/0
         - Lists: newline-separated values
+
+        INI has no nesting, so flat keys are the only spelling available:
+        `log_cli_level` maps onto the nested field `cli.level`.
         """
         parser = self._load_file()
-        section_name = _get_section_name(part_type)
+        wanted = section_name(part_type)
 
         # INI sections are case-insensitive
-        section_lower = section_name.lower()
+        section_lower = wanted.lower()
         for section in parser.sections():
             if section.lower() == section_lower:
                 return self._parse_section(parser[section], part_type)
 
         return {}
+
+    def describe_origin(
+        self, part_type: type[ConfigPart], path: tuple[str, ...]
+    ) -> Origin | None:
+        """Name the file and the flat key inside it."""
+        return _file_origin(self._path, part_type, path, self._precedence)
 
     def _parse_section(
         self,
@@ -121,12 +157,14 @@ class IniSource:
         part_type: type[ConfigPart],
     ) -> dict[str, Any]:
         """Parse an INI section with type-aware conversion."""
-        result: dict[str, Any] = {}
-        type_hints = _get_resolved_type_hints(part_type)
+        raw = dict(section.items())
+        result = expand_flat_keys(part_type, raw, parse=_parse_value)
 
-        for key, raw_value in section.items():
-            field_type = type_hints.get(key)
-            result[key] = _parse_ini_value(raw_value, field_type)
+        # Values whose key was a direct field name are still raw strings.
+        for field in fields_of(part_type, recurse=False):
+            value = result.get(field.name)
+            if isinstance(value, str):
+                result[field.name] = _parse_value(value, field.annotation)
 
         return result
 
@@ -223,25 +261,29 @@ class CLISource:
         parsed from CLI args. Fields are registered dynamically and
         the parser re-parses on each load() call.
 
+        Leaf fields are registered, including those nested inside SubConfigs:
+        `log.cli.level` becomes `--log-cli-level`. Sub-config containers
+        themselves get no option -- there is nothing to type on a command line
+        for a whole section.
+
         Args:
             part_type: ConfigPart class to register
         """
-        type_hints = _get_resolved_type_hints(part_type)
-
-        for field_name, field_type in type_hints.items():
-            if field_name in self._registered_fields:
+        for field, field_names in named_leaf_fields(part_type):
+            if not cli_visible(field):
+                continue
+            if field_names.flat in self._registered_fields:
                 # Already registered (possibly from another fragment)
                 continue
 
-            # Handle Optional types to get actual type
-            actual_type = _unwrap_optional(field_type)
-
-            # Extract short option from annotations if present
-            short_opt = _get_short_option(field_type)
-
-            # Register with parser
-            self._parser.add_field(field_name, actual_type, short=short_opt)
-            self._registered_fields[field_name] = field_type
+            self._parser.add_field(
+                field_names.flat,
+                unwrap_type(field.annotation),
+                long_option=field_names.cli,
+                short=_short_option_of(field.annotation),
+                help=_help_text_of(field),
+            )
+            self._registered_fields[field_names.flat] = field.annotation
 
     @property
     def precedence(self) -> int:
@@ -273,69 +315,115 @@ class CLISource:
         parse_result = self._parser.parse(self.args)
 
         result: dict[str, Any] = {}
-        type_hints = _get_resolved_type_hints(part_type)
 
         # Get prefix for this part type (for -o override matching)
-        prefix = _get_part_prefix(part_type)
+        prefix = part_prefix(part_type)
 
-        # Load from dedicated CLI flags
-        for field_name, field_type in type_hints.items():
-            if field_name in parse_result.values:
-                raw_value = parse_result.values[field_name]
-                actual_type = _unwrap_optional(field_type)
+        # Load from dedicated CLI flags, reassembling nested paths
+        for field, field_names in named_leaf_fields(part_type):
+            if field_names.flat not in parse_result.values:
+                continue
 
-                # Convert value if needed (booleans are already converted)
-                if actual_type is not bool and isinstance(raw_value, str):
-                    result[field_name] = _parse_value(raw_value, actual_type)
-                else:
-                    result[field_name] = raw_value
+            raw_value = parse_result.values[field_names.flat]
+            actual_type = unwrap_type(field.annotation)
+
+            # Convert value if needed (booleans are already converted)
+            if isinstance(raw_value, str) and actual_type is not bool:
+                value: Any = _parse_value(raw_value, actual_type)
+            elif isinstance(raw_value, list):
+                # Repeated option: each occurrence carries one element, so it
+                # is parsed against the element type. Parsing against the list
+                # type would wrap each item in a list of its own.
+                element_type = _element_type_of(actual_type)
+                value = [
+                    _parse_value(item, element_type) if isinstance(item, str) else item
+                    for item in raw_value
+                ]
+            else:
+                value = raw_value
+
+            set_path(result, field.path, value)
 
         # Apply -o overrides (they have highest precedence)
-        self._apply_overrides(result, type_hints, prefix, parse_result.overrides)
+        self._apply_overrides(result, part_type, prefix, parse_result.overrides)
 
         return result
+
+    def describe_origin(
+        self, part_type: type[ConfigPart], path: tuple[str, ...]
+    ) -> Origin | None:
+        """Name the option, and say whether it came from argv or addopts.
+
+        Values injected through `addopts` look identical to typed arguments
+        once parsed, which is exactly the confusion this reports away: an
+        option nobody typed is the hardest kind to debug.
+        """
+        names = _names_by_path(part_type).get(path)
+        if names is None:
+            return None
+
+        option = f"--{names.cli}"
+        short = self._parser.get_field_by_long(names.cli)
+        if short is not None and short.short_option:
+            option = f"-{short.short_option}/{option}"
+
+        if self._token_is_from_addopts(names):
+            return Origin(
+                kind="addopts",
+                location=f"addopts {option}",
+                precedence=self._precedence,
+            )
+        return Origin(kind="cli", location=option, precedence=self._precedence)
+
+    def _token_is_from_addopts(self, names: FieldNames) -> bool:
+        """Whether the winning occurrence of an option came from addopts.
+
+        Later arguments win, and addopts are *prepended*, so an option is
+        attributed to addopts only when it appears nowhere in the real
+        arguments.
+        """
+        if not self._addopts:
+            return False
+        return not _mentions_option(self._initial_args, names) and _mentions_option(
+            self._addopts, names
+        )
+
+    def format_help(self, *, prog: str | None = None) -> str:
+        """Render help text for every registered option."""
+        return self._parser.format_help(prog=prog)
+
+    def help_requested(self) -> bool:
+        """Whether -h/--help appeared in the arguments."""
+        return self._parser.parse(self.args).help_requested
 
     def _apply_overrides(
         self,
         result: dict[str, Any],
-        type_hints: dict[str, Any],
+        part_type: type[ConfigPart],
         prefix: str | None,
         overrides: dict[str, str],
     ) -> None:
-        """Apply -o overrides to the result dict."""
+        """Apply -o overrides to the result dict.
+
+        The override path is resolved against the field model, so the value is
+        converted to the field's declared type. Without that, `-o
+        log.cli.enabled=false` would store the string "false", which is truthy.
+        """
+        by_path = {field.path: field for field in leaf_fields(part_type)}
+
         for key, raw_value in overrides.items():
             # Handle prefixed keys (e.g., "pytest.verbose" or "log.cli.level")
-            parts = key.split(".")
+            parts = tuple(key.split("."))
 
             # Check if first part matches prefix
-            if prefix and parts[0] == prefix:
+            if prefix and parts and parts[0] == prefix:
                 parts = parts[1:]  # Remove prefix
 
-            if len(parts) == 1:
-                # Simple field: -o verbose=true or -o pytest.verbose=true
-                field_name = parts[0]
-                if field_name in type_hints:
-                    field_type = type_hints[field_name]
-                    result[field_name] = _parse_value(raw_value, field_type)
-            else:
-                # Nested field: -o log.cli.level=DEBUG
-                # Build nested dict structure
-                field_name = parts[0]
-                if field_name in type_hints:
-                    if field_name not in result:
-                        result[field_name] = {}
-                    if isinstance(result[field_name], dict):
-                        self._set_nested(result[field_name], parts[1:], raw_value)
+            field = by_path.get(parts)
+            if field is None:
+                continue
 
-    def _set_nested(
-        self, target: dict[str, Any], parts: list[str], value: str
-    ) -> None:
-        """Set a nested value in a dict using dotted path parts."""
-        for part in parts[:-1]:
-            if part not in target:
-                target[part] = {}
-            target = target[part]
-        target[parts[-1]] = value
+            set_path(result, parts, _parse_value(raw_value, field.annotation))
 
     def get_unknown_args(self) -> list[str]:
         """
@@ -419,37 +507,38 @@ class EnvSource:
         - Handles type conversion based on annotations
         - If parse_toml=True, values can be TOML for complex types
         """
-        from ._bases import SubConfig
-
         result: dict[str, Any] = {}
-        type_hints = _get_resolved_type_hints(part_type)
 
-        # Get prefix from ConfigPart class markers if set
-        part_prefix = _get_part_prefix(part_type)
-        effective_prefix = part_prefix or self._prefix
+        # The ConfigPart's own prefix wins over the source-level one.
+        effective_prefix = part_prefix(part_type) or self._prefix
 
-        # First handle direct fields
-        for field_name, field_type in type_hints.items():
-            env_name = _field_to_env_name(field_name, effective_prefix)
+        for field, field_names in named_leaf_fields(part_type):
+            env_name = _field_to_env_name(field_names.env, effective_prefix)
             if env_name in self._environ:
                 raw_value = self._environ[env_name]
-                result[field_name] = self._parse_value(raw_value, field_type)
-
-        # Then handle nested SubConfig fields
-        for field_name, field_type in type_hints.items():
-            if isinstance(field_type, type) and issubclass(field_type, SubConfig):
-                nested_prefix = _field_to_env_name(field_name, effective_prefix)
-                nested_data = self._load_nested(field_type, nested_prefix)
-                if nested_data:
-                    if field_name in result:
-                        # Merge with existing data
-                        result[field_name].update(nested_data)
-                    else:
-                        result[field_name] = nested_data
+                set_path(
+                    result,
+                    field.path,
+                    self._parse_value(raw_value, field.annotation),
+                )
 
         return result
 
-    def _parse_value(self, raw_value: str, field_type: type[Any] | None) -> Any:
+    def describe_origin(
+        self, part_type: type[ConfigPart], path: tuple[str, ...]
+    ) -> Origin | None:
+        """Name the environment variable a value came from."""
+        names = _names_by_path(part_type).get(path)
+        if names is None:
+            return None
+        effective_prefix = part_prefix(part_type) or self._prefix
+        return Origin(
+            kind="env",
+            location=_field_to_env_name(names.env, effective_prefix),
+            precedence=self._precedence,
+        )
+
+    def _parse_value(self, raw_value: str, field_type: Any) -> Any:
         """Parse a value, optionally trying TOML parsing first."""
         if self._parse_toml and self._looks_like_toml(raw_value):
             try:
@@ -468,7 +557,7 @@ class EnvSource:
                 except Exception:
                     pass
         # Fall back to standard parsing
-        return _parse_env_value(raw_value, field_type)
+        return _parse_value(raw_value, field_type)
 
     def _looks_like_toml(self, value: str) -> bool:
         """Check if a value looks like it might be TOML."""
@@ -482,58 +571,6 @@ class EnvSource:
             or "=" in value
         )
 
-    def _load_nested(
-        self, subconfig_type: type[SubConfig], prefix: str
-    ) -> dict[str, Any]:
-        """Load nested SubConfig fields from environment variables."""
-        from ._bases import SubConfig
-
-        result: dict[str, Any] = {}
-        type_hints = _get_resolved_type_hints(subconfig_type)
-
-        for field_name, field_type in type_hints.items():
-            env_name = _field_to_env_name(field_name, prefix)
-            if env_name in self._environ:
-                raw_value = self._environ[env_name]
-                result[field_name] = self._parse_value(raw_value, field_type)
-
-        # Recursively handle nested SubConfigs
-        for field_name, field_type in type_hints.items():
-            if isinstance(field_type, type) and issubclass(field_type, SubConfig):
-                nested_prefix = _field_to_env_name(field_name, prefix)
-                nested_data = self._load_nested(field_type, nested_prefix)
-                if nested_data:
-                    result[field_name] = nested_data
-
-        return result
-
-
-def _get_resolved_type_hints(cls: type[Any]) -> dict[str, Any]:
-    """Get resolved type hints for a class, preserving Annotated metadata."""
-    try:
-        return get_type_hints(cls, include_extras=True)
-    except Exception:
-        # Fallback to raw annotations if resolution fails
-        return getattr(cls, "__annotations__", {})
-
-
-def _get_section_name(part_type: type[ConfigPart]) -> str:
-    """Get the section name for a ConfigPart type."""
-    # Check for prefix marker on the class
-    prefix = _get_part_prefix(part_type)
-    if prefix:
-        return prefix
-    return part_type.__name__
-
-
-def _get_part_prefix(part_type: type[ConfigPart]) -> str | None:
-    """Get the prefix from a ConfigPart's markers."""
-    markers = getattr(part_type, "_config_markers", ())
-    for marker in markers:
-        if isinstance(marker, PrefixMarker):
-            return marker.prefix
-    return None
-
 
 def _field_to_env_name(field_name: str, prefix: str) -> str:
     """Convert a field name to an environment variable name."""
@@ -543,47 +580,70 @@ def _field_to_env_name(field_name: str, prefix: str) -> str:
     return env_name
 
 
-def _unwrap_optional(field_type: type[Any]) -> type[Any]:
-    """Unwrap Optional/Union/Annotated types to get the actual type."""
-    from typing import Annotated
-
-    origin = get_origin(field_type)
-
-    # Unwrap Annotated first to get to the inner type
-    if origin is Annotated:
-        type_args = getattr(field_type, "__args__", ())
-        if type_args:
-            # First arg is the actual type, rest are annotations
-            return _unwrap_optional(type_args[0])
-
-    # Then handle Optional/Union
-    if origin is Union or origin is types.UnionType:
-        type_args = getattr(field_type, "__args__", ())
-        non_none_args = [a for a in type_args if a is not type(None)]
-        if non_none_args:
-            result: type[Any] = non_none_args[0]
-            return result
-    return field_type
-
-
-def _get_short_option(field_type: Any) -> str | None:
-    """Extract short option from Annotated type if present."""
-    # Check if it's an Annotated type
-    origin = get_origin(field_type)
-    if origin is not None:
-        # For Annotated types, __metadata__ contains the annotations
-        metadata = getattr(field_type, "__metadata__", ())
-        for item in metadata:
-            if isinstance(item, ShortMarker):
-                return item.char
+def _short_option_of(annotation: Any) -> str | None:
+    """Extract the short option character from an annotation, if marked."""
+    for marker in markers_of(annotation):
+        if isinstance(marker, ShortMarker):
+            return marker.char
     return None
 
 
-def _parse_value(raw_value: str, field_type: type[Any] | None) -> Any:
+def _element_type_of(field_type: Any) -> Any:
+    """The element type of a list annotation, or the type itself."""
+    if get_origin(field_type) is list:
+        args = getattr(field_type, "__args__", ())
+        if args:
+            return args[0]
+        return str
+    return field_type
+
+
+def _mentions_option(args: list[str], names: FieldNames) -> bool:
+    """Whether ``args`` contains a dedicated flag or -o override for a field."""
+    long_option = f"--{names.cli}"
+    dotted = ".".join(names.path)
+    for arg in args:
+        if arg == long_option or arg.startswith(f"{long_option}="):
+            return True
+        if arg.startswith(f"{dotted}=") or arg.startswith(f"{names.flat}="):
+            return True
+    return False
+
+
+def _names_by_path(part_type: type[ConfigPart]) -> dict[tuple[str, ...], FieldNames]:
+    """Index a ConfigPart's leaf field names by structural path."""
+    return {field.path: names for field, names in named_leaf_fields(part_type)}
+
+
+def _file_origin(
+    path: Path,
+    part_type: type[ConfigPart],
+    field_path: tuple[str, ...],
+    precedence: int,
+) -> Origin:
+    """Build a file origin naming both the file and the key inside it."""
+    names = _names_by_path(part_type).get(field_path)
+    key = names.flat if names is not None else ".".join(field_path)
+    return Origin(kind="file", location=f"{path}[{key}]", precedence=precedence)
+
+
+def _help_text_of(field: FieldInfo) -> str | None:
+    """Extract the help text from a field, if marked."""
+    marker = marker_of(field, HelpMarker)
+    return marker.help if marker is not None else None
+
+
+def _parse_value(raw_value: str, field_type: Any) -> Any:
     """Parse a string value with type-aware conversion."""
     # Handle None type annotation
     if field_type is None:
         return raw_value
+
+    # Strip Annotated wrappers first. Without this, `Annotated[bool, no_cli]`
+    # never matches the bool branch below and "false" comes back as a truthy
+    # string.
+    while hasattr(field_type, "__metadata__"):
+        field_type = field_type.__origin__
 
     # Get origin for generic types (e.g., list[str] -> list, str | None -> Union)
     origin = get_origin(field_type)
@@ -620,16 +680,6 @@ def _parse_value(raw_value: str, field_type: type[Any] | None) -> Any:
 
     # Default: return as string
     return raw_value
-
-
-def _parse_ini_value(raw_value: str, field_type: type[Any] | None) -> Any:
-    """Parse an INI value with type-aware conversion."""
-    return _parse_value(raw_value, field_type)
-
-
-def _parse_env_value(raw_value: str, field_type: type[Any] | None) -> Any:
-    """Parse an environment variable value with type-aware conversion."""
-    return _parse_value(raw_value, field_type)
 
 
 class ConfigFileDiscoverySource:

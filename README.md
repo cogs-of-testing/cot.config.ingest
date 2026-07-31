@@ -1,5 +1,3 @@
-from email.policy import default
-
 # cot.config.ingest
 
 ## goal
@@ -186,7 +184,12 @@ def pytest_addoption(parser: Parser):
 
 ### open questions
 
-- [ ] mapping of prefixes/underscores and sbu-objects
-- [ ] mapping of ini options
+- [x] mapping of prefixes/underscores and sub-objects — `prefix=` names the file
+      section, `name_prefix=` prefixes the option names, and a field's dotted
+      path flattens into each source's spelling (`cli.level` → `--log-cli-level`,
+      `log_cli_level`, `LOG_CLI_LEVEL`). See `src/cot/config/_names.py`.
+- [x] mapping of ini options — INI has no nesting, so flat keys are resolved
+      against the same mapping; `log_cli_level` reaches `cli.level`.
 - [ ] ingestion of backward compatibility fields
-- [ ] toml/yaml behaviours
+- [ ] toml/yaml behaviours — TOML accepts both nested tables and flat keys;
+      YAML is not implemented.

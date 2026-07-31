@@ -6,11 +6,10 @@ The ConfigManager orchestrates configuration loading from multiple sources. It c
 
 ## Core Responsibilities
 
-1. **Store bootstrap fragments** - Initial context provided at construction
-2. **Manage sources** - Track active configuration sources (files, env, CLI)
-3. **Register ConfigParts** - Handle type registration and discovery
-4. **Load and merge** - Load data from sources with proper precedence
-5. **Build instances** - Create final ConfigPart instances
+1. **Manage sources** - Track active configuration sources (files, env, CLI)
+2. **Register ConfigParts** - Handle type registration and discovery
+3. **Load and merge** - Load data from sources with proper precedence
+4. **Build instances** - Create final ConfigPart instances
 
 ## API
 
@@ -20,25 +19,27 @@ The ConfigManager orchestrates configuration loading from multiple sources. It c
 class ConfigManager:
     def __init__(
         self,
-        bootstrap_fragments: list[ConfigPart] | None = None,
+        sources: Sequence[ConfigSource] = (),
     ) -> None:
         """
-        Create ConfigManager with optional bootstrap fragments.
+        Create ConfigManager with sources.
 
         Args:
-            bootstrap_fragments: Pre-built ConfigPart instances that
-                provide initial context (e.g., invocation directory, CLI args)
+            sources: Configuration sources (CLI, env, files, ...).
+                Kept sorted by precedence; higher precedence wins.
         """
 ```
 
 **Example:**
 ```python
-invocation = InvocationConfig(
-    invocation_dir=Path.cwd(),
-    invocation_args=sys.argv[1:],
-)
-manager = ConfigManager(bootstrap_fragments=[invocation])
+cli = CLISource(sys.argv[1:], invocation_dir=Path.cwd())
+manager = ConfigManager(sources=[cli, EnvSource("APP")])
 ```
+
+Sources carry all the context the manager needs — `CLISource` owns both the
+argument list and the invocation directory. There is no separate bootstrap
+fragment; an earlier design passed pre-built instances via `bootstrap_fragments=`,
+and that parameter no longer exists.
 
 ### Registering ConfigParts
 
@@ -91,8 +92,8 @@ def get_fragment(self, fragment_type: type[T]) -> T:
 
 **Example:**
 ```python
-invocation = manager.get_fragment(InvocationConfig)
-print(f"Working dir: {invocation.invocation_dir}")
+logging = manager.get_fragment(LoggingConfig)
+print(f"Level: {logging.level}")
 ```
 
 ### Loading from Sources
@@ -195,6 +196,9 @@ When the same field is set in multiple sources, higher precedence wins:
 
 ### List Handling
 
+> **Not implemented yet.** Lists are currently replaced wholesale by the
+> highest-precedence source. The modes below are design intent.
+
 Lists support multiple merge modes:
 
 **Append (default):**
@@ -251,28 +255,25 @@ class ConfigManager:
 from pathlib import Path
 import sys
 
-# 1. Create bootstrap fragment
-invocation = InvocationConfig(
-    invocation_dir=Path.cwd(),
-    invocation_args=sys.argv[1:],
-)
+# 1. Build the sources — they carry the invocation context
+cli = CLISource(sys.argv[1:], invocation_dir=Path.cwd())
+files = ConfigFileDiscoverySource(invocation_dir=cli.invocation_dir, cli_source=cli)
 
 # 2. Create manager
-manager = ConfigManager(bootstrap_fragments=[invocation])
+manager = ConfigManager(sources=[cli, EnvSource("APP"), files])
 
-# 3. Discover config files (adds FileSource for found files)
-manager.register_fragment_type(ConfigFileConfig)
+# 3. Register application ConfigParts (returns the loaded instance)
+logging = manager.register_fragment_type(LoggingConfig)
+database = manager.register_fragment_type(DatabaseConfig)
 
-# 4. Register application ConfigParts
-manager.register_fragment_type(LoggingConfig)
-manager.register_fragment_type(DatabaseConfig)
-
-# 5. Access configuration
+# 4. Or retrieve them again later
 logging = manager.get_fragment(LoggingConfig)
-database = manager.get_fragment(DatabaseConfig)
 ```
 
 ### With Plugin Discovery
+
+> **Not implemented yet.** The `Discoverable` protocol exists, but nothing
+> implements it and no plugin loading happens.
 
 ```python
 # After config files discovered

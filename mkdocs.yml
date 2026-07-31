@@ -56,27 +56,14 @@ markdown_extensions:
 nav:
   - Home: index.md
   - Getting Started:
-    - Installation: getting-started/installation.md
-    - Quick Start: getting-started/quickstart.md
     - Inspiration: getting-started/inspiration.md
-  - User Guide:
-    - Basic Usage: guide/basic-usage.md
-    - Configuration Sources: guide/configuration-sources.md
-    - Field Inheritance: guide/field-inheritance.md
-    - Sub-Configurations: guide/sub-configurations.md
-  - API Reference:
-    - Config Class: api/config.md
-    - Field Functions: api/fields.md
-    - Adapters: api/adapters.md
-    - Loaders: api/loaders.md
-  - Examples:
-    - Simple CLI App: examples/simple-cli.md
-    - Multi-Source Config: examples/multi-source.md
-    - Pytest Plugin: examples/pytest-plugin.md
   - Design:
-    - Architecture: design/architecture.md
-    - Configuration Fragments: design/fragments.md
-    - Roadmap: design/roadmap.md
+    - ConfigParts: design/config-parts.md
+    - Bootstrap Process: design/bootstrap-process.md
+    - ConfigManager: design/config-manager.md
+    - Name Matching: design/name-matching.md
+    - Feedback Loops: design/feedback-loops.md
+    - Change Notifications: design/change-notifications.md
 
 extra:
   social:

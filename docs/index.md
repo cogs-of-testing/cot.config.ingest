@@ -6,9 +6,9 @@ Type-safe configuration management with multi-source ingestion.
 
 `cot.config.ingest` is an experimental Python library that simplifies configuration management by providing a unified way to ingest configuration from:
 
-- **CLI arguments** (via argparse/click/others)
+- **CLI arguments** (built-in parser, no argparse required)
 - **Environment variables**
-- **Configuration files** (JSON, TOML, YAML)
+- **Configuration files** (TOML, INI)
 
 The library uses dataclass-like `ConfigPart` classes to define configuration structure, then automatically handles loading and merging from multiple sources.
 
@@ -18,35 +18,45 @@ The library uses dataclass-like `ConfigPart` classes to define configuration str
 - **Multiple sources** with automatic merging and precedence
 - **Origin tracking** to debug where values come from
 - **Hierarchical configs** with SubConfig composition
-- **Bootstrap process** for staged configuration discovery
-- **Plugin support** for extensible configuration schemas
+- **Value cascade** from parent config to sub-configs via `from_parent`
+- **Bootstrap feedback** — config files and `addopts` discovered from earlier stages
+
+> Not implemented yet: plugin discovery, list append/reset merge semantics, change
+> notification and hot reload. Those appear in the design documents as intent only.
 
 ## Quick Example
 
 ```python
-from cot.config import ConfigPart, ConfigManager
-from pathlib import Path
+import sys
+from typing import Annotated
 
-class DatabaseConfig(ConfigPart, prefix="db"):
-    host: str = "localhost"
+from cot.config import (
+    CLISource, ConfigManager, ConfigPart, EnvSource, SubConfig, from_parent,
+)
+
+class DatabaseConfig(SubConfig):
+    host: Annotated[str, from_parent] = "localhost"
     port: int = 5432
 
-class AppConfig(ConfigPart):
+class AppConfig(ConfigPart, prefix="app"):
     debug: bool = False
     database: DatabaseConfig
 
-# Bootstrap and load
-invocation = InvocationConfig(invocation_dir=Path.cwd(), invocation_args=sys.argv[1:])
-manager = ConfigManager(bootstrap_fragments=[invocation])
-manager.register_fragment_type(AppConfig)
+manager = ConfigManager(sources=[
+    CLISource(sys.argv[1:]),
+    EnvSource("APP"),
+])
+config = manager.register_fragment_type(AppConfig)
 
-config = manager.get_fragment(AppConfig)
 print(f"Connecting to {config.database.host}:{config.database.port}")
 ```
 
+`register_fragment_type()` returns the loaded instance; `manager.get_fragment(AppConfig)`
+retrieves it again later.
+
 ## Project Status
 
-**Experimental**: Architecture rebuild in progress. API will change.
+**Experimental**: the API is still moving. See `AGENTS.md` for the as-built architecture.
 
 ## Documentation
 

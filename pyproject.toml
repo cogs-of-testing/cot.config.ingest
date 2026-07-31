@@ -16,8 +16,8 @@ classifiers = [
 ]
 dynamic = [ "version" ]
 dependencies = [
+  "tomli>=2; python_version<'3.11'",
   "typing-extensions>=4",
-  "tomli>=2; python_version < '3.11'",
 ]
 
 [dependency-groups]
@@ -45,12 +45,6 @@ source = "vcs"
 [tool.hatch.build.targets.wheel]
 sources = [ "src" ]
 packages = [ "src/cot" ]
-[tool.hatch.envs.default]
-installer = "uv"
-dependencies = [ "pytest" ]
-
-[tool.hatch.envs.default.scripts]
-test = "pytest {args}"
 
 [tool.ruff]
 target-version = "py310"
@@ -93,6 +87,10 @@ warn_unused_configs = true
 no_implicit_reexport = true
 namespace_packages = true
 mypy_path = "src"
+# `cot` is a PEP 420 namespace package, so mypy needs to be told where module
+# paths start; without it a bare file path resolves as both `config` and
+# `cot.config`.
+explicit_package_bases = true
 
 [tool.uv]
 default-groups = [ "test", "typing", "lint" ]

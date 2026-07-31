@@ -8,10 +8,18 @@ from ._annotations import (
     config_source,
     from_parent,
     help,
+    named,
+    no_cli,
     short,
 )
-from ._bases import ConfigPart, InvocationConfig, SubConfig
-from ._manager import ConfigManager, ConfigSource, Discoverable
+from ._bases import ConfigPart, SubConfig
+from ._manager import (
+    ConfigManager,
+    ConfigSource,
+    Discoverable,
+    UnknownConfigKeyWarning,
+)
+from ._origins import Origin, OriginAware, OriginKind
 from ._sources import (
     CLISource,
     ConfigFileDiscoverySource,
@@ -24,11 +32,15 @@ __all__ = [
     # Base classes
     "ConfigPart",
     "SubConfig",
-    "InvocationConfig",
     # Manager
     "ConfigManager",
     "ConfigSource",
     "Discoverable",
+    "UnknownConfigKeyWarning",
+    # Provenance
+    "Origin",
+    "OriginAware",
+    "OriginKind",
     # Sources
     "TomlSource",
     "IniSource",
@@ -42,4 +54,6 @@ __all__ = [
     "bootstrap_only",
     "addopts_field",
     "short",
+    "named",
+    "no_cli",
 ]

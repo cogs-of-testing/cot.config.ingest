@@ -16,7 +16,7 @@ from __future__ import annotations
 import shlex
 import warnings
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, get_origin
 
 
 class CLIConflictError(Exception):
@@ -29,11 +29,13 @@ class CLIConflictError(Exception):
 class FieldSpec:
     """Specification for a CLI field."""
 
-    name: str  # Python field name (e.g., "config_file")
-    long_option: str  # Long CLI arg name (e.g., "config-file")
+    name: str  # Identity key (e.g., "log_cli_level")
+    long_option: str  # Long CLI arg name (e.g., "log-cli-level")
     short_option: str | None  # Short option (e.g., "c"), without dash
     field_type: type[Any]  # The field's type annotation
     is_boolean: bool = False  # If True, --flag sets to True (no value needed)
+    help: str | None = None  # Help text, rendered by format_help()
+    repeatable: bool = False  # If True, every occurrence appends to a list
 
 
 @dataclass
@@ -43,6 +45,7 @@ class ParseResult:
     values: dict[str, Any] = field(default_factory=dict)
     overrides: dict[str, str] = field(default_factory=dict)  # -o key=value
     unknown_args: list[str] = field(default_factory=list)
+    help_requested: bool = False  # -h / --help seen
 
 
 class CLIParser:
@@ -97,24 +100,34 @@ class CLIParser:
         name: str,
         field_type: type[Any],
         *,
+        long_option: str | None = None,
         short: str | None = None,
         is_boolean: bool | None = None,
+        help: str | None = None,
+        repeatable: bool | None = None,
     ) -> None:
         """
         Register a field for CLI parsing.
 
         Args:
-            name: Python field name (e.g., "config_file")
+            name: Identity key for the field, used to key ParseResult.values
+                (e.g., "log_cli_level")
             field_type: Type annotation for the field
+            long_option: Long option spelling without dashes. Defaults to
+                ``name`` with underscores turned into dashes.
             short: Short option character (e.g., "v" for -v). Optional.
             is_boolean: If True, treat as flag (--name sets True).
                        If None, auto-detect from field_type.
+            help: Help text shown by format_help().
+            repeatable: If True, each occurrence appends to a list.
+                If None, auto-detect from field_type (list fields repeat).
 
         Raises:
             CLIConflictError: If field name or options conflict with existing
                 registration (when on_conflict="error")
         """
-        long_option = name.replace("_", "-")
+        if long_option is None:
+            long_option = name.replace("_", "-")
 
         # Check for conflicts
         conflict = self._check_conflicts(name, long_option, short)
@@ -128,6 +141,8 @@ class CLIParser:
 
         if is_boolean is None:
             is_boolean = field_type is bool
+        if repeatable is None:
+            repeatable = field_type is list or get_origin(field_type) is list
 
         spec = FieldSpec(
             name=name,
@@ -135,6 +150,8 @@ class CLIParser:
             short_option=short,
             field_type=field_type,
             is_boolean=is_boolean,
+            help=help,
+            repeatable=repeatable,
         )
         self._fields[name] = spec
         self._long_to_field[long_option] = name
@@ -190,6 +207,13 @@ class CLIParser:
         while i < len(args):
             arg = args[i]
 
+            # Handle -h / --help. This is a library: record the request and let
+            # the application decide what to do with it. Never exit here.
+            if arg in ("-h", "--help"):
+                result.help_requested = True
+                i += 1
+                continue
+
             # Handle -o / --override
             if arg in ("-o", "--override"):
                 if i + 1 < len(args):
@@ -224,6 +248,18 @@ class CLIParser:
 
         return result
 
+    def _record(self, result: ParseResult, field_name: str, value: Any) -> None:
+        """Store a parsed value, appending when the field is repeatable."""
+        spec = self._fields[field_name]
+        if spec.repeatable:
+            existing = result.values.get(field_name)
+            if isinstance(existing, list):
+                existing.append(value)
+            else:
+                result.values[field_name] = [value]
+        else:
+            result.values[field_name] = value
+
     def _parse_long_option(
         self, arg: str, args: list[str], i: int, result: ParseResult
     ) -> int:
@@ -233,7 +269,7 @@ class CLIParser:
             key_part, value = arg[2:].split("=", 1)
             field_name = self._long_to_field.get(key_part)
             if field_name is not None:
-                result.values[field_name] = value
+                self._record(result, field_name, value)
             else:
                 result.unknown_args.append(arg)
             return i + 1
@@ -251,7 +287,7 @@ class CLIParser:
                 else:
                     # Non-boolean - next arg is value
                     if i + 1 < len(args) and not args[i + 1].startswith("-"):
-                        result.values[field_name] = args[i + 1]
+                        self._record(result, field_name, args[i + 1])
                         return i + 2
                     else:
                         # No value provided, skip
@@ -283,7 +319,7 @@ class CLIParser:
             else:
                 # Non-boolean - next arg is value
                 if i + 1 < len(args) and not args[i + 1].startswith("-"):
-                    result.values[field_name] = args[i + 1]
+                    self._record(result, field_name, args[i + 1])
                     return i + 2
                 else:
                     # No value provided
@@ -294,8 +330,39 @@ class CLIParser:
             result.unknown_args.append(arg)
             return i + 1
 
+    def format_help(self, *, prog: str | None = None) -> str:
+        """Render the registered options as help text.
+
+        Returns the text rather than printing or exiting -- this is a library,
+        and the calling application owns the process.
+        """
+        lines: list[str] = []
+        if prog:
+            lines.append(f"usage: {prog} [options]")
+            lines.append("")
+        lines.append("options:")
+
+        entries: list[tuple[str, str]] = [("-h, --help", "show this help")]
+        for spec in sorted(self._fields.values(), key=lambda s: s.long_option):
+            invocation = f"--{spec.long_option}"
+            if spec.short_option:
+                invocation = f"-{spec.short_option}, {invocation}"
+            if not spec.is_boolean:
+                invocation += " VALUE"
+            entries.append((invocation, spec.help or ""))
+        entries.append(("-o, --override KEY=VALUE", "set any config option"))
+
+        width = max(len(invocation) for invocation, _ in entries)
+        for invocation, text in entries:
+            lines.append(f"  {invocation.ljust(width)}  {text}".rstrip())
+        return "\n".join(lines) + "\n"
+
     def _parse_combined_short_options(
-        self, arg: str, args: list[str], i: int, result: ParseResult  # noqa: ARG002
+        self,
+        arg: str,
+        args: list[str],
+        i: int,
+        result: ParseResult,  # noqa: ARG002
     ) -> int:
         """Parse combined short options like -vx. Returns new index."""
         # Each character after - is a separate flag

@@ -1,22 +1,20 @@
-"""
-Test replicating pytest logging plugin configuration.
+"""Acceptance test: pytest's logging plugin, declared once.
 
-This test demonstrates a real-world use case: how the configuration
-system can handle pytest-style logging configuration from multiple
-sources using nested SubConfig structures with inheritance.
+This is the project's reason for existing. In pytest, every logging option is
+declared twice -- once as an ini option and once as a CLI option -- and the
+two are reconciled by hand at read time with `get_option_ini(config, "log_cli_format",
+"log_format")`. See `docs/pytest-logging-options.txt` for the full inventory
+extracted from `_pytest/logging.py`.
 
-The pytest logging plugin has two log output handlers with specific settings:
-- CLI (live logging to terminal) - log_cli, log_cli_level, log_cli_format, etc.
-- File (logging to a file) - log_file, log_file_level, log_file_format, etc.
+Here the same 13 options are declared once, as a nested structure, and reached
+from ini, TOML, env and CLI by their real pytest names:
 
-The top-level settings (log_level, log_format, log_date_format) serve as:
-1. Settings for captured logs (shown on test failure)
-2. Defaults that cascade to cli/file when their specific settings aren't set
+    log_cli_level   ->  cli.level
+    log_file        ->  file.path
+    log_cli         ->  cli.enabled
 
-Key pytest behaviors demonstrated:
-1. Child configs inherit from parent (e.g., log_cli_level defaults to log_level)
-2. INI flat keys map to nested structure (log_cli_level -> cli.level)
-3. Environment variables override file config
+The fallbacks pytest hand-rolls (`log_cli_level` falling back to `log_level`)
+are the `from_parent` cascade.
 """
 
 from __future__ import annotations
@@ -25,7 +23,10 @@ from pathlib import Path
 from textwrap import dedent
 from typing import Annotated
 
+import pytest
+
 from cot.config import (
+    CLISource,
     ConfigManager,
     ConfigPart,
     EnvSource,
@@ -33,399 +34,487 @@ from cot.config import (
     SubConfig,
     TomlSource,
     from_parent,
+    help,
+    named,
+    no_cli,
 )
 
-# --- Logging SubConfig hierarchy ---
-# Mirrors pytest's logging plugin structure
+DEFAULT_LOG_FORMAT = "%(levelname)-8s %(name)s:%(filename)s:%(lineno)d %(message)s"
+DEFAULT_LOG_DATE_FORMAT = "%H:%M:%S"
+
+
+# --- The declaration under test -------------------------------------------
+# One structure. Compare with pytest_addoption in _pytest/logging.py, which
+# needs ~90 lines and a local add_option_ini helper for the same options.
 
 
 class LogOutputConfig(SubConfig):
-    """
-    Base log output settings - reused via inheritance.
+    """Settings shared by every log output.
 
-    Contains the common fields shared by all log outputs:
-    - level: minimum log level to display
-    - format: log message format string
-    - date_format: timestamp format string
-
-    Fields marked with `from_parent` will cascade from parent config
-    (e.g., log.level -> log.cli.level) when not explicitly set.
+    `from_parent` is what makes `log_cli_level` fall back to `log_level`.
     """
 
-    level: Annotated[str, from_parent] = "WARNING"
-    format: Annotated[str, from_parent] = "%(levelname)s %(message)s"
-    date_format: Annotated[str, from_parent] = "%H:%M:%S"
+    level: Annotated[str | None, from_parent, help("level of messages to catch")] = None
+    format: Annotated[str, from_parent, help("log format")] = DEFAULT_LOG_FORMAT
+    date_format: Annotated[str, from_parent, help("log date format")] = (
+        DEFAULT_LOG_DATE_FORMAT
+    )
 
 
 class LogCliConfig(LogOutputConfig):
-    """
-    CLI (live) logging configuration.
+    """Live logging to the terminal."""
 
-    Extends base with:
-    - enabled: whether to show live logs during test execution
-    """
-
-    enabled: bool = False
+    # pytest calls this `log_cli`, and it is ini-only: live logging is switched
+    # on from the command line with --log-cli-level instead.
+    enabled: Annotated[bool, named("log_cli"), no_cli, help("enable live logs")] = False
 
 
 class LogFileConfig(LogOutputConfig):
-    """
-    File logging configuration.
+    """Logging to a file."""
 
-    Extends base with:
-    - path: file path for log output (None = disabled)
-    """
-
-    path: str | None = None
+    # Structurally `file.path`, but pytest calls it `log_file`.
+    path: Annotated[str | None, named("log_file"), help("path to log file")] = None
+    mode: Annotated[str, named("log_file_mode"), help("log file open mode")] = "w"
 
 
-class LoggingConfig(LogOutputConfig, ConfigPart, prefix="log"):
-    """
-    Pytest-style logging configuration using nested SubConfigs.
+class LoggingConfig(LogOutputConfig, ConfigPart, prefix="pytest", name_prefix="log"):
+    """pytest's logging configuration.
 
-    Inherits from LogOutputConfig to get the shared fields (level, format,
-    date_format) which serve as settings for captured logs AND as defaults
-    that cascade to the nested SubConfigs when their fields aren't set.
-
-    Maps to pytest's log_* options:
-        log.level          -> log_level (capture level + default for outputs)
-        log.format         -> log_format (capture format + default for outputs)
-        log.date_format    -> log_date_format (capture date format + default)
-        log.cli.enabled    -> log_cli
-        log.cli.level      -> log_cli_level (defaults to log.level)
-        log.cli.format     -> log_cli_format (defaults to log.format)
-        log.file.path      -> log_file
-        log.file.level     -> log_file_level (defaults to log.level)
-        log.file.format    -> log_file_format (defaults to log.format)
+    `prefix="pytest"` puts the options in the `[pytest]` section; `name_prefix="log"`
+    makes each option `log_*`. The two are separate on purpose -- pytest's
+    options live in the pytest section but are named after their plugin.
     """
 
-    # Nested configs - will inherit from top-level if not explicitly set
+    auto_indent: Annotated[str | None, help("auto-indent multiline messages")] = None
+    # CLI-only, repeatable, no ini equivalent.
+    logger_disable: Annotated[
+        list[str], named("log_disable"), help("disable a logger by name")
+    ] = []
+
     cli: LogCliConfig
     file: LogFileConfig
 
 
-class TestParentValueCascade:
-    """
-    Test that parent config values cascade to children.
-
-    In pytest, setting log_level sets the default for log_cli_level,
-    log_file_level, etc. This is different from class inheritance -
-    it's about config values flowing from parent to children at runtime.
-    """
-
-    def test_top_level_cascades_to_children(self, tmp_path: Path) -> None:
-        """Setting log.level should set default for cli.level, file.level, etc."""
-        toml_file = tmp_path / "config.toml"
-        toml_file.write_text(
-            dedent("""
-            [log]
-            level = "DEBUG"
-            format = "%(asctime)s %(message)s"
-        """)
-        )
-
-        manager = ConfigManager()
-        manager.add_source(TomlSource(toml_file))
-        config = manager.register_fragment_type(LoggingConfig)
-
-        # Top-level values should cascade to cli and file
-        assert config.level == "DEBUG"
-        assert config.cli.level == "DEBUG"
-        assert config.file.level == "DEBUG"
-
-        assert config.format == "%(asctime)s %(message)s"
-        assert config.cli.format == "%(asctime)s %(message)s"
-        assert config.file.format == "%(asctime)s %(message)s"
-
-    def test_child_override_takes_precedence(self, tmp_path: Path) -> None:
-        """Child-specific value overrides parent cascade."""
-        toml_file = tmp_path / "config.toml"
-        toml_file.write_text(
-            dedent("""
-            [log]
-            level = "DEBUG"
-
-            [log.cli]
-            level = "INFO"
-
-            [log.file]
-            level = "ERROR"
-        """)
-        )
-
-        manager = ConfigManager()
-        manager.add_source(TomlSource(toml_file))
-        config = manager.register_fragment_type(LoggingConfig)
-
-        # Top-level
-        assert config.level == "DEBUG"
-
-        # Children with explicit values override cascade
-        assert config.cli.level == "INFO"
-        assert config.file.level == "ERROR"
-
-    def test_env_can_set_parent_level(self) -> None:
-        """Environment variable sets parent level, cascades to children."""
-        env = {
-            "LOG_LEVEL": "DEBUG",
-        }
-
-        manager = ConfigManager()
-        manager.add_source(EnvSource(environ=env))
-        config = manager.register_fragment_type(LoggingConfig)
-
-        # All should get DEBUG from parent
-        assert config.level == "DEBUG"
-        assert config.cli.level == "DEBUG"
-        assert config.file.level == "DEBUG"
+ALL_INI_OPTIONS = [
+    "log_level",
+    "log_format",
+    "log_date_format",
+    "log_auto_indent",
+    "log_cli",
+    "log_cli_level",
+    "log_cli_format",
+    "log_cli_date_format",
+    "log_file",
+    "log_file_mode",
+    "log_file_level",
+    "log_file_format",
+    "log_file_date_format",
+]
 
 
-class TestFromParentBehavior:
-    """
-    Test that child SubConfigs inherit defaults from parent class.
+def make_manager(*sources: object) -> ConfigManager:
+    return ConfigManager(sources=list(sources))  # type: ignore[arg-type]
 
-    This tests CLASS inheritance (LogCliConfig extends LogOutputConfig),
-    not config value cascade (log.level -> log.cli.level).
-    """
 
-    def test_child_inherits_parent_defaults(self) -> None:
-        """Child SubConfig classes inherit field defaults from parent."""
-        # LogCliConfig inherits from LogOutputConfig
-        cli = LogCliConfig()
+class TestOptionInventory:
+    """Every option in the reference file is reachable, by its pytest name."""
 
-        # Inherited from LogOutputConfig
-        assert cli.level == "WARNING"
-        assert cli.format == "%(levelname)s %(message)s"
-        assert cli.date_format == "%H:%M:%S"
+    def test_all_thirteen_ini_options_are_declared(self) -> None:
+        from cot.config._names import flat_index
 
-        # Own field
-        assert cli.enabled is False
+        declared = set(flat_index(LoggingConfig))
+        assert set(ALL_INI_OPTIONS) <= declared
 
-    def test_child_can_override_inherited_at_instance(self) -> None:
-        """Child can override inherited fields when instantiated."""
-        cli = LogCliConfig(level="DEBUG", enabled=True)
+    def test_cli_only_option_is_declared(self) -> None:
+        from cot.config._names import flat_index
 
-        assert cli.level == "DEBUG"  # overridden
-        assert cli.format == "%(levelname)s %(message)s"  # inherited default
-        assert cli.enabled is True  # own field
+        assert "log_disable" in flat_index(LoggingConfig)
 
-    def test_sibling_children_are_independent(self) -> None:
-        """Different child SubConfigs don't share instance state."""
-        cli = LogCliConfig(level="DEBUG")
-        file = LogFileConfig(level="ERROR")
-
-        # Each has its own level
-        assert cli.level == "DEBUG"
-        assert file.level == "ERROR"
-
-    def test_nested_subconfigs_get_defaults_from_parent_class(self) -> None:
-        """When loading config, nested SubConfigs use their class defaults."""
-        manager = ConfigManager()
-        config = manager.register_fragment_type(LoggingConfig)
-
-        # Both outputs inherit from LogOutputConfig defaults
-        assert config.cli.level == "WARNING"
-        assert config.file.level == "WARNING"
-
-        # Each has the same inherited format
-        assert config.cli.format == "%(levelname)s %(message)s"
-        assert config.file.format == "%(levelname)s %(message)s"
-
-    def test_partial_override_preserves_inherited_defaults(
-        self, tmp_path: Path
+    @pytest.mark.parametrize("option", ALL_INI_OPTIONS)
+    def test_every_ini_option_reaches_a_field(
+        self, option: str, tmp_path: Path
     ) -> None:
-        """Setting one field preserves other inherited defaults."""
-        toml_file = tmp_path / "config.toml"
-        toml_file.write_text(
-            dedent("""
-            [log.cli]
-            level = "DEBUG"
-            # format and date_format not set - should use inherited defaults
+        ini = tmp_path / "pytest.ini"
+        # `log_cli` is a bool, the rest take strings; both parse from "1".
+        ini.write_text(f"[pytest]\n{option} = 1\n")
 
-            [log.file]
-            path = "test.log"
-            # level, format, date_format not set - should use inherited defaults
-        """)
-        )
+        manager = make_manager(IniSource(ini))
+        manager.register_fragment_type(LoggingConfig)
 
-        manager = ConfigManager()
-        manager.add_source(TomlSource(toml_file))
-        config = manager.register_fragment_type(LoggingConfig)
-
-        # CLI: level overridden, others inherited
-        assert config.cli.level == "DEBUG"
-        assert config.cli.format == "%(levelname)s %(message)s"
-        assert config.cli.date_format == "%H:%M:%S"
-
-        # File: path set, level/format/date_format inherited
-        assert config.file.path == "test.log"
-        assert config.file.level == "WARNING"
-        assert config.file.format == "%(levelname)s %(message)s"
+        # No UnknownConfigKeyWarning means the key found a home.
+        assert manager.origins(LoggingConfig)
 
 
-class TestIniMapping:
-    """
-    Test INI flat key mapping to nested structure.
+class TestIniFlatNames:
+    """pytest.ini uses flat keys; they must reach the nested structure.
 
-    pytest.ini uses flat keys like:
-        log_cli = true
-        log_cli_level = DEBUG
-        log_file = pytest.log
-
-    These need to map to our nested structure.
+    Before the name mapping existed, this needed a second, flat ConfigPart
+    declared alongside the real one.
     """
 
-    def test_flat_ini_keys_basic(self, tmp_path: Path) -> None:
-        """
-        Demonstrate that INI requires a flat ConfigPart.
-
-        INI files don't support nested sections, so for pytest.ini
-        compatibility we'd need a flat config class.
-        """
-
-        class FlatLoggingConfig(ConfigPart, prefix="pytest"):
-            """Flat config matching pytest.ini structure."""
-
-            log_cli: bool = False
-            log_cli_level: str = "WARNING"
-            log_cli_format: str = "%(levelname)s %(message)s"
-            log_file: str | None = None
-            log_file_level: str = "WARNING"
-            log_level: str = "WARNING"  # capture level
-
-        ini_file = tmp_path / "pytest.ini"
-        ini_file.write_text(
+    def test_flat_keys_reach_nested_fields(self, tmp_path: Path) -> None:
+        ini = tmp_path / "pytest.ini"
+        ini.write_text(
             dedent("""
             [pytest]
+            log_level = WARNING
             log_cli = true
             log_cli_level = DEBUG
             log_file = pytest.log
             log_file_level = INFO
-            log_level = WARNING
+            log_file_mode = a
         """)
         )
 
-        manager = ConfigManager()
-        manager.add_source(IniSource(ini_file))
-        config = manager.register_fragment_type(FlatLoggingConfig)
-
-        assert config.log_cli is True
-        assert config.log_cli_level == "DEBUG"
-        assert config.log_file == "pytest.log"
-        assert config.log_file_level == "INFO"
-        assert config.log_level == "WARNING"
-
-    def test_toml_nested_is_cleaner(self, tmp_path: Path) -> None:
-        """
-        TOML nested structure is cleaner than INI flat keys.
-
-        pyproject.toml can use proper nesting which maps directly
-        to our SubConfig hierarchy.
-        """
-        toml_file = tmp_path / "pyproject.toml"
-        toml_file.write_text(
-            dedent("""
-            [log]
-            level = "WARNING"
-
-            [log.cli]
-            enabled = true
-            level = "DEBUG"
-
-            [log.file]
-            path = "pytest.log"
-            level = "INFO"
-        """)
-        )
-
-        manager = ConfigManager()
-        manager.add_source(TomlSource(toml_file))
+        manager = make_manager(IniSource(ini))
         config = manager.register_fragment_type(LoggingConfig)
 
-        # Same data, but structured
-        assert config.level == "WARNING"  # capture level
+        assert config.level == "WARNING"
         assert config.cli.enabled is True
         assert config.cli.level == "DEBUG"
         assert config.file.path == "pytest.log"
         assert config.file.level == "INFO"
+        assert config.file.mode == "a"
+
+    def test_ini_booleans_are_parsed_not_left_as_strings(self, tmp_path: Path) -> None:
+        # `log_cli = false` must be False, not the truthy string "false".
+        ini = tmp_path / "pytest.ini"
+        ini.write_text("[pytest]\nlog_cli = false\n")
+
+        manager = make_manager(IniSource(ini))
+        config = manager.register_fragment_type(LoggingConfig)
+
+        assert config.cli.enabled is False
 
 
-class TestPrecedenceOverride:
-    """Test that higher precedence sources override lower ones."""
+class TestTomlSpellings:
+    """pyproject.toml can use flat pytest keys or a nested layout."""
 
-    def test_env_overrides_toml(self, tmp_path: Path) -> None:
-        """Environment variables override TOML config (CI scenario)."""
-        toml_file = tmp_path / "pyproject.toml"
-        toml_file.write_text(
+    def test_flat_keys_in_toml(self, tmp_path: Path) -> None:
+        toml = tmp_path / "pyproject.toml"
+        toml.write_text(
             dedent("""
-            [log.cli]
-            enabled = false
+            [pytest]
+            log_level = "WARNING"
+            log_cli_level = "DEBUG"
+            log_file = "pytest.log"
+        """)
+        )
+
+        manager = make_manager(TomlSource(toml))
+        config = manager.register_fragment_type(LoggingConfig)
+
+        assert config.cli.level == "DEBUG"
+        assert config.file.path == "pytest.log"
+
+    def test_nested_tables_in_toml(self, tmp_path: Path) -> None:
+        toml = tmp_path / "pyproject.toml"
+        toml.write_text(
+            dedent("""
+            [pytest]
             level = "WARNING"
 
-            [log.file]
-            path = "local.log"
-            level = "INFO"
-        """)
-        )
-
-        # CI environment overrides
-        env = {
-            "LOG_CLI_ENABLED": "true",
-            "LOG_CLI_LEVEL": "DEBUG",
-            "LOG_FILE_PATH": "/ci/logs/pytest.log",
-        }
-
-        manager = ConfigManager()
-        manager.add_source(TomlSource(toml_file, precedence=10))
-        manager.add_source(EnvSource(environ=env, precedence=20))
-
-        config = manager.register_fragment_type(LoggingConfig)
-
-        # Env overrides TOML
-        assert config.cli.enabled is True
-        assert config.cli.level == "DEBUG"
-        assert config.file.path == "/ci/logs/pytest.log"
-
-        # TOML preserved where no env override
-        assert config.file.level == "INFO"
-
-    def test_local_toml_overrides_base(self, tmp_path: Path) -> None:
-        """Local config file overrides shared base config."""
-        base_config = tmp_path / "base.toml"
-        base_config.write_text(
-            dedent("""
-            [log.cli]
-            format = "%(levelname)s %(name)s: %(message)s"
-
-            [log.file]
-            format = "%(asctime)s %(levelname)s: %(message)s"
-            date_format = "%Y-%m-%d %H:%M:%S"
-        """)
-        )
-
-        local_config = tmp_path / "local.toml"
-        local_config.write_text(
-            dedent("""
-            [log.cli]
-            enabled = true
+            [pytest.cli]
             level = "DEBUG"
 
-            [log.file]
-            path = "dev.log"
+            [pytest.file]
+            path = "pytest.log"
         """)
         )
 
-        manager = ConfigManager()
-        manager.add_source(TomlSource(base_config, precedence=5))
-        manager.add_source(TomlSource(local_config, precedence=10))
-
+        manager = make_manager(TomlSource(toml))
         config = manager.register_fragment_type(LoggingConfig)
 
-        # From local (higher precedence)
-        assert config.cli.enabled is True
+        assert config.level == "WARNING"
         assert config.cli.level == "DEBUG"
-        assert config.file.path == "dev.log"
+        assert config.file.path == "pytest.log"
 
-        # From base (not overridden by local)
-        assert config.cli.format == "%(levelname)s %(name)s: %(message)s"
-        assert config.file.date_format == "%Y-%m-%d %H:%M:%S"
+    def test_both_spellings_in_one_file(self, tmp_path: Path) -> None:
+        toml = tmp_path / "pyproject.toml"
+        toml.write_text(
+            dedent("""
+            [pytest]
+            log_cli_level = "DEBUG"
+
+            [pytest.file]
+            path = "pytest.log"
+        """)
+        )
+
+        manager = make_manager(TomlSource(toml))
+        config = manager.register_fragment_type(LoggingConfig)
+
+        assert config.cli.level == "DEBUG"
+        assert config.file.path == "pytest.log"
+
+
+class TestCLINames:
+    """Each option gets pytest's real command-line spelling."""
+
+    def test_top_level_option(self, tmp_path: Path) -> None:
+        cli = CLISource(args=["--log-level", "DEBUG"], invocation_dir=tmp_path)
+        config = make_manager(cli).register_fragment_type(LoggingConfig)
+        assert config.level == "DEBUG"
+
+    def test_nested_option(self, tmp_path: Path) -> None:
+        cli = CLISource(args=["--log-cli-level", "DEBUG"], invocation_dir=tmp_path)
+        config = make_manager(cli).register_fragment_type(LoggingConfig)
+        assert config.cli.level == "DEBUG"
+
+    def test_renamed_option(self, tmp_path: Path) -> None:
+        # `file.path` is spelled --log-file, not --log-file-path.
+        cli = CLISource(args=["--log-file", "out.log"], invocation_dir=tmp_path)
+        config = make_manager(cli).register_fragment_type(LoggingConfig)
+        assert config.file.path == "out.log"
+
+    def test_equals_form(self, tmp_path: Path) -> None:
+        cli = CLISource(args=["--log-file-level=ERROR"], invocation_dir=tmp_path)
+        config = make_manager(cli).register_fragment_type(LoggingConfig)
+        assert config.file.level == "ERROR"
+
+    def test_ini_only_option_has_no_cli_flag(self, tmp_path: Path) -> None:
+        # --log-cli must not exist; pytest has no such flag.
+        cli = CLISource(args=["--log-cli"], invocation_dir=tmp_path)
+        config = make_manager(cli).register_fragment_type(LoggingConfig)
+
+        assert config.cli.enabled is False
+        assert "--log-cli" in cli.get_unknown_args()
+
+    def test_repeatable_option_accumulates(self, tmp_path: Path) -> None:
+        # pytest: --log-disable can be passed multiple times.
+        cli = CLISource(
+            args=["--log-disable", "urllib3", "--log-disable", "asyncio"],
+            invocation_dir=tmp_path,
+        )
+        config = make_manager(cli).register_fragment_type(LoggingConfig)
+        assert config.logger_disable == ["urllib3", "asyncio"]
+
+    def test_generic_override_reaches_nested_field(self, tmp_path: Path) -> None:
+        cli = CLISource(args=["-o", "cli.level=DEBUG"], invocation_dir=tmp_path)
+        config = make_manager(cli).register_fragment_type(LoggingConfig)
+        assert config.cli.level == "DEBUG"
+
+    def test_generic_override_converts_types(self, tmp_path: Path) -> None:
+        # Would be the truthy string "false" without type-aware conversion.
+        cli = CLISource(args=["-o", "cli.enabled=false"], invocation_dir=tmp_path)
+        config = make_manager(cli).register_fragment_type(LoggingConfig)
+        assert config.cli.enabled is False
+
+
+class TestEnvNames:
+    def test_nested_field_from_env(self) -> None:
+        env = EnvSource(environ={"PYTEST_LOG_CLI_LEVEL": "DEBUG"})
+        config = make_manager(env).register_fragment_type(LoggingConfig)
+        assert config.cli.level == "DEBUG"
+
+    def test_renamed_field_from_env(self) -> None:
+        env = EnvSource(environ={"PYTEST_LOG_FILE": "/tmp/out.log"})
+        config = make_manager(env).register_fragment_type(LoggingConfig)
+        assert config.file.path == "/tmp/out.log"
+
+
+class TestFallbackChains:
+    """The six fallbacks in docs/pytest-logging-options.txt lines 77-82.
+
+    pytest implements these by calling get_option_ini with two names and
+    taking the first non-empty. Here they are the `from_parent` cascade.
+    """
+
+    @pytest.mark.parametrize(
+        ("child", "attribute"),
+        [
+            ("cli", "level"),
+            ("cli", "format"),
+            ("cli", "date_format"),
+            ("file", "level"),
+            ("file", "format"),
+            ("file", "date_format"),
+        ],
+    )
+    def test_child_falls_back_to_parent(
+        self, child: str, attribute: str, tmp_path: Path
+    ) -> None:
+        ini = tmp_path / "pytest.ini"
+        ini.write_text(
+            dedent("""
+            [pytest]
+            log_level = CRITICAL
+            log_format = PARENT_FORMAT
+            log_date_format = PARENT_DATE
+        """)
+        )
+
+        manager = make_manager(IniSource(ini))
+        config = manager.register_fragment_type(LoggingConfig)
+
+        parent_value = getattr(config, attribute)
+        assert getattr(getattr(config, child), attribute) == parent_value
+
+    def test_explicit_child_value_wins_over_parent(self, tmp_path: Path) -> None:
+        ini = tmp_path / "pytest.ini"
+        ini.write_text(
+            dedent("""
+            [pytest]
+            log_level = CRITICAL
+            log_cli_level = DEBUG
+        """)
+        )
+
+        config = make_manager(IniSource(ini)).register_fragment_type(LoggingConfig)
+
+        assert config.level == "CRITICAL"
+        assert config.cli.level == "DEBUG"
+        assert config.file.level == "CRITICAL"  # not set, so cascades
+
+
+class TestPrecedence:
+    def test_cli_beats_env_beats_file(self, tmp_path: Path) -> None:
+        ini = tmp_path / "pytest.ini"
+        ini.write_text(
+            dedent("""
+            [pytest]
+            log_level = FROM_FILE
+            log_cli_level = FROM_FILE
+            log_file = from_file.log
+        """)
+        )
+
+        manager = make_manager(
+            IniSource(ini),
+            EnvSource(
+                environ={
+                    "PYTEST_LOG_LEVEL": "FROM_ENV",
+                    "PYTEST_LOG_CLI_LEVEL": "FROM_ENV",
+                }
+            ),
+            CLISource(args=["--log-level", "FROM_CLI"], invocation_dir=tmp_path),
+        )
+        config = manager.register_fragment_type(LoggingConfig)
+
+        assert config.level == "FROM_CLI"
+        assert config.cli.level == "FROM_ENV"
+        assert config.file.path == "from_file.log"
+
+    def test_higher_precedence_does_not_wipe_sibling_fields(
+        self, tmp_path: Path
+    ) -> None:
+        # A CLI option inside `file` must not drop `file.path` from the file.
+        ini = tmp_path / "pytest.ini"
+        ini.write_text("[pytest]\nlog_file = from_file.log\n")
+
+        manager = make_manager(
+            IniSource(ini),
+            CLISource(args=["--log-file-level", "ERROR"], invocation_dir=tmp_path),
+        )
+        config = manager.register_fragment_type(LoggingConfig)
+
+        assert config.file.path == "from_file.log"
+        assert config.file.level == "ERROR"
+
+
+class TestProvenance:
+    """Which of the four places that mention an option actually won."""
+
+    def test_file_origin_names_file_and_key(self, tmp_path: Path) -> None:
+        ini = tmp_path / "pytest.ini"
+        ini.write_text("[pytest]\nlog_cli_level = DEBUG\n")
+
+        manager = make_manager(IniSource(ini))
+        manager.register_fragment_type(LoggingConfig)
+
+        origin = manager.origin_of(LoggingConfig, "cli.level")
+        assert origin.kind == "file"
+        assert "pytest.ini" in origin.location
+        assert "log_cli_level" in origin.location
+
+    def test_env_overriding_file_reports_env(self, tmp_path: Path) -> None:
+        ini = tmp_path / "pytest.ini"
+        ini.write_text("[pytest]\nlog_cli_level = DEBUG\n")
+
+        manager = make_manager(
+            IniSource(ini),
+            EnvSource(environ={"PYTEST_LOG_CLI_LEVEL": "INFO"}),
+        )
+        config = manager.register_fragment_type(LoggingConfig)
+
+        assert config.cli.level == "INFO"
+        origin = manager.origin_of(LoggingConfig, "cli.level")
+        assert origin.kind == "env"
+        assert origin.location == "PYTEST_LOG_CLI_LEVEL"
+
+    def test_cli_origin_names_the_option(self, tmp_path: Path) -> None:
+        manager = make_manager(
+            CLISource(args=["--log-file", "out.log"], invocation_dir=tmp_path)
+        )
+        manager.register_fragment_type(LoggingConfig)
+
+        origin = manager.origin_of(LoggingConfig, "file.path")
+        assert origin.kind == "cli"
+        assert origin.location == "--log-file"
+
+    def test_untouched_field_reports_its_default(self, tmp_path: Path) -> None:
+        manager = make_manager(CLISource(args=[], invocation_dir=tmp_path))
+        manager.register_fragment_type(LoggingConfig)
+
+        assert manager.origin_of(LoggingConfig, "file.mode").kind == "default"
+
+    def test_explain_lists_every_field(self, tmp_path: Path) -> None:
+        ini = tmp_path / "pytest.ini"
+        ini.write_text("[pytest]\nlog_cli_level = DEBUG\n")
+
+        manager = make_manager(IniSource(ini))
+        manager.register_fragment_type(LoggingConfig)
+
+        report = manager.explain(LoggingConfig)
+        assert "cli.level" in report
+        assert "DEBUG" in report
+        assert "log_cli_level" in report
+
+
+class TestHelpOutput:
+    def test_help_lists_options_with_their_text(self, tmp_path: Path) -> None:
+        manager = make_manager(CLISource(args=[], invocation_dir=tmp_path))
+        manager.register_fragment_type(LoggingConfig)
+
+        rendered = manager.format_help(prog="pytest")
+
+        assert "--log-cli-level" in rendered
+        assert "--log-file" in rendered
+        assert "path to log file" in rendered
+        assert "disable a logger by name" in rendered
+
+    def test_every_cli_option_is_listed(self, tmp_path: Path) -> None:
+        manager = make_manager(CLISource(args=[], invocation_dir=tmp_path))
+        manager.register_fragment_type(LoggingConfig)
+
+        rendered = manager.format_help()
+        for option in ALL_INI_OPTIONS:
+            if option == "log_cli":  # ini-only, deliberately absent
+                continue
+            assert f"--{option.replace('_', '-')}" in rendered
+
+    def test_ini_only_option_is_absent_from_help(self, tmp_path: Path) -> None:
+        manager = make_manager(CLISource(args=[], invocation_dir=tmp_path))
+        manager.register_fragment_type(LoggingConfig)
+
+        options = {
+            line.strip().split()[0]
+            for line in manager.format_help().splitlines()
+            if line.strip().startswith("--")
+        }
+        assert "--log-cli" not in options
+        assert "--log-cli-level" in options
+        assert "enable live logs" not in manager.format_help()
+
+    def test_help_request_is_reported_not_acted_on(self, tmp_path: Path) -> None:
+        # A library must not exit the process.
+        manager = make_manager(CLISource(args=["--help"], invocation_dir=tmp_path))
+        manager.register_fragment_type(LoggingConfig)
+
+        assert manager.help_requested() is True
+
+    def test_no_help_request(self, tmp_path: Path) -> None:
+        manager = make_manager(CLISource(args=[], invocation_dir=tmp_path))
+        manager.register_fragment_type(LoggingConfig)
+
+        assert manager.help_requested() is False

@@ -1,5 +1,13 @@
 # Bootstrap Process
 
+> **Status: design intent, partly built.** Stages 1 and 2 exist in a different
+> shape: there are no bootstrap fragments, and `InvocationConfig` was removed —
+> `CLISource(args=, invocation_dir=)` carries the invocation context, and config
+> files are found by `ConfigFileDiscoverySource` plus the `config_source` marker.
+> Stage 3 (plugin discovery) is **not implemented**; `discover()` exists on the
+> `Discoverable` protocol as a `classmethod` returning `None`, not an instance
+> method returning a copy. See `AGENTS.md` for the as-built flow.
+
 ## Overview
 
 The bootstrap process determines **how** to load configuration before loading the configuration itself. It progressively builds up configuration context through staged loading and feedback loops.
