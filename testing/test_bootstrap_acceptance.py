@@ -80,7 +80,8 @@ class TestBootstrapConfigFileDiscovery:
             cli_source=cli,
         )
         manager = ConfigManager(sources=[cli, files])
-        config = manager.register_fragment_type(PytestConfig)
+        manager.declare(PytestConfig)
+        config = manager.get(PytestConfig)
 
         assert config.config_file == "custom.toml"
         assert config.addopts == "-v --tb=short"
@@ -116,7 +117,8 @@ class TestBootstrapConfigFileDiscovery:
         manager = ConfigManager(sources=[cli, files])
         manager.add_source(EnvSource(environ=env, precedence=20))
 
-        config = manager.register_fragment_type(PytestConfig)
+        manager.declare(PytestConfig)
+        config = manager.get(PytestConfig)
 
         # Env overrides file
         assert config.addopts == "-x --pdb"
@@ -129,7 +131,8 @@ class TestBootstrapConfigFileDiscovery:
         """
         cli = CLISource(args=[], invocation_dir=tmp_path)
         manager = ConfigManager(sources=[cli])
-        config = manager.register_fragment_type(PytestConfig)
+        manager.declare(PytestConfig)
+        config = manager.get(PytestConfig)
 
         assert config.config_file is None
         assert config.addopts == ""
@@ -152,7 +155,8 @@ class TestBootstrapConfigFileDiscovery:
         manager = ConfigManager(sources=[cli, files])
 
         with pytest.raises(FileNotFoundError, match="nonexistent.toml"):
-            manager.register_fragment_type(PytestConfig)
+            manager.declare(PytestConfig)
+            manager.get(PytestConfig)
 
 
 class TestAddoptsCombination:
@@ -194,7 +198,8 @@ class TestAddoptsCombination:
         manager = ConfigManager(sources=[cli, files])
         manager.add_source(EnvSource(environ=env, precedence=20))
 
-        config = manager.register_fragment_type(PytestConfig)
+        manager.declare(PytestConfig)
+        config = manager.get(PytestConfig)
 
         # With current override semantics, env wins completely
         assert config.addopts == "-x --pdb"
@@ -221,7 +226,8 @@ class TestAddoptsCombination:
         )
         manager = ConfigManager(sources=[cli, files])
 
-        config = manager.register_fragment_type(PytestConfig)
+        manager.declare(PytestConfig)
+        config = manager.get(PytestConfig)
 
         assert config.addopts == "-v --tb=short"
 
@@ -237,7 +243,8 @@ class TestAddoptsCombination:
         manager = ConfigManager(sources=[cli])
         manager.add_source(EnvSource(environ=env, precedence=20))
 
-        config = manager.register_fragment_type(PytestConfig)
+        manager.declare(PytestConfig)
+        config = manager.get(PytestConfig)
 
         assert config.addopts == "-x --pdb"
 
@@ -268,7 +275,8 @@ class TestAddoptsCombination:
         manager = ConfigManager(sources=[cli, files])
         manager.add_source(EnvSource(environ=env, precedence=20))
 
-        config = manager.register_fragment_type(PytestConfig)
+        manager.declare(PytestConfig)
+        config = manager.get(PytestConfig)
 
         # CLI wins
         assert config.addopts == "--pdb"
@@ -308,7 +316,8 @@ class TestAddoptsPropagation:
             cli_source=cli,
         )
         manager = ConfigManager(sources=[cli, files])
-        config = manager.register_fragment_type(PytestConfigWithVerbose)
+        manager.declare(PytestConfigWithVerbose)
+        config = manager.get(PytestConfigWithVerbose)
 
         assert config.verbose is True
         assert config.addopts == "--verbose"
@@ -324,7 +333,8 @@ class TestAddoptsPropagation:
         cli = CLISource(args=[], invocation_dir=tmp_path)
         manager = ConfigManager(sources=[cli])
         manager.add_source(EnvSource(environ=env, precedence=20))
-        config = manager.register_fragment_type(PytestConfigWithVerbose)
+        manager.declare(PytestConfigWithVerbose)
+        config = manager.get(PytestConfigWithVerbose)
 
         assert config.verbose is True
 
@@ -353,7 +363,8 @@ class TestAddoptsPropagation:
             cli_source=cli,
         )
         manager = ConfigManager(sources=[cli, files])
-        config = manager.register_fragment_type(PytestConfigWithVerbose)
+        manager.declare(PytestConfigWithVerbose)
+        config = manager.get(PytestConfigWithVerbose)
 
         # addopts -v sets it to True (since CLI didn't explicitly set it)
         assert config.verbose is True
@@ -386,7 +397,8 @@ class TestAddoptsPropagation:
         manager = ConfigManager(sources=[cli, files])
 
         with pytest.raises(ValueError, match="config.file.*addopts|bootstrap"):
-            manager.register_fragment_type(PytestConfigWithVerbose)
+            manager.declare(PytestConfigWithVerbose)
+            manager.get(PytestConfigWithVerbose)
 
     def test_multiple_addopts_options_propagate(self, tmp_path: Path) -> None:
         """
@@ -409,7 +421,8 @@ class TestAddoptsPropagation:
             cli_source=cli,
         )
         manager = ConfigManager(sources=[cli, files])
-        config = manager.register_fragment_type(PytestConfigWithVerbose)
+        manager.declare(PytestConfigWithVerbose)
+        config = manager.get(PytestConfigWithVerbose)
 
         assert config.verbose is True
         assert config.tb == "short"
@@ -440,7 +453,8 @@ class TestShortOptions:
 
         cli = CLISource(args=["-v"], invocation_dir=tmp_path)
         manager = ConfigManager(sources=[cli])
-        config = manager.register_fragment_type(VerboseConfig)
+        manager.declare(VerboseConfig)
+        config = manager.get(VerboseConfig)
 
         assert config.verbose is True
         assert config.quiet is False
@@ -453,7 +467,8 @@ class TestShortOptions:
 
         cli = CLISource(args=["-c", "custom.toml"], invocation_dir=tmp_path)
         manager = ConfigManager(sources=[cli])
-        config = manager.register_fragment_type(FileConfig)
+        manager.declare(FileConfig)
+        config = manager.get(FileConfig)
 
         assert config.config_file == "custom.toml"
 
@@ -467,7 +482,8 @@ class TestShortOptions:
 
         cli = CLISource(args=["-vq"], invocation_dir=tmp_path)
         manager = ConfigManager(sources=[cli])
-        config = manager.register_fragment_type(FlagsConfig)
+        manager.declare(FlagsConfig)
+        config = manager.get(FlagsConfig)
 
         assert config.verbose is True
         assert config.quiet is True
@@ -482,11 +498,13 @@ class TestShortOptions:
         # Test short option
         cli1 = CLISource(args=["-v"], invocation_dir=tmp_path)
         manager1 = ConfigManager(sources=[cli1])
-        config1 = manager1.register_fragment_type(MixedConfig)
+        manager1.declare(MixedConfig)
+        config1 = manager1.get(MixedConfig)
         assert config1.verbose is True
 
         # Test long option
         cli2 = CLISource(args=["--verbose"], invocation_dir=tmp_path)
         manager2 = ConfigManager(sources=[cli2])
-        config2 = manager2.register_fragment_type(MixedConfig)
+        manager2.declare(MixedConfig)
+        config2 = manager2.get(MixedConfig)
         assert config2.verbose is True

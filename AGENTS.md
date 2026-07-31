@@ -28,8 +28,27 @@ class LoggingConfig(ConfigPart, prefix="log"):
     cli: LogCliConfig
 
 manager = ConfigManager(sources=[CLISource(sys.argv[1:]), EnvSource("APP")])
-config = manager.register_fragment_type(LoggingConfig)   # returns the instance
+manager.declare(LoggingConfig)
+config = manager.get(LoggingConfig)
 ```
+
+### Lifecycle: declare → resolve → get
+
+| Phase | Call | What happens |
+|---|---|---|
+| declare | `manager.declare(T)` | The type is recorded and its options registered with any source that accepts declarations. Nothing is loaded. |
+| resolve | `manager.resolve()` | Bootstrap runs once for *all* declared types, then every fragment is built. Idempotent; triggered lazily by the first `get()`. |
+| access | `manager.get(T)` | The built, typed instance. |
+
+Declaring after `resolve()` raises `ConfigLifecycleError` — the configuration
+is frozen.
+
+The split exists because a host collects declarations from independent plugins
+before any of them can be resolved. In pytest every plugin's `pytest_addoption`
+runs before a single argument is parsed, so a fragment built at declaration
+time could not see a config file or `addopts` contributed by a plugin loaded
+after it. `testing/test_lifecycle.py` pins that property: declaration order
+must not change the result.
 
 ### Modules under `src/cot/config/`
 
@@ -40,9 +59,16 @@ config = manager.register_fragment_type(LoggingConfig)   # returns the instance
 | `_fields.py` | `FieldInfo` + `fields_of()` — the single field model everything reads |
 | `_names.py` | Field path → per-source name mapping (CLI / ini / env / TOML) |
 | `_origins.py` | `Origin` — where a value came from, and the optional `OriginAware` protocol |
-| `_manager.py` | `ConfigManager`, the `ConfigSource` and `Discoverable` protocols |
+| `_manager.py` | `ConfigManager`, the `ConfigSource` / `DeclaringSource` / `Discoverable` protocols |
 | `_sources.py` | `TomlSource`, `IniSource`, `CLISource`, `EnvSource`, `ConfigFileDiscoverySource` |
 | `_cli_parser.py` | `CLIParser` — hand-rolled, re-parses on demand, supports dynamic field registration |
+| `pytest_plugin.py` | **Public.** The pytest PoC; monkeypatches pytest, auto-enabled (see below) |
+| `example_plugin.py` | **Public.** A worked example plugin built on the PoC; opt-in |
+
+A source implements `load()`; a source backed by an argument parser also
+implements `declare()` (`DeclaringSource`), because a parser has to be told an
+option exists before it can parse it. File and env sources have nothing to
+declare.
 
 `__init__.py` is a pure re-export facade with an explicit `__all__`; `no_implicit_reexport`
 is on, so anything public must be listed there.
@@ -108,7 +134,7 @@ maintains the order.
 
 ### The addopts feedback loop
 
-`register_fragment_type()` is deliberately multi-pass, because you cannot know all
+`resolve()` is deliberately multi-pass, because you cannot know all
 sources until you have read some config:
 
 1. collect defaults from the class
@@ -149,6 +175,61 @@ pre-commit run -a                # everything, incl. zizmor on workflows
    The PEP 561 marker lives at `src/cot/config/py.typed`.
 6. Keep inheritance simple. Sub-configs pick up fields via `__mro__`; elaborate
    multiple inheritance causes hard-to-follow field resolution.
+
+## pytest integration (proof of concept)
+
+`cot/config/pytest_plugin.py` **monkeypatches pytest**, adding methods it does
+not have. It is **auto-enabled** via a `pytest11` entry point (`cot_config`), so
+installing the package is enough — turn it off with `-p no:cot_config`.
+
+The patch is additive only: no option, ini key, hook or behaviour of pytest's is
+replaced. Note that `pytest_plugins = [...]` inside a conftest would be *too
+late* as an activation route — that conftest's own `pytest_addoption` runs
+before its plugin list is processed — which is why the entry point is used.
+
+Because it patches at import time, a type checker cannot see `add_config` /
+`get_config`. `manager_for_config(config).get(T)` is the statically-typed
+equivalent.
+
+```python
+def pytest_addoption(parser):
+    parser.add_config(LoggingConfig)      # declare
+
+def pytest_configure(config):
+    log = config.get_config(LoggingConfig)   # resolve + get, typed
+    config.explain_config(LoggingConfig)     # provenance table
+```
+
+**Division of labour.** pytest keeps argument parsing; this library supplies
+the structure. Each leaf field becomes a `parser.addoption` and/or
+`parser.addini` under the same name mapping every other source uses, and values
+come back through `config.getoption` then `config.getini` — pytest's own
+`get_option_ini` precedence — to be reassembled into the nested shape, where
+defaults and the `from_parent` cascade apply. The intended end state is the
+reverse: pytest using the library directly.
+
+Two collision behaviours, both load-bearing for a migration and both tested:
+
+- an **ini key** pytest already declares (`log_level`) is *adopted*, not
+  clobbered — the existing help and type survive and the value is read;
+- a **CLI option** pytest already owns raises `ConfigLifecycleError` naming the
+  field and pointing at `named()`, `no_cli` and `name_prefix`, instead of
+  argparse's bare "conflicting option string".
+
+### Example plugin
+
+`cot/config/example_plugin.py` is a working slow-test reporter built on the
+PoC — nested structure, `from_parent` cascade, `named()`, `no_cli`, help text,
+ini and CLI. It is **not** auto-enabled (it is an example, not infrastructure):
+
+```bash
+pytest -p cot.config.example_plugin --timing-report --timing-threshold=0.5
+```
+
+Everything it adds lives under `timing_` / `--timing-*`, a namespace pytest does
+not use. `testing/test_example_plugin.py` pins that it clobbers nothing: with no
+options given it registers no hooks and the run output is unchanged, and
+pytest's own `--durations` keeps working alongside it.
 
 ## Acceptance test
 

@@ -142,7 +142,7 @@ class ConfigFileConfig(ConfigPart):
         Returns:
             Updated copy of self (ConfigParts are frozen)
         """
-        invocation = manager.get_fragment(InvocationConfig)
+        invocation = manager.get(InvocationConfig)
         loaded = manager.load_for_part(type(self))
 
         config = loaded.get("config") or self.config
@@ -158,7 +158,7 @@ class ConfigFileConfig(ConfigPart):
 
 1. Manager creates default instance: `ConfigFileConfig()`
 2. Manager calls `instance.discover(manager)`
-3. `discover()` accesses other fragments via `manager.get_fragment()`
+3. `discover()` accesses other fragments via `manager.get()`
 4. `discover()` loads from sources via `manager.load_for_part()`
 5. `discover()` returns updated copy via `replace(self, ...)`
 6. Manager stores the returned instance
@@ -267,7 +267,7 @@ class PluginConfig(ConfigPart):
         for plugin_name in plugins:
             plugin = import_plugin(plugin_name)
             if hasattr(plugin, "Config"):
-                manager.register_fragment_type(plugin.Config)
+                manager.declare(plugin.Config)
 
         return replace(self, plugins=plugins)
 ```

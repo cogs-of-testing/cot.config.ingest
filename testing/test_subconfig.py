@@ -109,7 +109,8 @@ class TestNestedSubConfigLoading:
         manager = ConfigManager()
         manager.add_source(TomlSource(toml_file))
 
-        config = manager.register_fragment_type(OutputConfig)
+        manager.declare(OutputConfig)
+        config = manager.get(OutputConfig)
 
         # CLI settings
         assert config.cli.enabled is True
@@ -137,7 +138,8 @@ class TestNestedSubConfigLoading:
         manager = ConfigManager()
         manager.add_source(EnvSource(environ=env))
 
-        config = manager.register_fragment_type(OutputConfig)
+        manager.declare(OutputConfig)
+        config = manager.get(OutputConfig)
 
         # CLI settings
         assert config.cli.enabled is True
@@ -174,7 +176,8 @@ class TestNestedSubConfigLoading:
         manager.add_source(TomlSource(toml_file, precedence=10))
         manager.add_source(EnvSource(environ=env, precedence=20))
 
-        config = manager.register_fragment_type(OutputConfig)
+        manager.declare(OutputConfig)
+        config = manager.get(OutputConfig)
 
         # Env overrides TOML
         assert config.cli.enabled is True

@@ -14,8 +14,10 @@ from ._annotations import (
 )
 from ._bases import ConfigPart, SubConfig
 from ._manager import (
+    ConfigLifecycleError,
     ConfigManager,
     ConfigSource,
+    DeclaringSource,
     Discoverable,
     UnknownConfigKeyWarning,
 )
@@ -35,7 +37,9 @@ __all__ = [
     # Manager
     "ConfigManager",
     "ConfigSource",
+    "DeclaringSource",
     "Discoverable",
+    "ConfigLifecycleError",
     "UnknownConfigKeyWarning",
     # Provenance
     "Origin",

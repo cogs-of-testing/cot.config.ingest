@@ -182,7 +182,7 @@ class CLISource:
 
     Flow:
     1. Create CLISource with args and invocation_dir
-    2. register_fragment_type() for each ConfigPart (adds fields to parser)
+    2. declare() for each ConfigPart (adds fields to parser)
     3. prepend_addopts() after loading config files
     4. freeze_sources() to prevent further addopts
     5. load() to get values for each fragment type
@@ -253,7 +253,7 @@ class CLISource:
         """
         self._sources_frozen = True
 
-    def register_fragment_type(self, part_type: type[ConfigPart]) -> None:
+    def declare(self, part_type: type[ConfigPart]) -> None:
         """
         Register a ConfigPart type's fields with the parser.
 

@@ -43,7 +43,8 @@ class TestTomlSource:
         manager = ConfigManager()
         manager.add_source(TomlSource(toml_file))
 
-        config = manager.register_fragment_type(SimpleConfig)
+        manager.declare(SimpleConfig)
+        config = manager.get(SimpleConfig)
 
         assert config.debug is True
         assert config.log_level == "DEBUG"
@@ -67,7 +68,8 @@ class TestTomlSource:
         manager = ConfigManager()
         manager.add_source(TomlSource(toml_file))
 
-        config = manager.register_fragment_type(SimpleConfig)
+        manager.declare(SimpleConfig)
+        config = manager.get(SimpleConfig)
 
         assert config.debug is True
         assert config.log_level == "INFO"  # default
@@ -82,7 +84,8 @@ class TestTomlSource:
         manager = ConfigManager()
         manager.add_source(TomlSource(tmp_path / "nonexistent.toml"))
 
-        config = manager.register_fragment_type(AppConfig)
+        manager.declare(AppConfig)
+        config = manager.get(AppConfig)
 
         # All defaults
         assert config.debug is False
@@ -112,7 +115,8 @@ class TestIniSource:
         manager = ConfigManager()
         manager.add_source(IniSource(ini_file))
 
-        config = manager.register_fragment_type(PytestConfig)
+        manager.declare(PytestConfig)
+        config = manager.get(PytestConfig)
 
         assert config.addopts == "-v --tb=short"
         assert config.testpaths == "testing"
@@ -137,7 +141,8 @@ class TestIniSource:
         manager = ConfigManager()
         manager.add_source(IniSource(ini_file))
 
-        config = manager.register_fragment_type(FlagsConfig)
+        manager.declare(FlagsConfig)
+        config = manager.get(FlagsConfig)
 
         assert config.enabled is True
         assert config.verbose is True
@@ -163,7 +168,8 @@ class TestEnvSource:
         manager = ConfigManager()
         manager.add_source(EnvSource(environ=env))
 
-        config = manager.register_fragment_type(AppConfig)
+        manager.declare(AppConfig)
+        config = manager.get(AppConfig)
 
         assert config.debug is True
         assert config.log_level == "ERROR"
@@ -184,7 +190,8 @@ class TestEnvSource:
         manager = ConfigManager()
         manager.add_source(EnvSource(environ=env))
 
-        config = manager.register_fragment_type(DbConfig)
+        manager.declare(DbConfig)
+        config = manager.get(DbConfig)
 
         assert config.host == "production.db"
         assert config.port == 3306
@@ -220,7 +227,8 @@ class TestSourcePrecedence:
         manager.add_source(TomlSource(toml_file, precedence=10))
         manager.add_source(EnvSource(environ=env, precedence=20))
 
-        config = manager.register_fragment_type(AppConfig)
+        manager.declare(AppConfig)
+        config = manager.get(AppConfig)
 
         # Env overrides
         assert config.debug is True
@@ -259,7 +267,8 @@ class TestSourcePrecedence:
         manager.add_source(TomlSource(base_config, precedence=5))
         manager.add_source(TomlSource(local_config, precedence=10))
 
-        config = manager.register_fragment_type(AppConfig)
+        manager.declare(AppConfig)
+        config = manager.get(AppConfig)
 
         # Local overrides base
         assert config.debug is True
@@ -301,6 +310,7 @@ class TestSourcesOnly:
 
         manager = ConfigManager(sources=[cli, files])
 
-        config = manager.register_fragment_type(AppConfig)
+        manager.declare(AppConfig)
+        config = manager.get(AppConfig)
         assert config.debug is True
         assert config.config_file == "config.ini"

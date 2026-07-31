@@ -41,58 +41,53 @@ argument list and the invocation directory. There is no separate bootstrap
 fragment; an earlier design passed pre-built instances via `bootstrap_fragments=`,
 and that parameter no longer exists.
 
-### Registering ConfigParts
+### Declaring ConfigParts
 
 ```python
-def register_fragment_type(
-    self,
-    fragment_type: type[ConfigPart],
-) -> ConfigPart:
-    """
-    Register a ConfigPart type and return the discovered instance.
+def declare(self, fragment_type: type[ConfigPart]) -> None:
+    """Record the type and register its options. Nothing is loaded yet."""
 
-    Process:
-    1. Create default instance: fragment_type()
-    2. If instance has discover(), call it and use returned instance
-    3. Otherwise, load from sources and update instance
-    4. Store and return the final instance
+def resolve(self) -> None:
+    """Run bootstrap once for every declared type, then build them all."""
 
-    Args:
-        fragment_type: ConfigPart class to register
-
-    Returns:
-        Discovered/loaded ConfigPart instance
-    """
+def get(self, fragment_type: type[T]) -> T:
+    """The built instance; resolves first if that has not happened."""
 ```
+
+Declaration is separate from resolution so a host can collect declarations from
+independent plugins before any of them can be resolved. Declaring after
+`resolve()` raises `ConfigLifecycleError`.
 
 **Example:**
 ```python
-# Register and get instance in one call
-config_files = manager.register_fragment_type(ConfigFileConfig)
-logging = manager.register_fragment_type(LoggingConfig)
+manager.declare(ConfigFileConfig)
+manager.declare(LoggingConfig)
+manager.resolve()                       # optional; get() would do it
+
+logging = manager.get(LoggingConfig)
 ```
 
 ### Accessing Fragments
 
 ```python
-def get_fragment(self, fragment_type: type[T]) -> T:
+def get(self, fragment_type: type[T]) -> T:
     """
-    Get a stored fragment by type.
+    Get the built instance of a declared ConfigPart type.
 
     Args:
         fragment_type: ConfigPart class to retrieve
 
     Returns:
-        The stored ConfigPart instance
+        The built ConfigPart instance
 
     Raises:
-        KeyError: If fragment type not registered
+        KeyError: If the type was never declared
     """
 ```
 
 **Example:**
 ```python
-logging = manager.get_fragment(LoggingConfig)
+logging = manager.get(LoggingConfig)
 print(f"Level: {logging.level}")
 ```
 
@@ -242,9 +237,11 @@ See [Name Matching](name-matching.md) for full mapping rules.
 
 ```python
 class ConfigManager:
-    fragments: dict[type[ConfigPart], ConfigPart]  # Stored instances
-    sources: list[ConfigSource]                     # Active sources
-    config_parts: dict[str, type[ConfigPart]]      # Registered types
+    _fragments: dict[type[ConfigPart], ConfigPart]   # Built instances
+    _declared: list[type[ConfigPart]]                # Declaration order
+    _sources: list[ConfigSource]                     # Active sources
+    _origins: dict[type[ConfigPart], dict[str, Origin]]  # Provenance
+    _resolved: bool                                  # Frozen after resolve()
 ```
 
 ## Usage Patterns
@@ -262,12 +259,14 @@ files = ConfigFileDiscoverySource(invocation_dir=cli.invocation_dir, cli_source=
 # 2. Create manager
 manager = ConfigManager(sources=[cli, EnvSource("APP"), files])
 
-# 3. Register application ConfigParts (returns the loaded instance)
-logging = manager.register_fragment_type(LoggingConfig)
-database = manager.register_fragment_type(DatabaseConfig)
+# 3. Declare application ConfigParts
+manager.declare(LoggingConfig)
+manager.declare(DatabaseConfig)
 
-# 4. Or retrieve them again later
-logging = manager.get_fragment(LoggingConfig)
+# 4. Resolve once, then read them as often as you like
+manager.resolve()
+logging = manager.get(LoggingConfig)
+database = manager.get(DatabaseConfig)
 ```
 
 ### With Plugin Discovery
@@ -277,21 +276,20 @@ logging = manager.get_fragment(LoggingConfig)
 
 ```python
 # After config files discovered
-manager.register_fragment_type(PluginConfig)
+manager.declare(PluginConfig)
 # PluginConfig.discover() registers plugin ConfigParts
 
 # Plugin configs now available
-pytest_config = manager.get_fragment(PytestConfig)
+pytest_config = manager.get(PytestConfig)
 ```
 
 ### Dynamic Registration
 
 ```python
-# ConfigParts can be registered at any time
-manager.register_fragment_type(AppConfig)
-
-# New sources are re-evaluated for all parts
-manager.register_fragment_type(NewPluginConfig)
+# ConfigParts can be declared at any time before resolve()
+manager.declare(AppConfig)
+manager.declare(NewPluginConfig)
+manager.resolve()
 ```
 
 ## Error Handling

@@ -20,6 +20,10 @@ dependencies = [
   "typing-extensions>=4",
 ]
 
+# Auto-enables the proof of concept: loading this patches pytest's Parser and
+# Config with add_config/get_config. Disable with `-p no:cot_config`.
+entry-points.pytest11.cot_config = "cot.config.pytest_plugin"
+
 [dependency-groups]
 test = [
   "pytest>=9",

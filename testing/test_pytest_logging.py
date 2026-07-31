@@ -113,7 +113,15 @@ ALL_INI_OPTIONS = [
 
 
 def make_manager(*sources: object) -> ConfigManager:
-    return ConfigManager(sources=list(sources))  # type: ignore[arg-type]
+    """A manager with LoggingConfig declared but not yet resolved."""
+    manager = ConfigManager(sources=list(sources))  # type: ignore[arg-type]
+    manager.declare(LoggingConfig)
+    return manager
+
+
+def load_config(*sources: object) -> LoggingConfig:
+    """Declare, resolve and fetch in one step, for the single-fragment cases."""
+    return make_manager(*sources).get(LoggingConfig)
 
 
 class TestOptionInventory:
@@ -139,7 +147,7 @@ class TestOptionInventory:
         ini.write_text(f"[pytest]\n{option} = 1\n")
 
         manager = make_manager(IniSource(ini))
-        manager.register_fragment_type(LoggingConfig)
+        manager.get(LoggingConfig)
 
         # No UnknownConfigKeyWarning means the key found a home.
         assert manager.origins(LoggingConfig)
@@ -167,7 +175,7 @@ class TestIniFlatNames:
         )
 
         manager = make_manager(IniSource(ini))
-        config = manager.register_fragment_type(LoggingConfig)
+        config = manager.get(LoggingConfig)
 
         assert config.level == "WARNING"
         assert config.cli.enabled is True
@@ -182,7 +190,7 @@ class TestIniFlatNames:
         ini.write_text("[pytest]\nlog_cli = false\n")
 
         manager = make_manager(IniSource(ini))
-        config = manager.register_fragment_type(LoggingConfig)
+        config = manager.get(LoggingConfig)
 
         assert config.cli.enabled is False
 
@@ -202,7 +210,7 @@ class TestTomlSpellings:
         )
 
         manager = make_manager(TomlSource(toml))
-        config = manager.register_fragment_type(LoggingConfig)
+        config = manager.get(LoggingConfig)
 
         assert config.cli.level == "DEBUG"
         assert config.file.path == "pytest.log"
@@ -223,7 +231,7 @@ class TestTomlSpellings:
         )
 
         manager = make_manager(TomlSource(toml))
-        config = manager.register_fragment_type(LoggingConfig)
+        config = manager.get(LoggingConfig)
 
         assert config.level == "WARNING"
         assert config.cli.level == "DEBUG"
@@ -242,7 +250,7 @@ class TestTomlSpellings:
         )
 
         manager = make_manager(TomlSource(toml))
-        config = manager.register_fragment_type(LoggingConfig)
+        config = manager.get(LoggingConfig)
 
         assert config.cli.level == "DEBUG"
         assert config.file.path == "pytest.log"
@@ -253,29 +261,29 @@ class TestCLINames:
 
     def test_top_level_option(self, tmp_path: Path) -> None:
         cli = CLISource(args=["--log-level", "DEBUG"], invocation_dir=tmp_path)
-        config = make_manager(cli).register_fragment_type(LoggingConfig)
+        config = load_config(cli)
         assert config.level == "DEBUG"
 
     def test_nested_option(self, tmp_path: Path) -> None:
         cli = CLISource(args=["--log-cli-level", "DEBUG"], invocation_dir=tmp_path)
-        config = make_manager(cli).register_fragment_type(LoggingConfig)
+        config = load_config(cli)
         assert config.cli.level == "DEBUG"
 
     def test_renamed_option(self, tmp_path: Path) -> None:
         # `file.path` is spelled --log-file, not --log-file-path.
         cli = CLISource(args=["--log-file", "out.log"], invocation_dir=tmp_path)
-        config = make_manager(cli).register_fragment_type(LoggingConfig)
+        config = load_config(cli)
         assert config.file.path == "out.log"
 
     def test_equals_form(self, tmp_path: Path) -> None:
         cli = CLISource(args=["--log-file-level=ERROR"], invocation_dir=tmp_path)
-        config = make_manager(cli).register_fragment_type(LoggingConfig)
+        config = load_config(cli)
         assert config.file.level == "ERROR"
 
     def test_ini_only_option_has_no_cli_flag(self, tmp_path: Path) -> None:
         # --log-cli must not exist; pytest has no such flag.
         cli = CLISource(args=["--log-cli"], invocation_dir=tmp_path)
-        config = make_manager(cli).register_fragment_type(LoggingConfig)
+        config = load_config(cli)
 
         assert config.cli.enabled is False
         assert "--log-cli" in cli.get_unknown_args()
@@ -286,30 +294,30 @@ class TestCLINames:
             args=["--log-disable", "urllib3", "--log-disable", "asyncio"],
             invocation_dir=tmp_path,
         )
-        config = make_manager(cli).register_fragment_type(LoggingConfig)
+        config = load_config(cli)
         assert config.logger_disable == ["urllib3", "asyncio"]
 
     def test_generic_override_reaches_nested_field(self, tmp_path: Path) -> None:
         cli = CLISource(args=["-o", "cli.level=DEBUG"], invocation_dir=tmp_path)
-        config = make_manager(cli).register_fragment_type(LoggingConfig)
+        config = load_config(cli)
         assert config.cli.level == "DEBUG"
 
     def test_generic_override_converts_types(self, tmp_path: Path) -> None:
         # Would be the truthy string "false" without type-aware conversion.
         cli = CLISource(args=["-o", "cli.enabled=false"], invocation_dir=tmp_path)
-        config = make_manager(cli).register_fragment_type(LoggingConfig)
+        config = load_config(cli)
         assert config.cli.enabled is False
 
 
 class TestEnvNames:
     def test_nested_field_from_env(self) -> None:
         env = EnvSource(environ={"PYTEST_LOG_CLI_LEVEL": "DEBUG"})
-        config = make_manager(env).register_fragment_type(LoggingConfig)
+        config = load_config(env)
         assert config.cli.level == "DEBUG"
 
     def test_renamed_field_from_env(self) -> None:
         env = EnvSource(environ={"PYTEST_LOG_FILE": "/tmp/out.log"})
-        config = make_manager(env).register_fragment_type(LoggingConfig)
+        config = load_config(env)
         assert config.file.path == "/tmp/out.log"
 
 
@@ -345,7 +353,7 @@ class TestFallbackChains:
         )
 
         manager = make_manager(IniSource(ini))
-        config = manager.register_fragment_type(LoggingConfig)
+        config = manager.get(LoggingConfig)
 
         parent_value = getattr(config, attribute)
         assert getattr(getattr(config, child), attribute) == parent_value
@@ -360,7 +368,7 @@ class TestFallbackChains:
         """)
         )
 
-        config = make_manager(IniSource(ini)).register_fragment_type(LoggingConfig)
+        config = load_config(IniSource(ini))
 
         assert config.level == "CRITICAL"
         assert config.cli.level == "DEBUG"
@@ -389,7 +397,7 @@ class TestPrecedence:
             ),
             CLISource(args=["--log-level", "FROM_CLI"], invocation_dir=tmp_path),
         )
-        config = manager.register_fragment_type(LoggingConfig)
+        config = manager.get(LoggingConfig)
 
         assert config.level == "FROM_CLI"
         assert config.cli.level == "FROM_ENV"
@@ -406,7 +414,7 @@ class TestPrecedence:
             IniSource(ini),
             CLISource(args=["--log-file-level", "ERROR"], invocation_dir=tmp_path),
         )
-        config = manager.register_fragment_type(LoggingConfig)
+        config = manager.get(LoggingConfig)
 
         assert config.file.path == "from_file.log"
         assert config.file.level == "ERROR"
@@ -420,7 +428,7 @@ class TestProvenance:
         ini.write_text("[pytest]\nlog_cli_level = DEBUG\n")
 
         manager = make_manager(IniSource(ini))
-        manager.register_fragment_type(LoggingConfig)
+        manager.get(LoggingConfig)
 
         origin = manager.origin_of(LoggingConfig, "cli.level")
         assert origin.kind == "file"
@@ -435,7 +443,7 @@ class TestProvenance:
             IniSource(ini),
             EnvSource(environ={"PYTEST_LOG_CLI_LEVEL": "INFO"}),
         )
-        config = manager.register_fragment_type(LoggingConfig)
+        config = manager.get(LoggingConfig)
 
         assert config.cli.level == "INFO"
         origin = manager.origin_of(LoggingConfig, "cli.level")
@@ -446,15 +454,57 @@ class TestProvenance:
         manager = make_manager(
             CLISource(args=["--log-file", "out.log"], invocation_dir=tmp_path)
         )
-        manager.register_fragment_type(LoggingConfig)
+        manager.get(LoggingConfig)
 
         origin = manager.origin_of(LoggingConfig, "file.path")
         assert origin.kind == "cli"
         assert origin.location == "--log-file"
 
+    def test_cascaded_value_reports_where_the_parent_got_it(
+        self, tmp_path: Path
+    ) -> None:
+        # cli.level was never set; it cascaded from log_level in the ini file.
+        # Reporting it as a "default" would be wrong -- the field's own default
+        # is None, and the file is what actually decided the value.
+        ini = tmp_path / "pytest.ini"
+        ini.write_text("[pytest]\nlog_level = WARNING\n")
+
+        manager = make_manager(IniSource(ini))
+        config = manager.get(LoggingConfig)
+        assert config.cli.level == "WARNING"
+
+        origin = manager.origin_of(LoggingConfig, "cli.level")
+        assert origin.kind == "file"
+        assert "inherited from level" in origin.location
+        assert "log_level" in origin.location
+
+    def test_cascaded_value_can_be_traced_to_the_command_line(
+        self, tmp_path: Path
+    ) -> None:
+        manager = make_manager(
+            CLISource(args=["--log-level", "DEBUG"], invocation_dir=tmp_path)
+        )
+        assert manager.get(LoggingConfig).file.level == "DEBUG"
+
+        origin = manager.origin_of(LoggingConfig, "file.level")
+        assert origin.kind == "cli"
+        assert "--log-level" in origin.location
+
+    def test_explicitly_set_child_is_not_reported_as_inherited(
+        self, tmp_path: Path
+    ) -> None:
+        ini = tmp_path / "pytest.ini"
+        ini.write_text("[pytest]\nlog_level = WARNING\nlog_cli_level = DEBUG\n")
+
+        manager = make_manager(IniSource(ini))
+        origin = manager.origin_of(LoggingConfig, "cli.level")
+
+        assert "inherited" not in origin.location
+        assert "log_cli_level" in origin.location
+
     def test_untouched_field_reports_its_default(self, tmp_path: Path) -> None:
         manager = make_manager(CLISource(args=[], invocation_dir=tmp_path))
-        manager.register_fragment_type(LoggingConfig)
+        manager.get(LoggingConfig)
 
         assert manager.origin_of(LoggingConfig, "file.mode").kind == "default"
 
@@ -463,7 +513,7 @@ class TestProvenance:
         ini.write_text("[pytest]\nlog_cli_level = DEBUG\n")
 
         manager = make_manager(IniSource(ini))
-        manager.register_fragment_type(LoggingConfig)
+        manager.get(LoggingConfig)
 
         report = manager.explain(LoggingConfig)
         assert "cli.level" in report
@@ -474,7 +524,7 @@ class TestProvenance:
 class TestHelpOutput:
     def test_help_lists_options_with_their_text(self, tmp_path: Path) -> None:
         manager = make_manager(CLISource(args=[], invocation_dir=tmp_path))
-        manager.register_fragment_type(LoggingConfig)
+        manager.get(LoggingConfig)
 
         rendered = manager.format_help(prog="pytest")
 
@@ -485,7 +535,7 @@ class TestHelpOutput:
 
     def test_every_cli_option_is_listed(self, tmp_path: Path) -> None:
         manager = make_manager(CLISource(args=[], invocation_dir=tmp_path))
-        manager.register_fragment_type(LoggingConfig)
+        manager.get(LoggingConfig)
 
         rendered = manager.format_help()
         for option in ALL_INI_OPTIONS:
@@ -495,7 +545,7 @@ class TestHelpOutput:
 
     def test_ini_only_option_is_absent_from_help(self, tmp_path: Path) -> None:
         manager = make_manager(CLISource(args=[], invocation_dir=tmp_path))
-        manager.register_fragment_type(LoggingConfig)
+        manager.get(LoggingConfig)
 
         options = {
             line.strip().split()[0]
@@ -509,12 +559,12 @@ class TestHelpOutput:
     def test_help_request_is_reported_not_acted_on(self, tmp_path: Path) -> None:
         # A library must not exit the process.
         manager = make_manager(CLISource(args=["--help"], invocation_dir=tmp_path))
-        manager.register_fragment_type(LoggingConfig)
+        manager.get(LoggingConfig)
 
         assert manager.help_requested() is True
 
     def test_no_help_request(self, tmp_path: Path) -> None:
         manager = make_manager(CLISource(args=[], invocation_dir=tmp_path))
-        manager.register_fragment_type(LoggingConfig)
+        manager.get(LoggingConfig)
 
         assert manager.help_requested() is False

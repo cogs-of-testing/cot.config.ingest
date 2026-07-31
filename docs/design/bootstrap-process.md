@@ -52,7 +52,7 @@ manager = ConfigManager(bootstrap_fragments=[invocation])
 
 ```python
 # Type registered - manager handles instantiation and discovery
-manager.register_fragment_type(AddoptsConfig)
+manager.declare(AddoptsConfig)
 ```
 
 See [ConfigParts](config-parts.md) for full ConfigPart specification.
@@ -84,7 +84,7 @@ class ConfigFileConfig(ConfigPart):
     config_files: list[Path] = []  # Discovered files
 
     def discover(self, manager: ConfigManager) -> Self:
-        invocation = manager.get_fragment(InvocationConfig)
+        invocation = manager.get(InvocationConfig)
 
         # Check for explicit --config argument
         loaded = manager.load_for_part(type(self))
@@ -118,7 +118,7 @@ class PluginConfig(ConfigPart):
         for plugin_name in plugins:
             plugin = load_plugin(plugin_name)
             if hasattr(plugin, "ConfigPart"):
-                manager.register_fragment_type(plugin.ConfigPart)
+                manager.declare(plugin.ConfigPart)
 
         return replace(self, plugins=plugins)
 ```
@@ -129,9 +129,9 @@ All remaining ConfigParts are registered. They can now load from all discovered 
 
 ```python
 # These load from: CLI args + discovered config files + env vars
-manager.register_fragment_type(LoggingConfig)
-manager.register_fragment_type(DatabaseConfig)
-manager.register_fragment_type(ServerConfig)
+manager.declare(LoggingConfig)
+manager.declare(DatabaseConfig)
+manager.declare(ServerConfig)
 ```
 
 ## The `discover()` Method
@@ -185,7 +185,7 @@ Plugin discovery can register new ConfigPart types:
 ```python
 # PluginConfig.discover() finds plugins = ["pytest"]
 # It registers pytest's ConfigPart:
-manager.register_fragment_type(PytestConfig)
+manager.declare(PytestConfig)
 # Now PytestConfig is available for full config load
 ```
 
@@ -207,23 +207,23 @@ invocation = InvocationConfig(
 manager = ConfigManager(bootstrap_fragments=[invocation])
 
 # Stage 2: Discover config files
-manager.register_fragment_type(ConfigFileConfig)
+manager.declare(ConfigFileConfig)
 # → discover() finds app.toml
 # → manager adds FileSource("app.toml")
 
 # Stage 3: Discover plugins
-manager.register_fragment_type(PluginConfig)
+manager.declare(PluginConfig)
 # → discover() finds plugins = ["myPlugin"]
 # → registers myPlugin.ConfigPart
 
 # Stage 4: Load full configuration
-manager.register_fragment_type(LoggingConfig)
-manager.register_fragment_type(DatabaseConfig)
+manager.declare(LoggingConfig)
+manager.declare(DatabaseConfig)
 # → loads from CLI + app.toml + env vars
 
 # Access final configuration
-logging = manager.get_fragment(LoggingConfig)
-database = manager.get_fragment(DatabaseConfig)
+logging = manager.get(LoggingConfig)
+database = manager.get(DatabaseConfig)
 ```
 
 ## Design Decisions

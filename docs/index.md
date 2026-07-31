@@ -46,13 +46,38 @@ manager = ConfigManager(sources=[
     CLISource(sys.argv[1:]),
     EnvSource("APP"),
 ])
-config = manager.register_fragment_type(AppConfig)
+manager.declare(AppConfig)
+config = manager.get(AppConfig)
 
 print(f"Connecting to {config.database.host}:{config.database.port}")
 ```
 
-`register_fragment_type()` returns the loaded instance; `manager.get_fragment(AppConfig)`
-retrieves it again later.
+Configuration has three phases: `declare()` registers a type and its options,
+`resolve()` runs the bootstrap once for everything declared, and `get()` returns
+the built instance. `get()` resolves implicitly, so `resolve()` only matters when
+you want to pin the moment configuration freezes. Declaring after that raises
+`ConfigLifecycleError`.
+
+## pytest
+
+A proof of concept lives in `cot.config.pytest_plugin`. It patches pytest so a
+plugin can `parser.add_config(...)` in `pytest_addoption` and
+`config.get_config(...)` afterwards, and is auto-enabled once the package is
+installed (`-p no:cot_config` turns it off).
+
+`cot.config.example_plugin` is a worked example — a slow-test reporter, opt-in
+with `-p cot.config.example_plugin`:
+
+```ini
+[pytest]
+timing_report = true
+timing_threshold = 0.5
+timing_file = timings.txt
+```
+
+```bash
+pytest --timing-report --timing-terminal-threshold=1.0
+```
 
 ## Project Status
 

@@ -31,6 +31,10 @@ from ._origins import Origin, default_origin, generic_origin
 _T = TypeVar("_T", bound=ConfigPart)
 
 
+class ConfigLifecycleError(RuntimeError):
+    """A configuration operation happened in the wrong phase."""
+
+
 @runtime_checkable
 class ConfigSource(Protocol):
     """Protocol for configuration sources."""
@@ -42,6 +46,20 @@ class ConfigSource(Protocol):
 
     def load(self, part_type: type[ConfigPart]) -> dict[str, Any]:
         """Load configuration data for a ConfigPart type."""
+        ...
+
+
+@runtime_checkable
+class DeclaringSource(Protocol):
+    """Optional protocol: a source that needs to know about types up front.
+
+    A file or environment source reads whatever names it is asked about, so it
+    has nothing to declare. A source backed by an argument parser does: the
+    parser has to be told an option exists before it can parse it.
+    """
+
+    def declare(self, part_type: type[ConfigPart]) -> None:
+        """Register a ConfigPart type's fields as options."""
         ...
 
 
@@ -85,7 +103,8 @@ class ConfigManager:
             cli_source=cli,
         )
         manager = ConfigManager(sources=[cli, env, files])
-        config = manager.register_fragment_type(MyConfig)
+        manager.declare(MyConfig)
+        config = manager.get(MyConfig)
     """
 
     def __init__(
@@ -105,9 +124,12 @@ class ConfigManager:
         from ._sources import CLISource
 
         self._fragments: dict[type[ConfigPart], ConfigPart] = {}
+        self._declared: list[type[ConfigPart]] = []
         self._sources: list[ConfigSource] = []
         self._cli_source: CLISource | None = None
         self._origins: dict[type[ConfigPart], dict[str, Origin]] = {}
+        self._resolved = False
+        self._resolving = False
 
         # Add all sources
         for source in sources:
@@ -120,62 +142,133 @@ class ConfigManager:
         """
         Add a configuration source.
 
-        Sources are kept sorted by precedence (lowest first).
+        Sources are kept sorted by precedence (lowest first). A source added
+        after declarations have been made still learns about them, which is
+        what lets a config file discovered during resolve() participate.
         """
         self._sources.append(source)
         self._sources.sort(key=lambda s: s.precedence)
 
-    def register_fragment_type(
-        self,
-        fragment_type: type[_T],
-    ) -> _T:
+        declare = getattr(source, "declare", None)
+        if callable(declare):
+            for fragment_type in self._declared:
+                declare(fragment_type)
+
+    # -- Phase 1: declaration --------------------------------------------
+
+    def declare(self, fragment_type: type[ConfigPart]) -> None:
         """
-        Register a ConfigPart type and return the loaded instance.
+        Declare a ConfigPart type and its options. Nothing is loaded yet.
 
-        Process:
-        1. Register fragment type with CLI source (adds fields to parser)
-        2. Load bootstrap fields from CLI (config_source, etc.)
-        3. If type has discover(), call it to add sources
-        4. Process config_source markers to add config files
-        5. Load from file/env sources to get addopts
-        6. Prepend addopts to CLI source
-        7. Load final values from all sources + CLI
-        8. Build instance with defaults merged with loaded data
-        9. Store and return the final instance
+        Declaration is separate from resolution because a host may collect
+        declarations from many independent plugins before any of them can be
+        resolved. pytest is the motivating case: every plugin's
+        `pytest_addoption` runs before a single argument is parsed, so a
+        fragment built at declaration time could not see options declared by a
+        plugin loaded after it.
 
-        Args:
-            fragment_type: ConfigPart class to register
+        Declaring the same type twice is a no-op.
 
-        Returns:
-            Loaded ConfigPart instance
+        Raises:
+            ConfigLifecycleError: If called after resolve().
         """
-        # Get field defaults from type annotations
-        defaults = field_defaults(fragment_type)
+        if self._resolved:
+            raise ConfigLifecycleError(
+                f"Cannot declare {fragment_type.__name__} after resolve(); "
+                f"configuration is already frozen"
+            )
+        if fragment_type in self._declared:
+            return
+        self._declared.append(fragment_type)
+        self._declare_to_sources(fragment_type)
 
-        # Register with CLI source and load CLI args if available
-        cli_data: dict[str, Any] = {}
-        if self._cli_source is not None:
-            self._cli_source.register_fragment_type(fragment_type)
-            cli_data = self._cli_source.load(fragment_type)
+    @property
+    def declared(self) -> list[type[ConfigPart]]:
+        """The ConfigPart types declared so far, in declaration order."""
+        return list(self._declared)
 
-        # Call discover if available (adds sources before loading)
+    def _declare_to_sources(self, fragment_type: type[ConfigPart]) -> None:
+        """Let every source that accepts declarations register the type.
+
+        `declare` is optional on the ConfigSource protocol: a file or env
+        source has nothing to declare, while CLISource adds parser options and
+        the pytest adapter forwards to `parser.addoption`/`addini`.
+        """
+        for source in self._sources:
+            declare = getattr(source, "declare", None)
+            if callable(declare):
+                declare(fragment_type)
+
+    # -- Phase 2: resolution ---------------------------------------------
+
+    @property
+    def resolved(self) -> bool:
+        """Whether resolve() has run and the configuration is frozen."""
+        return self._resolved
+
+    def resolve(self) -> None:
+        """
+        Run the bootstrap feedback loops once and build every declared fragment.
+
+        Idempotent, and triggered automatically by the first `get()`. Calling
+        it explicitly is how a host pins the moment configuration freezes.
+
+        The staging matters: every declared type contributes config files
+        before any type reads them, and every type contributes addopts before
+        any type is built. Doing this per-fragment -- as the previous API did
+        -- meant a fragment could be built against a source a later fragment
+        was about to add.
+        """
+        if self._resolved or self._resolving:
+            return
+        self._resolving = True
+        try:
+            for fragment_type in self._declared:
+                self._run_discover(fragment_type)
+
+            # Every config_source field across all fragments, so the files are
+            # all present before anything reads them.
+            for fragment_type in self._declared:
+                self._collect_config_sources(fragment_type)
+
+            # Then every addopts field, so the CLI is complete before parsing.
+            for fragment_type in self._declared:
+                self._collect_addopts(fragment_type)
+
+            for fragment_type in self._declared:
+                self._fragments[fragment_type] = self._build(fragment_type)
+        finally:
+            self._resolving = False
+        self._resolved = True
+
+    def _run_discover(self, fragment_type: type[ConfigPart]) -> None:
+        """Call the type's discover() hook, if it has one."""
         discover_method = getattr(fragment_type, "discover", None)
         if discover_method is not None and callable(discover_method):
             discover_method(self)
 
-        # Check for config_source markers in CLI data and add sources
-        bootstrap_merged = {**defaults, **cli_data}
-        self._process_config_source_fields(fragment_type, bootstrap_merged)
+    def _collect_config_sources(self, fragment_type: type[ConfigPart]) -> None:
+        """Turn this type's config_source fields into sources."""
+        defaults = field_defaults(fragment_type)
+        cli_data = self._load_cli(fragment_type)
+        self._process_config_source_fields(fragment_type, {**defaults, **cli_data})
 
-        # Load from file/env sources to get addopts
+    def _collect_addopts(self, fragment_type: type[ConfigPart]) -> None:
+        """Feed this type's addopts field back into the CLI source."""
+        defaults = field_defaults(fragment_type)
         loaded = self.load_for_part(fragment_type)
-
-        # Process addopts fields - prepend to CLI source (if available)
+        cli_data = self._load_cli(fragment_type)
         self._process_addopts_fields(fragment_type, {**defaults, **loaded, **cli_data})
 
-        # Now load final CLI data (includes addopts) if CLI source available
-        if self._cli_source is not None:
-            cli_data = self._cli_source.load(fragment_type)
+    def _load_cli(self, fragment_type: type[ConfigPart]) -> dict[str, Any]:
+        if self._cli_source is None:
+            return {}
+        return self._cli_source.load(fragment_type)
+
+    def _build(self, fragment_type: type[ConfigPart]) -> ConfigPart:
+        """Merge every source into one instance, recording provenance."""
+        defaults = field_defaults(fragment_type)
+        cli_data = self._load_cli(fragment_type)
 
         # Merge: defaults < sources < cli (cli has highest precedence).
         # This must be a deep merge: CLI and file sources both produce nested
@@ -203,39 +296,52 @@ class ConfigManager:
             _deep_merge(merged, cli_data)
             self._record_origins(origins, self._cli_source, fragment_type, cli_data)
 
-        self._origins[fragment_type] = origins
-
         # Keys a source produced that the ConfigPart does not declare are user
         # error in a config file, not programmer error -- warn and drop them
         # rather than letting the constructor reject the whole load.
         merged = _drop_unknown_keys(fragment_type, merged)
 
         # Build nested SubConfigs from type hints
-        merged = _build_nested_subconfigs(fragment_type, merged)
+        inherited: dict[str, str] = {}
+        merged = _build_nested_subconfigs(fragment_type, merged, inherited=inherited)
 
-        # Create instance
-        instance = fragment_type(**merged)
+        # A cascaded value did not come from the child's own default -- it came
+        # from wherever the parent got it. Attribute it there, or `--log-level
+        # DEBUG` would show `cli.level` as a default.
+        for child, parent in inherited.items():
+            parent_origin = origins.get(parent)
+            if parent_origin is None:
+                continue
+            origins[child] = Origin(
+                kind=parent_origin.kind,
+                location=f"inherited from {parent} ({parent_origin.location})",
+                precedence=parent_origin.precedence,
+            )
 
-        # Store
-        self._fragments[fragment_type] = instance
+        self._origins[fragment_type] = origins
 
-        return instance
+        return fragment_type(**merged)
 
-    def get_fragment(self, fragment_type: type[_T]) -> _T:
+    # -- Phase 3: access --------------------------------------------------
+
+    def get(self, fragment_type: type[_T]) -> _T:
         """
-        Get a stored fragment by type.
+        Get the built instance of a declared ConfigPart type.
 
-        Args:
-            fragment_type: ConfigPart class to retrieve
-
-        Returns:
-            The stored ConfigPart instance
+        Resolves first if that has not happened yet, so a host that never
+        calls resolve() explicitly still gets a consistent view.
 
         Raises:
-            KeyError: If fragment type not registered
+            KeyError: If the type was never declared.
         """
+        if not self._resolved:
+            self.resolve()
         if fragment_type not in self._fragments:
-            raise KeyError(f"Fragment type {fragment_type.__name__} not registered")
+            raise KeyError(
+                f"Fragment type {fragment_type.__name__} was never declared; "
+                f"declared: "
+                f"{', '.join(t.__name__ for t in self._declared) or '(none)'}"
+            )
         return self._fragments[fragment_type]  # type: ignore[return-value]
 
     def load_for_part(
@@ -312,19 +418,22 @@ class ConfigManager:
             The Origin of the winning value.
 
         Raises:
-            KeyError: If the type was never registered, or the path is unknown.
+            KeyError: If the type was never declared, or the path is unknown.
         """
-        if fragment_type not in self._origins:
-            raise KeyError(f"Fragment type {fragment_type.__name__} not registered")
-        origins = self._origins[fragment_type]
+        origins = self.origins(fragment_type)
         if path not in origins:
             raise KeyError(f"No origin recorded for {fragment_type.__name__}.{path}")
         return origins[path]
 
     def origins(self, fragment_type: type[ConfigPart]) -> dict[str, Origin]:
-        """Every recorded origin for a registered ConfigPart, keyed by path."""
+        """Every recorded origin for a declared ConfigPart, keyed by path.
+
+        Resolves first if that has not happened yet, matching `get()`.
+        """
+        if not self._resolved:
+            self.resolve()
         if fragment_type not in self._origins:
-            raise KeyError(f"Fragment type {fragment_type.__name__} not registered")
+            raise KeyError(f"Fragment type {fragment_type.__name__} was never declared")
         return dict(self._origins[fragment_type])
 
     def explain(self, fragment_type: type[ConfigPart]) -> str:
@@ -334,7 +443,7 @@ class ConfigManager:
         Intended for `--debug-config` style output: the whole point of merging
         sources is that the winner is not obvious from any single one of them.
         """
-        instance = self.get_fragment(fragment_type)
+        instance = self.get(fragment_type)
         recorded = self._origins.get(fragment_type, {})
 
         rows: list[tuple[str, str, str]] = []
@@ -372,7 +481,7 @@ class ConfigManager:
         For each field with the config_source marker, if the value is a
         path to a config file, add it as a source.
 
-        This is called during register_fragment_type BEFORE the instance
+        This is called during resolve() BEFORE the instance
         is created, using the merged data from defaults + sources + CLI.
 
         Raises:
@@ -512,6 +621,9 @@ def _drop_unknown_keys(
 def _build_nested_subconfigs(
     cls: type[ConfigPart] | type[SubConfig],
     data: dict[str, Any],
+    *,
+    prefix: tuple[str, ...] = (),
+    inherited: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """
     Recursively convert nested dicts to SubConfig instances.
@@ -522,6 +634,13 @@ def _build_nested_subconfigs(
     Also handles parent-to-child cascade: if the parent has a field with
     the same name as a SubConfig field (e.g., parent.level), that value
     cascades to children that don't explicitly set it.
+
+    Args:
+        prefix: Dotted path of ``cls`` within the root ConfigPart.
+        inherited: Optional out-parameter, filled with
+            ``{child_dotted: parent_dotted}`` for every cascaded value, so the
+            caller can attribute those values to where the parent got them
+            rather than to the child's own default.
     """
     own_fields = fields_of(cls, recurse=False)
     result = dict(data)
@@ -540,6 +659,7 @@ def _build_nested_subconfigs(
 
         sub_type: type[SubConfig] = field.type
         value = result.get(field.name)
+        child_prefix = (*prefix, field.name)
 
         if not isinstance(value, dict):
             if value is not None and field.name in result:
@@ -547,12 +667,16 @@ def _build_nested_subconfigs(
                 continue
             value = {}
 
+        cascaded = _apply_cascade(cascade_values, sub_type, value)
+        if inherited is not None:
+            for name in cascaded.keys() - value.keys():
+                inherited[".".join((*child_prefix, name))] = ".".join((*prefix, name))
+
         # Merge: class defaults < cascaded parent values < explicit values
-        merged_value = {
-            **field_defaults(sub_type),
-            **_apply_cascade(cascade_values, sub_type, value),
-        }
-        merged_value = _build_nested_subconfigs(sub_type, merged_value)
+        merged_value = {**field_defaults(sub_type), **cascaded}
+        merged_value = _build_nested_subconfigs(
+            sub_type, merged_value, prefix=child_prefix, inherited=inherited
+        )
         result[field.name] = sub_type(**merged_value)
 
     return result
