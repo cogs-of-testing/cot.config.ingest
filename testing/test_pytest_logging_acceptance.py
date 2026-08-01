@@ -306,7 +306,11 @@ class TestValuesArriveFromBothSides:
 
 @pytest.mark.usefixtures("logging_plugin")
 class TestTheFallbackChains:
-    """What pytest hand-rolls as get_option_ini(config, "log_cli_format", "log_format")."""
+    """The `from_parent` cascade.
+
+    This is what pytest hand-rolls at every read site as
+    `get_option_ini(config, "log_cli_format", "log_format")`.
+    """
 
     def test_parent_level_cascades_to_both_outputs(
         self, pytester: pytest.Pytester
@@ -321,9 +325,7 @@ class TestTheFallbackChains:
     def test_parent_format_cascades_to_both_outputs(
         self, pytester: pytest.Pytester
     ) -> None:
-        result = pytester.runpytest(
-            "-s", "test_report.py", "--mylog-format=SHARED"
-        )
+        result = pytester.runpytest("-s", "test_report.py", "--mylog-format=SHARED")
 
         result.stdout.fnmatch_lines(
             ["*FORMAT='SHARED'*", "*CLI_FORMAT='SHARED'*", "*FILE_FORMAT='SHARED'*"]
@@ -332,23 +334,17 @@ class TestTheFallbackChains:
     def test_an_explicit_child_value_wins_over_the_cascade(
         self, pytester: pytest.Pytester
     ) -> None:
-        pytester.makeini(
-            "[pytest]\nmylog_level = PARENT\nmylog_file_level = OWN\n"
-        )
+        pytester.makeini("[pytest]\nmylog_level = PARENT\nmylog_file_level = OWN\n")
         result = pytester.runpytest("-s", "test_report.py")
 
-        result.stdout.fnmatch_lines(
-            ["*CLI_LEVEL='PARENT'*", "*FILE_LEVEL='OWN'*"]
-        )
+        result.stdout.fnmatch_lines(["*CLI_LEVEL='PARENT'*", "*FILE_LEVEL='OWN'*"])
 
     def test_the_cascade_crosses_the_source_boundary(
         self, pytester: pytest.Pytester
     ) -> None:
         """Parent from the command line, child unset: the child still inherits."""
         pytester.makeini("[pytest]\nmylog_file_level = FROM_INI\n")
-        result = pytester.runpytest(
-            "-s", "test_report.py", "--mylog-level=FROM_CLI"
-        )
+        result = pytester.runpytest("-s", "test_report.py", "--mylog-level=FROM_CLI")
 
         result.stdout.fnmatch_lines(
             ["*CLI_LEVEL='FROM_CLI'*", "*FILE_LEVEL='FROM_INI'*"]
@@ -396,9 +392,7 @@ class TestProvenance:
                 print(pytestconfig.explain_config(LoggingConfig))
             """
         )
-        result = pytester.runpytest(
-            "-s", "test_explain.py", "--mylog-cli-level=DEBUG"
-        )
+        result = pytester.runpytest("-s", "test_explain.py", "--mylog-cli-level=DEBUG")
 
         result.stdout.fnmatch_lines(["*cli.level*DEBUG*--mylog-cli-level*"])
         result.stdout.fnmatch_lines(["*file.path*from_ini.log*mylog_file*"])
@@ -414,9 +408,7 @@ class TestProvenance:
                 print(pytestconfig.explain_config(LoggingConfig))
             """
         )
-        result = pytester.runpytest(
-            "-s", "test_explain.py", "--mylog-level=DEBUG"
-        )
+        result = pytester.runpytest("-s", "test_explain.py", "--mylog-level=DEBUG")
 
         result.stdout.fnmatch_lines(["*cli.level*DEBUG*inherited from level*"])
 
