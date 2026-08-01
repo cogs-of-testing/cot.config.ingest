@@ -29,7 +29,7 @@ classifiers = [
 dynamic = [ "version" ]
 dependencies = [
   "tomli>=2; python_version<'3.11'",
-  "typing-extensions>=4",
+  "typing-extensions>=4.16.0",
 ]
 urls.Changelog = "https://github.com/cogs-of-testing/cot.config.ingest/blob/main/CHANGELOG.md"
 urls.Homepage = "https://github.com/cogs-of-testing/cot.config.ingest"
