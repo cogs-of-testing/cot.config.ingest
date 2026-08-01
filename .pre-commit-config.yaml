@@ -1,26 +1,29 @@
 repos:
 - repo: https://github.com/astral-sh/ruff-pre-commit
   # Ruff version.
-  rev: v0.8.4
+  rev: v0.16.1
   hooks:
-    # Run the linter.
-    - id: ruff
+    # Run the linter. `ruff` is a legacy alias for this since 0.16.
+    - id: ruff-check
       args: [ --fix ]
     # Run the formatter.
     - id: ruff-format
 
 - repo: https://github.com/woodruffw/zizmor-pre-commit
-  rev: v0.9.2
+  rev: v1.28.0
   hooks:
     - id: zizmor
--   repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.13.0
-    hooks:
-    -   id: mypy
-        additional_dependencies: 
-        - types-requests
-        - types-PyYAML
+
+- repo: https://github.com/pre-commit/mirrors-mypy
+  rev: v2.3.0
+  hooks:
+    - id: mypy
+      # The hook runs in its own env, so anything the checked code imports has
+      # to be named here. types-requests and types-PyYAML were: nothing in this
+      # repo imports either.
+      additional_dependencies:
         - pytest>=9
+
 - repo: https://github.com/tox-dev/pyproject-fmt
   rev: "v2.26.0"
   hooks:
