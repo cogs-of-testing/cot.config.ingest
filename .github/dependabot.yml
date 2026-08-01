@@ -1,0 +1,39 @@
+# Keeping the toolchain current, so it does not go a year stale again.
+#
+# Actions are pinned to commit hashes; Dependabot understands that and updates
+# both the hash and the trailing version comment, so pinning does not mean
+# freezing.
+version: 2
+
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "build"
+    # One PR for the lot. Action bumps are near-always mechanical, and seven
+    # separate PRs for seven actions is how people learn to ignore the bot.
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "build"
+    groups:
+      # Runtime dependencies are what users of the package actually install, so
+      # they are worth reviewing on their own.
+      runtime:
+        dependency-type: "production"
+        patterns:
+          - "*"
+      # pytest, mypy, ruff and the docs stack: batch them.
+      dev-tooling:
+        dependency-type: "development"
+        patterns:
+          - "*"
