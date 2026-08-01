@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Annotated
 
+from ._precedence import Precedence
+
 
 class _MarkerMixin:
     def __rmatmul__(self, other: object) -> object:
@@ -136,7 +138,7 @@ class ConfigSourceMarker(_MarkerMixin):
 
     precedence: int
 
-    def __init__(self, precedence: int = 15) -> None:
+    def __init__(self, precedence: int = Precedence.FILE) -> None:
         self.precedence = precedence
 
     def __repr__(self) -> str:
@@ -177,6 +179,9 @@ class AddoptsMarker(_MarkerMixin):
     from sources, the value will be parsed as CLI arguments and applied to
     other config fields (with precedence between file and CLI).
 
+    The value becomes an ``AddoptsSource`` at ``precedence``: above config
+    files and the environment, below the arguments the user actually typed.
+
     Example:
         class PytestConfig(ConfigPart):
             addopts: Annotated[str, addopts_field] = ""
@@ -184,8 +189,7 @@ class AddoptsMarker(_MarkerMixin):
 
     precedence: int
 
-    def __init__(self, precedence: int = 18) -> None:
-        # Default precedence 18: file(15) < addopts(18) < env(20) < cli(25)
+    def __init__(self, precedence: int = Precedence.ADDOPTS) -> None:
         self.precedence = precedence
 
     def __repr__(self) -> str:

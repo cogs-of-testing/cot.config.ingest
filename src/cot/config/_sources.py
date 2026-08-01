@@ -1,13 +1,13 @@
-"""Configuration sources for loading from files and environment."""
+"""Configuration sources for loading from files, environment and arguments."""
 
 from __future__ import annotations
 
 import configparser
 import os
+import shlex
 import sys
-import types
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Union, get_origin
+from typing import TYPE_CHECKING, Any
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -15,6 +15,7 @@ else:
     import tomli as tomllib  # type: ignore[import-not-found,unused-ignore]
 
 from ._annotations import HelpMarker, ShortMarker
+from ._coerce import coerce, coerce_parsed
 from ._fields import (
     FieldInfo,
     fields_of,
@@ -33,21 +34,23 @@ from ._names import (
     set_path,
 )
 from ._origins import Origin
+from ._precedence import Precedence
 
 if TYPE_CHECKING:
     from ._bases import ConfigPart
+    from ._cli_parser import CLIParser
 
 
 class TomlSource:
     """Load configuration from a TOML file."""
 
-    def __init__(self, path: Path, *, precedence: int = 10) -> None:
+    def __init__(self, path: Path, *, precedence: int = Precedence.FILE) -> None:
         """
         Create a TOML configuration source.
 
         Args:
             path: Path to the TOML file
-            precedence: Higher values override lower values (default: 10)
+            precedence: Higher values override lower values
         """
         self._path = path
         self._precedence = precedence
@@ -94,13 +97,13 @@ class TomlSource:
 class IniSource:
     """Load configuration from an INI file (pytest-style)."""
 
-    def __init__(self, path: Path, *, precedence: int = 10) -> None:
+    def __init__(self, path: Path, *, precedence: int = Precedence.FILE) -> None:
         """
         Create an INI configuration source.
 
         Args:
             path: Path to the INI file
-            precedence: Higher values override lower values (default: 10)
+            precedence: Higher values override lower values
         """
         self._path = path
         self._precedence = precedence
@@ -127,9 +130,6 @@ class IniSource:
         Load configuration data for a ConfigPart type.
 
         Looks for a section matching the ConfigPart class name (case-insensitive).
-        Handles INI-specific parsing:
-        - Boolean values: true/false, yes/no, on/off, 1/0
-        - Lists: newline-separated values
 
         INI has no nesting, so flat keys are the only spelling available:
         `log_cli_level` maps onto the nested field `cli.level`.
@@ -158,116 +158,50 @@ class IniSource:
     ) -> dict[str, Any]:
         """Parse an INI section with type-aware conversion."""
         raw = dict(section.items())
-        result = expand_flat_keys(part_type, raw, parse=_parse_value)
+        result = expand_flat_keys(part_type, raw, parse=coerce)
 
         # Values whose key was a direct field name are still raw strings.
         for field in fields_of(part_type, recurse=False):
             value = result.get(field.name)
             if isinstance(value, str):
-                result[field.name] = _parse_value(value, field.annotation)
+                result[field.name] = coerce(value, field.annotation)
 
         return result
 
 
-class CLISource:
-    """
-    Load configuration from command-line arguments.
+class _ArgvSource:
+    """Shared machinery for sources whose input is a list of CLI tokens.
 
-    CLISource manages CLI argument parsing with support for:
-    - Initial args and invocation_dir passed directly to constructor
-    - Addopts prepended from config files/env
-    - Dynamic field registration from ConfigPart types
-    - Generic -o/--override for any config option
-    - Tracking of unknown/unconsumed args
-
-    Flow:
-    1. Create CLISource with args and invocation_dir
-    2. declare() for each ConfigPart (adds fields to parser)
-    3. prepend_addopts() after loading config files
-    4. freeze_sources() to prevent further addopts
-    5. load() to get values for each fragment type
-    6. get_unknown_args() to get unconsumed args
-
-    Override mechanism:
-    Use -o/--override for options that don't have dedicated CLI flags:
-        -o log.cli.level=DEBUG -o cache.dir=/tmp/cache
+    Two of those exist: the arguments the user typed (:class:`CLISource`) and
+    the arguments an ``addopts_field`` contributed (:class:`AddoptsSource`).
+    They differ in where the tokens come from, what precedence they carry and
+    how they describe themselves -- not in how a token becomes a field value.
     """
 
-    def __init__(
-        self,
-        args: list[str] | None = None,
-        *,
-        invocation_dir: Path | None = None,
-        precedence: int = 25,
-    ) -> None:
-        """
-        Create a CLI argument source.
-
-        Args:
-            args: Command line arguments (defaults to empty list)
-            invocation_dir: Directory where command was invoked (defaults to cwd)
-            precedence: Higher values override lower values (default: 25)
-        """
+    def __init__(self, *, precedence: int) -> None:
         from ._cli_parser import CLIParser
 
         self._precedence = precedence
-        self._initial_args: list[str] = list(args) if args is not None else []
-        self._addopts: list[str] = []
-        if invocation_dir is not None:
-            self._invocation_dir: Path = invocation_dir
-        else:
-            self._invocation_dir = Path.cwd()
-        self._parser = CLIParser()
-        self._registered_fields: dict[str, type[Any]] = {}  # field_name -> field_type
-        self._sources_frozen: bool = False
+        self._parser: CLIParser = CLIParser()
+        self._registered_fields: dict[str, Any] = {}
 
-    def prepend_addopts(self, addopts: str | list[str]) -> None:
-        """
-        Prepend addopts to the argument list (like pytest's PYTEST_ADDOPTS).
+    @property
+    def precedence(self) -> int:
+        return self._precedence
 
-        Args:
-            addopts: Additional options as string or list
-
-        Raises:
-            RuntimeError: If called after sources are frozen
-        """
-        if self._sources_frozen:
-            raise RuntimeError("Cannot add addopts after config sources are frozen")
-
-        if isinstance(addopts, str):
-            import shlex
-
-            try:
-                parsed = shlex.split(addopts)
-            except ValueError:
-                parsed = addopts.split()
-            self._addopts = parsed + self._addopts
-        else:
-            self._addopts = list(addopts) + self._addopts
-
-    def freeze_sources(self) -> None:
-        """
-        Freeze config sources - no more addopts can be added after this.
-
-        Called after bootstrap phase is complete.
-        """
-        self._sources_frozen = True
+    @property
+    def tokens(self) -> list[str]:
+        """The argument tokens this source parses."""
+        raise NotImplementedError
 
     def declare(self, part_type: type[ConfigPart]) -> None:
         """
         Register a ConfigPart type's fields with the parser.
 
-        This adds the type's fields to the parser so they can be
-        parsed from CLI args. Fields are registered dynamically and
-        the parser re-parses on each load() call.
-
         Leaf fields are registered, including those nested inside SubConfigs:
         `log.cli.level` becomes `--log-cli-level`. Sub-config containers
         themselves get no option -- there is nothing to type on a command line
         for a whole section.
-
-        Args:
-            part_type: ConfigPart class to register
         """
         for field, field_names in named_leaf_fields(part_type):
             if not cli_visible(field):
@@ -285,122 +219,32 @@ class CLISource:
             )
             self._registered_fields[field_names.flat] = field.annotation
 
-    @property
-    def precedence(self) -> int:
-        return self._precedence
-
-    @property
-    def invocation_dir(self) -> Path:
-        return self._invocation_dir
-
-    @property
-    def args(self) -> list[str]:
-        """Final args: addopts prepended to initial args."""
-        return self._addopts + self._initial_args
-
     def load(self, part_type: type[ConfigPart]) -> dict[str, Any]:
         """
-        Load configuration data for a ConfigPart type from CLI args.
+        Load configuration data for a ConfigPart type from the tokens.
 
-        Parses args fresh each time (no caching) to handle dynamic
-        field registration and addopts changes.
-
-        Args:
-            part_type: ConfigPart class to load data for
-
-        Returns:
-            Dict of field names to values from CLI args
+        Parses fresh each time (no caching) to handle dynamic field
+        registration and tokens arriving after an earlier parse.
         """
-        # Parse args (fresh each time - parser handles field registration)
-        parse_result = self._parser.parse(self.args)
+        parse_result = self._parser.parse(self.tokens)
 
         result: dict[str, Any] = {}
-
-        # Get prefix for this part type (for -o override matching)
-        prefix = part_prefix(part_type)
-
-        # Load from dedicated CLI flags, reassembling nested paths
         for field, field_names in named_leaf_fields(part_type):
             if field_names.flat not in parse_result.values:
                 continue
-
-            raw_value = parse_result.values[field_names.flat]
-            actual_type = unwrap_type(field.annotation)
-
-            # Convert value if needed (booleans are already converted)
-            if isinstance(raw_value, str) and actual_type is not bool:
-                value: Any = _parse_value(raw_value, actual_type)
-            elif isinstance(raw_value, list):
-                # Repeated option: each occurrence carries one element, so it
-                # is parsed against the element type. Parsing against the list
-                # type would wrap each item in a list of its own.
-                element_type = _element_type_of(actual_type)
-                value = [
-                    _parse_value(item, element_type) if isinstance(item, str) else item
-                    for item in raw_value
-                ]
-            else:
-                value = raw_value
-
-            set_path(result, field.path, value)
-
-        # Apply -o overrides (they have highest precedence)
-        self._apply_overrides(result, part_type, prefix, parse_result.overrides)
-
-        return result
-
-    def describe_origin(
-        self, part_type: type[ConfigPart], path: tuple[str, ...]
-    ) -> Origin | None:
-        """Name the option, and say whether it came from argv or addopts.
-
-        Values injected through `addopts` look identical to typed arguments
-        once parsed, which is exactly the confusion this reports away: an
-        option nobody typed is the hardest kind to debug.
-        """
-        names = _names_by_path(part_type).get(path)
-        if names is None:
-            return None
-
-        option = f"--{names.cli}"
-        short = self._parser.get_field_by_long(names.cli)
-        if short is not None and short.short_option:
-            option = f"-{short.short_option}/{option}"
-
-        if self._token_is_from_addopts(names):
-            return Origin(
-                kind="addopts",
-                location=f"addopts {option}",
-                precedence=self._precedence,
+            set_path(
+                result,
+                field.path,
+                coerce_parsed(parse_result.values[field_names.flat], field.annotation),
             )
-        return Origin(kind="cli", location=option, precedence=self._precedence)
 
-    def _token_is_from_addopts(self, names: FieldNames) -> bool:
-        """Whether the winning occurrence of an option came from addopts.
-
-        Later arguments win, and addopts are *prepended*, so an option is
-        attributed to addopts only when it appears nowhere in the real
-        arguments.
-        """
-        if not self._addopts:
-            return False
-        return not _mentions_option(self._initial_args, names) and _mentions_option(
-            self._addopts, names
-        )
-
-    def format_help(self, *, prog: str | None = None) -> str:
-        """Render help text for every registered option."""
-        return self._parser.format_help(prog=prog)
-
-    def help_requested(self) -> bool:
-        """Whether -h/--help appeared in the arguments."""
-        return self._parser.parse(self.args).help_requested
+        self._apply_overrides(result, part_type, parse_result.overrides)
+        return result
 
     def _apply_overrides(
         self,
         result: dict[str, Any],
         part_type: type[ConfigPart],
-        prefix: str | None,
         overrides: dict[str, str],
     ) -> None:
         """Apply -o overrides to the result dict.
@@ -409,21 +253,107 @@ class CLISource:
         converted to the field's declared type. Without that, `-o
         log.cli.enabled=false` would store the string "false", which is truthy.
         """
+        prefix = part_prefix(part_type)
         by_path = {field.path: field for field in leaf_fields(part_type)}
 
         for key, raw_value in overrides.items():
-            # Handle prefixed keys (e.g., "pytest.verbose" or "log.cli.level")
             parts = tuple(key.split("."))
 
-            # Check if first part matches prefix
+            # A leading segment matching the part's prefix is addressing this
+            # part, not a field inside it.
             if prefix and parts and parts[0] == prefix:
-                parts = parts[1:]  # Remove prefix
+                parts = parts[1:]
 
             field = by_path.get(parts)
             if field is None:
                 continue
 
-            set_path(result, parts, _parse_value(raw_value, field.annotation))
+            set_path(result, parts, coerce(raw_value, field.annotation))
+
+    def _option_display(self, names: FieldNames) -> str:
+        """``-v/--verbose`` when a short option exists, ``--verbose`` otherwise."""
+        option = f"--{names.cli}"
+        spec = self._parser.get_field_by_long(names.cli)
+        if spec is not None and spec.short_option:
+            return f"-{spec.short_option}/{option}"
+        return option
+
+
+class CLISource(_ArgvSource):
+    """
+    Load configuration from command-line arguments.
+
+    Flow:
+    1. Create CLISource with args and invocation_dir
+    2. declare() for each ConfigPart (adds fields to the parser)
+    3. load() to get values for each fragment type
+    4. get_unknown_args() to get unconsumed args
+
+    Arguments contributed by an ``addopts_field`` are *not* handled here: they
+    are a separate source (:class:`AddoptsSource`) sitting one rung lower on
+    the precedence ladder, so a typed argument always beats one a config file
+    injected.
+
+    Override mechanism:
+    Use -o/--override for options that don't have dedicated CLI flags:
+        -o log.cli.level=DEBUG -o cache.dir=/tmp/cache
+    """
+
+    def __init__(
+        self,
+        args: list[str] | None = None,
+        *,
+        invocation_dir: Path | None = None,
+        precedence: int = Precedence.CLI,
+    ) -> None:
+        """
+        Create a CLI argument source.
+
+        Args:
+            args: Command line arguments (defaults to empty list)
+            invocation_dir: Directory where command was invoked (defaults to cwd)
+            precedence: Higher values override lower values
+        """
+        super().__init__(precedence=precedence)
+        self._args: list[str] = list(args) if args is not None else []
+        if invocation_dir is not None:
+            self._invocation_dir: Path = invocation_dir
+        else:
+            self._invocation_dir = Path.cwd()
+
+    @property
+    def invocation_dir(self) -> Path:
+        return self._invocation_dir
+
+    @property
+    def args(self) -> list[str]:
+        """The command line arguments, as given."""
+        return list(self._args)
+
+    @property
+    def tokens(self) -> list[str]:
+        return self._args
+
+    def describe_origin(
+        self, part_type: type[ConfigPart], path: tuple[str, ...]
+    ) -> Origin | None:
+        """Name the option a value came from."""
+        names = _names_by_path(part_type).get(path)
+        if names is None:
+            return None
+        return Origin(
+            kind="cli",
+            location=self._option_display(names),
+            precedence=self._precedence,
+        )
+
+    def format_help(self, *, prog: str | None = None) -> str:
+        """Render help text for every registered option."""
+        return self._parser.format_help(prog=prog)
+
+    def help_requested(self) -> bool:
+        """Whether -h/--help appeared in the arguments."""
+        return self._parser.parse(self.tokens).help_requested
 
     def get_unknown_args(self) -> list[str]:
         """
@@ -432,8 +362,7 @@ class CLISource:
         Returns:
             List of unconsumed command line arguments
         """
-        parse_result = self._parser.parse(self.args)
-        return parse_result.unknown_args
+        return self._parser.parse(self.tokens).unknown_args
 
     def get_raw_value(self, field_name: str) -> str | None:
         """
@@ -449,11 +378,68 @@ class CLISource:
         Returns:
             Raw string value if present, None otherwise
         """
-        parse_result = self._parser.parse(self.args)
-        value = parse_result.values.get(field_name)
+        value = self._parser.parse(self.tokens).values.get(field_name)
         if isinstance(value, bool):
             return str(value).lower() if value else None
         return value
+
+
+class AddoptsSource(_ArgvSource):
+    """Arguments contributed by ``addopts_field`` values, re-parsed as CLI args.
+
+    This is a source like any other, which is the whole point: ``addopts`` sits
+    at its own rung of the precedence ladder (:data:`Precedence.ADDOPTS`, above
+    files and the environment, below typed arguments) instead of being spliced
+    into ``argv``. Splicing made an injected option indistinguishable from one
+    the user typed, and pinned it to CLI precedence no matter what the
+    ``addopts_field`` marker asked for.
+
+    Tokens accumulate: several config files, or several ConfigParts, may each
+    contribute. Later contributions win, matching the parser's own rule.
+    """
+
+    def __init__(self, *, precedence: int = Precedence.ADDOPTS) -> None:
+        super().__init__(precedence=precedence)
+        self._tokens: list[str] = []
+
+    @property
+    def tokens(self) -> list[str]:
+        return self._tokens
+
+    def extend(self, addopts: str | list[str]) -> list[str]:
+        """Append addopts, splitting a string the way a shell would.
+
+        Returns the tokens that were added, which is what the caller needs in
+        order to report on them.
+        """
+        if isinstance(addopts, str):
+            try:
+                tokens = shlex.split(addopts)
+            except ValueError:
+                tokens = addopts.split()
+        else:
+            tokens = [str(item) for item in addopts]
+
+        self._tokens.extend(tokens)
+        return tokens
+
+    def describe_origin(
+        self, part_type: type[ConfigPart], path: tuple[str, ...]
+    ) -> Origin | None:
+        """Name the option, and say that nobody typed it.
+
+        An option injected through ``addopts`` looks identical to a typed one
+        once parsed, which is exactly the confusion this reports away: an
+        option nobody typed is the hardest kind to debug.
+        """
+        names = _names_by_path(part_type).get(path)
+        if names is None:
+            return None
+        return Origin(
+            kind="addopts",
+            location=f"addopts {self._option_display(names)}",
+            precedence=self._precedence,
+        )
 
 
 class EnvSource:
@@ -471,7 +457,7 @@ class EnvSource:
         self,
         prefix: str = "",
         *,
-        precedence: int = 20,
+        precedence: int = Precedence.ENV,
         environ: dict[str, str] | None = None,
         parse_toml: bool = False,
     ) -> None:
@@ -479,8 +465,10 @@ class EnvSource:
         Create an environment variable configuration source.
 
         Args:
-            prefix: Prefix for environment variables (e.g., "APP" -> APP_*)
-            precedence: Higher values override lower values (default: 20)
+            prefix: Prefix for environment variables (e.g., "APP" -> APP_*).
+                A ConfigPart's own ``prefix=`` is appended to this one, so an
+                application can namespace every variable it reads.
+            precedence: Higher values override lower values
             environ: Environment dict to use (defaults to os.environ)
             parse_toml: If True, attempt to parse values as TOML for complex types
         """
@@ -497,6 +485,19 @@ class EnvSource:
     def prefix(self) -> str:
         return self._prefix
 
+    def effective_prefix(self, part_type: type[ConfigPart]) -> str:
+        """The variable prefix for one ConfigPart: source prefix, then part prefix.
+
+        The two compose rather than one shadowing the other. ``EnvSource("APP")``
+        reading a part declared ``prefix="log"`` looks at ``APP_LOG_*``: an
+        application that namespaces its environment keeps that namespace even
+        for parts that name a config-file section of their own.
+        """
+        segments = [
+            segment for segment in (self._prefix, part_prefix(part_type)) if segment
+        ]
+        return "_".join(segments).upper()
+
     def load(self, part_type: type[ConfigPart]) -> dict[str, Any]:
         """
         Load configuration data for a ConfigPart type from environment.
@@ -508,9 +509,7 @@ class EnvSource:
         - If parse_toml=True, values can be TOML for complex types
         """
         result: dict[str, Any] = {}
-
-        # The ConfigPart's own prefix wins over the source-level one.
-        effective_prefix = part_prefix(part_type) or self._prefix
+        effective_prefix = self.effective_prefix(part_type)
 
         for field, field_names in named_leaf_fields(part_type):
             env_name = _field_to_env_name(field_names.env, effective_prefix)
@@ -531,10 +530,9 @@ class EnvSource:
         names = _names_by_path(part_type).get(path)
         if names is None:
             return None
-        effective_prefix = part_prefix(part_type) or self._prefix
         return Origin(
             kind="env",
-            location=_field_to_env_name(names.env, effective_prefix),
+            location=_field_to_env_name(names.env, self.effective_prefix(part_type)),
             precedence=self._precedence,
         )
 
@@ -543,21 +541,11 @@ class EnvSource:
         if self._parse_toml and self._looks_like_toml(raw_value):
             try:
                 # Wrap in a key to make it valid TOML
-                toml_str = f"value = {raw_value}"
-                parsed = tomllib.loads(toml_str)
+                parsed = tomllib.loads(f"value = {raw_value}")
                 return parsed.get("value", raw_value)
             except Exception:
-                # If TOML parsing fails, try as inline table or fall through
-                try:
-                    # Try parsing the raw value directly if it looks like a table
-                    if raw_value.strip().startswith("{"):
-                        toml_str = f"value = {raw_value}"
-                        parsed = tomllib.loads(toml_str)
-                        return parsed.get("value", raw_value)
-                except Exception:
-                    pass
-        # Fall back to standard parsing
-        return _parse_value(raw_value, field_type)
+                pass
+        return coerce(raw_value, field_type)
 
     def _looks_like_toml(self, value: str) -> bool:
         """Check if a value looks like it might be TOML."""
@@ -588,28 +576,6 @@ def _short_option_of(annotation: Any) -> str | None:
     return None
 
 
-def _element_type_of(field_type: Any) -> Any:
-    """The element type of a list annotation, or the type itself."""
-    if get_origin(field_type) is list:
-        args = getattr(field_type, "__args__", ())
-        if args:
-            return args[0]
-        return str
-    return field_type
-
-
-def _mentions_option(args: list[str], names: FieldNames) -> bool:
-    """Whether ``args`` contains a dedicated flag or -o override for a field."""
-    long_option = f"--{names.cli}"
-    dotted = ".".join(names.path)
-    for arg in args:
-        if arg == long_option or arg.startswith(f"{long_option}="):
-            return True
-        if arg.startswith(f"{dotted}=") or arg.startswith(f"{names.flat}="):
-            return True
-    return False
-
-
 def _names_by_path(part_type: type[ConfigPart]) -> dict[tuple[str, ...], FieldNames]:
     """Index a ConfigPart's leaf field names by structural path."""
     return {field.path: names for field, names in named_leaf_fields(part_type)}
@@ -631,55 +597,6 @@ def _help_text_of(field: FieldInfo) -> str | None:
     """Extract the help text from a field, if marked."""
     marker = marker_of(field, HelpMarker)
     return marker.help if marker is not None else None
-
-
-def _parse_value(raw_value: str, field_type: Any) -> Any:
-    """Parse a string value with type-aware conversion."""
-    # Handle None type annotation
-    if field_type is None:
-        return raw_value
-
-    # Strip Annotated wrappers first. Without this, `Annotated[bool, no_cli]`
-    # never matches the bool branch below and "false" comes back as a truthy
-    # string.
-    while hasattr(field_type, "__metadata__"):
-        field_type = field_type.__origin__
-
-    # Get origin for generic types (e.g., list[str] -> list, str | None -> Union)
-    origin = get_origin(field_type)
-
-    # Handle Optional/Union types (str | None)
-    if origin is Union or origin is types.UnionType:
-        args = getattr(field_type, "__args__", ())
-        # Filter out NoneType to get the actual type
-        non_none_args = [a for a in args if a is not type(None)]
-        if non_none_args:
-            return _parse_value(raw_value, non_none_args[0])
-
-    # Handle list types
-    if origin is list:
-        if not raw_value:
-            return []
-        # Check if it looks like newline-separated (INI style) or comma-separated
-        if "\n" in raw_value:
-            lines = [line.strip() for line in raw_value.strip().splitlines()]
-            return [line for line in lines if line]
-        return [item.strip() for item in raw_value.split(",")]
-
-    # Handle bool
-    if field_type is bool:
-        return raw_value.lower() in ("true", "yes", "on", "1")
-
-    # Handle int
-    if field_type is int:
-        return int(raw_value)
-
-    # Handle float
-    if field_type is float:
-        return float(raw_value)
-
-    # Default: return as string
-    return raw_value
 
 
 class ConfigFileDiscoverySource:
@@ -712,7 +629,7 @@ class ConfigFileDiscoverySource:
         filenames: list[str] | None = None,
         config_file_cli_arg: str = "config_file",
         config_file_env_var: str | None = None,
-        precedence: int = 15,
+        precedence: int = Precedence.FILE,
     ) -> None:
         """
         Create a config file discovery source.
@@ -724,7 +641,7 @@ class ConfigFileDiscoverySource:
             filenames: Config filenames to look for (default: pyproject.toml, setup.cfg)
             config_file_cli_arg: CLI arg name for explicit config file
             config_file_env_var: Env var name for explicit config file
-            precedence: Higher values override lower values (default: 15)
+            precedence: Higher values override lower values
         """
         self._invocation_dir = invocation_dir
         self._cli_source = cli_source
@@ -829,13 +746,10 @@ class ConfigFileDiscoverySource:
 
     def _create_source(self, path: Path) -> TomlSource | IniSource:
         """Create appropriate source for the config file type."""
-        if path.suffix == ".toml":
-            return TomlSource(path, precedence=self._precedence)
-        elif path.suffix in (".ini", ".cfg"):
+        if path.suffix in (".ini", ".cfg"):
             return IniSource(path, precedence=self._precedence)
-        else:
-            # Default to TOML for unknown extensions
-            return TomlSource(path, precedence=self._precedence)
+        # Default to TOML for .toml and unknown extensions
+        return TomlSource(path, precedence=self._precedence)
 
     def load(self, part_type: type[ConfigPart]) -> dict[str, Any]:
         """Load configuration from discovered config file."""
@@ -846,9 +760,10 @@ class ConfigFileDiscoverySource:
 
 
 __all__ = [
-    "TomlSource",
-    "IniSource",
+    "AddoptsSource",
     "CLISource",
-    "EnvSource",
     "ConfigFileDiscoverySource",
+    "EnvSource",
+    "IniSource",
+    "TomlSource",
 ]

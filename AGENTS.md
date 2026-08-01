@@ -104,10 +104,19 @@ prints nor exits** — this is a library, the application owns the process.
 
 ### Precedence ladder
 
-`defaults < file(15) < addopts(18) < env(20) < cli(25)`
+`defaults(-1) < file(15) < addopts(18) < env(20) < cli(25)` — the values live in
+`Precedence` (`_precedence.py`) and are the *defaults*, not an enum. Every
+source takes `precedence=`, and so does every marker that creates one, so
+`TomlSource(path, precedence=Precedence.CLI + 1)` really does outrank a typed
+argument.
 
-Sources are kept sorted by `precedence`; higher wins. `ConfigManager.add_source()`
-maintains the order.
+That is the whole ordering rule: sources are sorted by `precedence` and merged
+in order, and nothing is special-cased above the ladder. `ConfigManager.add_source()`
+maintains the order, including for sources added during `resolve()`.
+
+`addopts` is a source (`AddoptsSource`), not a splice into `argv`. That is what
+lets it sit *below* env and above files, and lets an injected option be reported
+as `addopts --level` rather than looking like something the user typed.
 
 ### The addopts feedback loop
 
@@ -115,14 +124,16 @@ maintains the order.
 sources until you have read some config:
 
 1. collect defaults from the class
-2. register fields with `CLISource`, parse CLI
-3. call `discover()` if the type defines it (may add sources)
-4. process `config_source` fields → add the named config file as a source
-5. load from file/env sources to obtain `addopts`
-6. prepend addopts to `CLISource` and re-parse
-7. re-load everything, merge `defaults < sources < cli`
-8. build nested `SubConfig` instances, applying the `from_parent` cascade
-9. instantiate and store
+2. call `discover()` if the type defines it (may add sources)
+3. process `config_source` fields → add the named config file as a source
+4. load every source to obtain `addopts`
+5. hand addopts to `AddoptsSource`, which parses them at its own precedence
+6. re-load everything and merge in precedence order
+7. build nested `SubConfig` instances, applying the `from_parent` cascade
+8. instantiate and store
+
+Each pass runs for *every* declared type before the next begins, so no fragment
+is built against a source a later fragment was about to add.
 
 ## Constraints
 
@@ -208,9 +219,11 @@ file harder to write is going the wrong way.
 Documented in `docs/design/` as intent, but absent from the code. Do not assume these
 exist:
 
-- plugin discovery (bootstrap stage 3) — the `Discoverable` protocol has no implementors
-- list merge semantics (append / reset), addopts accumulation across several files
+- plugin discovery — the `Discoverable` protocol has no implementors
+- list merge semantics (append / reset). addopts *do* accumulate now: every
+  contribution is appended to the one `AddoptsSource`, later ones winning
 - change notification, hot reload, dependency graphs
 - validation hooks (construction checks required fields and rejects unknown
-  kwargs, but does not coerce types — coercion lives in the sources, where the
-  raw string context is)
+  kwargs, but does not coerce types — coercion is `_coerce.py`; what stays in
+  each source is *tokenisation*, which genuinely differs between an INI list
+  and a repeated CLI option)

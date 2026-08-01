@@ -21,6 +21,7 @@ from typing import (
     get_origin,
     get_type_hints,
 )
+from weakref import WeakKeyDictionary
 
 
 class _Missing:
@@ -141,9 +142,12 @@ def resolve_hints(cls: type[Any]) -> dict[str, Any]:
     """Resolve a class's annotations, keeping ``Annotated`` metadata."""
     try:
         return get_type_hints(cls, include_extras=True)
-    except Exception:
+    except NameError:
         # Unresolvable forward reference: fall back to the raw annotations so
-        # a partially-defined class still yields something usable.
+        # a partially-defined class still yields something usable. Only
+        # NameError is tolerated -- a broader except would swallow a genuinely
+        # malformed annotation, and the string that came back in its place
+        # would make a SubConfig field look like a leaf.
         return dict(getattr(cls, "__annotations__", {}))
 
 
@@ -181,7 +185,11 @@ def _default_of(cls: type[Any], name: str) -> Any:
     return value
 
 
-_FIELD_CACHE: dict[tuple[type[Any], bool], tuple[FieldInfo, ...]] = {}
+#: Keyed weakly, so inspecting a class -- which classes defined inside a test
+#: function do constantly -- does not keep it alive for the process lifetime.
+_FIELD_CACHE: WeakKeyDictionary[type[Any], dict[bool, tuple[FieldInfo, ...]]] = (
+    WeakKeyDictionary()
+)
 
 
 def fields_of(cls: type[Any], *, recurse: bool = True) -> tuple[FieldInfo, ...]:
@@ -195,13 +203,13 @@ def fields_of(cls: type[Any], *, recurse: bool = True) -> tuple[FieldInfo, ...]:
 
     Results are cached per ``(cls, recurse)``.
     """
-    key = (cls, recurse)
-    cached = _FIELD_CACHE.get(key)
+    per_class = _FIELD_CACHE.setdefault(cls, {})
+    cached = per_class.get(recurse)
     if cached is not None:
         return cached
 
     result = tuple(_walk(cls, prefix=(), recurse=recurse, seen=frozenset()))
-    _FIELD_CACHE[key] = result
+    per_class[recurse] = result
     return result
 
 

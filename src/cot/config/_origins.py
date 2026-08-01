@@ -15,6 +15,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol, runtime_checkable
 
+from ._precedence import Precedence
+
 OriginKind = Literal["default", "file", "env", "cli", "addopts", "override"]
 
 
@@ -35,7 +37,7 @@ class Origin:
         return f"{self.kind}:{self.location}"
 
 
-DEFAULT_ORIGIN_PRECEDENCE = -1
+DEFAULT_ORIGIN_PRECEDENCE = Precedence.DEFAULTS
 
 
 def default_origin(field_dotted: str) -> Origin:
@@ -68,6 +70,8 @@ def generic_origin(source: Any) -> Origin:
     name = type(source).__name__
     if "Env" in name:
         kind = "env"
+    elif "Addopts" in name:
+        kind = "addopts"
     elif "CLI" in name:
         kind = "cli"
 

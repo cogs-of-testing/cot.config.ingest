@@ -196,6 +196,37 @@ class TestEnvSource:
         assert config.host == "production.db"
         assert config.port == 3306
 
+    def test_source_and_part_prefixes_compose(self) -> None:
+        """An application prefix survives a ConfigPart declaring its own.
+
+        The part's ``prefix`` names a config-file section; the source's names
+        the application's slice of the environment. They are different
+        concerns, so they compose -- the part used to shadow the source, which
+        made ``EnvSource("APP")`` silently read nothing.
+        """
+
+        class DbConfig(ConfigPart, prefix="db"):
+            host: str = "localhost"
+
+        manager = ConfigManager(
+            sources=[EnvSource("APP", environ={"APP_DB_HOST": "production.db"})]
+        )
+        manager.declare(DbConfig)
+
+        assert manager.get(DbConfig).host == "production.db"
+        assert manager.origin_of(DbConfig, "host").location == "APP_DB_HOST"
+
+    def test_unprefixed_source_leaves_the_part_prefix_alone(self) -> None:
+        """With no source prefix the part's prefix is the whole name."""
+
+        class DbConfig(ConfigPart, prefix="db"):
+            host: str = "localhost"
+
+        manager = ConfigManager(sources=[EnvSource(environ={"DB_HOST": "prod"})])
+        manager.declare(DbConfig)
+
+        assert manager.get(DbConfig).host == "prod"
+
 
 class TestSourcePrecedence:
     """Test that sources are merged with correct precedence."""

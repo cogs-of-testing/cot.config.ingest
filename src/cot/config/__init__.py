@@ -22,7 +22,9 @@ from ._manager import (
     UnknownConfigKeyWarning,
 )
 from ._origins import Origin, OriginAware, OriginKind
+from ._precedence import Precedence
 from ._sources import (
+    AddoptsSource,
     CLISource,
     ConfigFileDiscoverySource,
     EnvSource,
@@ -45,10 +47,13 @@ __all__ = [
     "Origin",
     "OriginAware",
     "OriginKind",
+    # Precedence
+    "Precedence",
     # Sources
     "TomlSource",
     "IniSource",
     "CLISource",
+    "AddoptsSource",
     "EnvSource",
     "ConfigFileDiscoverySource",
     # Annotations

@@ -63,11 +63,11 @@ from argparse import ArgumentError
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from ._bases import ConfigPart
+from ._coerce import coerce_parsed
 from ._fields import FieldInfo, marker_of, unwrap_type
 from ._manager import ConfigLifecycleError, ConfigManager
 from ._names import FieldNames, cli_visible, named_leaf_fields, set_path
 from ._origins import Origin
-from ._sources import _element_type_of, _parse_value
 
 if TYPE_CHECKING:
     from _pytest.config import Config
@@ -245,15 +245,7 @@ class PytestOptionSource:
 
     def _convert(self, value: Any, field: FieldInfo) -> Any:
         """Parse strings against the field's annotation; pass anything else on."""
-        if isinstance(value, str):
-            return _parse_value(value, field.annotation)
-        if isinstance(value, list):
-            element = _element_type_of(unwrap_type(field.annotation))
-            return [
-                _parse_value(item, element) if isinstance(item, str) else item
-                for item in value
-            ]
-        return value
+        return coerce_parsed(value, field.annotation)
 
     def describe_origin(
         self, part_type: type[ConfigPart], path: tuple[str, ...]

@@ -5,6 +5,7 @@ from __future__ import annotations
 import warnings
 from collections.abc import Sequence
 from typing import (
+    TYPE_CHECKING,
     Any,
     Protocol,
     TypeVar,
@@ -27,6 +28,9 @@ from ._fields import (
     marker_of,
 )
 from ._origins import Origin, default_origin, generic_origin
+
+if TYPE_CHECKING:
+    from ._sources import AddoptsSource
 
 _T = TypeVar("_T", bound=ConfigPart)
 
@@ -127,16 +131,13 @@ class ConfigManager:
         self._declared: list[type[ConfigPart]] = []
         self._sources: list[ConfigSource] = []
         self._cli_source: CLISource | None = None
+        self._addopts_source: AddoptsSource | None = None
         self._origins: dict[type[ConfigPart], dict[str, Origin]] = {}
         self._resolved = False
         self._resolving = False
 
-        # Add all sources
         for source in sources:
             self.add_source(source)
-            # Track CLI source for registration and addopts
-            if isinstance(source, CLISource):
-                self._cli_source = source
 
     def add_source(self, source: ConfigSource) -> None:
         """
@@ -146,8 +147,17 @@ class ConfigManager:
         after declarations have been made still learns about them, which is
         what lets a config file discovered during resolve() participate.
         """
+        from ._sources import AddoptsSource, CLISource
+
         self._sources.append(source)
         self._sources.sort(key=lambda s: s.precedence)
+
+        # A CLI source is tracked separately: the bootstrap passes have to read
+        # it before the full merge exists, to learn which config file to open.
+        if isinstance(source, CLISource):
+            self._cli_source = source
+        if isinstance(source, AddoptsSource):
+            self._addopts_source = source
 
         declare = getattr(source, "declare", None)
         if callable(declare):
@@ -242,23 +252,26 @@ class ConfigManager:
         self._resolved = True
 
     def _run_discover(self, fragment_type: type[ConfigPart]) -> None:
-        """Call the type's discover() hook, if it has one."""
-        discover_method = getattr(fragment_type, "discover", None)
-        if discover_method is not None and callable(discover_method):
-            discover_method(self)
+        """Call the type's discover() hook, if it implements Discoverable."""
+        if issubclass(fragment_type, Discoverable):
+            fragment_type.discover(self)
 
     def _collect_config_sources(self, fragment_type: type[ConfigPart]) -> None:
-        """Turn this type's config_source fields into sources."""
-        defaults = field_defaults(fragment_type)
-        cli_data = self._load_cli(fragment_type)
-        self._process_config_source_fields(fragment_type, {**defaults, **cli_data})
+        """Turn this type's config_source fields into sources.
 
-    def _collect_addopts(self, fragment_type: type[ConfigPart]) -> None:
-        """Feed this type's addopts field back into the CLI source."""
+        Every source that already exists is consulted, not just the CLI: a
+        config file named by an environment variable is as explicit a request
+        as one named by an argument.
+        """
         defaults = field_defaults(fragment_type)
         loaded = self.load_for_part(fragment_type)
-        cli_data = self._load_cli(fragment_type)
-        self._process_addopts_fields(fragment_type, {**defaults, **loaded, **cli_data})
+        self._process_config_source_fields(fragment_type, {**defaults, **loaded})
+
+    def _collect_addopts(self, fragment_type: type[ConfigPart]) -> None:
+        """Feed this type's addopts field into the addopts source."""
+        defaults = field_defaults(fragment_type)
+        loaded = self.load_for_part(fragment_type)
+        self._process_addopts_fields(fragment_type, {**defaults, **loaded})
 
     def _load_cli(self, fragment_type: type[ConfigPart]) -> dict[str, Any]:
         if self._cli_source is None:
@@ -266,11 +279,13 @@ class ConfigManager:
         return self._cli_source.load(fragment_type)
 
     def _build(self, fragment_type: type[ConfigPart]) -> ConfigPart:
-        """Merge every source into one instance, recording provenance."""
-        defaults = field_defaults(fragment_type)
-        cli_data = self._load_cli(fragment_type)
+        """Merge every source into one instance, recording provenance.
 
-        # Merge: defaults < sources < cli (cli has highest precedence).
+        Sources are already sorted by precedence, and that order is the only
+        thing deciding a winner -- no source is special-cased above the ladder.
+        """
+        defaults = field_defaults(fragment_type)
+
         # This must be a deep merge: CLI and file sources both produce nested
         # dicts for SubConfigs, and a shallow update would let `--log-file-level`
         # from the CLI wipe `log_file` from the config file.
@@ -291,10 +306,6 @@ class ConfigManager:
             data = source.load(fragment_type)
             _deep_merge(merged, data)
             self._record_origins(origins, source, fragment_type, data)
-
-        if self._cli_source is not None:
-            _deep_merge(merged, cli_data)
-            self._record_origins(origins, self._cli_source, fragment_type, cli_data)
 
         # Keys a source produced that the ConfigPart does not declare are user
         # error in a config file, not programmer error -- warn and drop them
@@ -531,8 +542,9 @@ class ConfigManager:
         """
         Process fields marked with addopts_field annotation.
 
-        For each field with the addopts_field marker, prepend its value
-        to the CLI source's args.
+        Each field's value is handed to an :class:`AddoptsSource`, which parses
+        it as command-line arguments at its own precedence -- above files and
+        the environment, below arguments the user actually typed.
 
         Also validates that no bootstrap_only fields are being set via addopts.
 
@@ -545,56 +557,57 @@ class ConfigManager:
         """
         part_fields = fields_of(fragment_type, recurse=False)
 
-        # Find bootstrap_only fields
         bootstrap_only_fields = {
             f.name for f in part_fields if has_marker(f, BootstrapOnlyMarker)
         }
 
-        # Find addopts fields and process them
         for field in part_fields:
             marker = marker_of(field, AddoptsMarker)
             if marker is None:
                 continue
 
             value = data.get(field.name)
-            if not value:
+            if not value or not isinstance(value, str | list):
                 continue
 
-            # Handle both string and list addopts (TOML can have lists)
-            addopts: str | list[str]
-            if isinstance(value, str | list):
-                addopts = value
-            else:
-                continue
+            source = self._ensure_addopts_source(marker.precedence)
+            tokens = source.extend(value)
+            _reject_bootstrap_only(tokens, bootstrap_only_fields)
 
-            # Check for bootstrap_only violations before prepending
-            # We need to parse to check, but we'll use the CLI source to do it
-            import shlex
+    def _ensure_addopts_source(self, precedence: int) -> AddoptsSource:
+        """The addopts source, created on first use at ``precedence``.
 
-            if isinstance(addopts, str):
-                try:
-                    addopts_list = shlex.split(addopts)
-                except ValueError:
-                    addopts_list = addopts.split()
-            else:
-                addopts_list = list(addopts)
+        Created lazily so that a configuration with no ``addopts_field`` never
+        grows a source it has nothing to put in, and so the precedence the
+        marker asks for is the precedence the source gets.
+        """
+        from ._sources import AddoptsSource
 
-            # Check each arg for bootstrap_only fields
-            for arg in addopts_list:
-                if arg.startswith("--"):
-                    # Extract field name from --field-name or --field-name=value
-                    field_part = arg[2:].split("=")[0]
-                    field_as_python = field_part.replace("-", "_")
-                    if field_as_python in bootstrap_only_fields:
-                        raise ValueError(
-                            f"Cannot set bootstrap-only field '{field_as_python}' "
-                            f"via addopts. Field '{field_as_python}' must be set "
-                            f"via CLI arguments, not in config file addopts."
-                        )
+        if self._addopts_source is None:
+            # add_source registers every already-declared type with it and
+            # keeps the ladder sorted.
+            self.add_source(AddoptsSource(precedence=precedence))
+            assert self._addopts_source is not None
+        return self._addopts_source
 
-            # Prepend addopts to CLI source (if available)
-            if self._cli_source is not None:
-                self._cli_source.prepend_addopts(addopts)
+
+def _reject_bootstrap_only(tokens: list[str], bootstrap_only: set[str]) -> None:
+    """Refuse addopts that try to set a field marked ``bootstrap_only``.
+
+    By the time addopts are read, the decisions such a field drives -- which
+    config file to open, above all -- have already been made, so honouring it
+    here would silently do nothing.
+    """
+    for token in tokens:
+        if not token.startswith("--"):
+            continue
+        name = token[2:].split("=")[0].replace("-", "_")
+        if name in bootstrap_only:
+            raise ValueError(
+                f"Cannot set bootstrap-only field '{name}' via addopts. "
+                f"Field '{name}' must be set via CLI arguments, not in "
+                f"config file addopts."
+            )
 
 
 class UnknownConfigKeyWarning(UserWarning):
@@ -605,17 +618,45 @@ def _drop_unknown_keys(
     fragment_type: type[ConfigPart],
     data: dict[str, Any],
 ) -> dict[str, Any]:
-    """Drop keys not declared on ``fragment_type``, warning about each."""
-    known = {field.name for field in fields_of(fragment_type, recurse=False)}
-    unknown = sorted(set(data) - known)
+    """Drop keys the ConfigPart does not declare, at any depth, warning once.
+
+    A typo in a nested table is the same user error as a typo at the top level
+    and gets the same treatment. Letting it through instead reached the
+    SubConfig constructor, which -- correctly, for a programming error --
+    raised ``TypeError`` and took the whole load down.
+    """
+    unknown: list[str] = []
+    result = _prune(fragment_type, data, prefix=(), unknown=unknown)
     if unknown:
         warnings.warn(
             f"Unknown config option(s) for {fragment_type.__name__}: "
-            f"{', '.join(unknown)}",
+            f"{', '.join(sorted(unknown))}",
             UnknownConfigKeyWarning,
-            stacklevel=3,
+            stacklevel=4,
         )
-    return {key: value for key, value in data.items() if key in known}
+    return result
+
+
+def _prune(
+    cls: type[Any],
+    data: dict[str, Any],
+    *,
+    prefix: tuple[str, ...],
+    unknown: list[str],
+) -> dict[str, Any]:
+    """Recursive worker for :func:`_drop_unknown_keys`."""
+    known = {field.name: field for field in fields_of(cls, recurse=False)}
+
+    result: dict[str, Any] = {}
+    for key, value in data.items():
+        field = known.get(key)
+        if field is None:
+            unknown.append(".".join((*prefix, key)))
+            continue
+        if field.is_sub_config and isinstance(value, dict):
+            value = _prune(field.type, value, prefix=(*prefix, key), unknown=unknown)
+        result[key] = value
+    return result
 
 
 def _build_nested_subconfigs(
