@@ -52,18 +52,8 @@ must not change the result.
 
 ### Modules under `src/cot/config/`
 
-| Module | Contents |
-|---|---|
-| `_bases.py` | `ConfigPart`, `SubConfig` — frozen, kwargs-constructed, `@dataclass_transform` |
-| `_annotations.py` | Field/class markers, all usable inside `Annotated[...]` |
-| `_fields.py` | `FieldInfo` + `fields_of()` — the single field model everything reads |
-| `_names.py` | Field path → per-source name mapping (CLI / ini / env / TOML) |
-| `_origins.py` | `Origin` — where a value came from, and the optional `OriginAware` protocol |
-| `_manager.py` | `ConfigManager`, the `ConfigSource` / `DeclaringSource` / `Discoverable` protocols |
-| `_sources.py` | `TomlSource`, `IniSource`, `CLISource`, `EnvSource`, `ConfigFileDiscoverySource` |
-| `_cli_parser.py` | `CLIParser` — hand-rolled, re-parses on demand, supports dynamic field registration |
-| `pytest_plugin.py` | **Public.** The pytest PoC; monkeypatches pytest, auto-enabled (see below) |
-| `example_plugin.py` | **Public.** A worked example plugin built on the PoC; opt-in |
+`pytest_plugin.py` and `example_plugin.py` are public; every `_`-prefixed
+module is internal.
 
 A source implements `load()`; a source backed by an argument parser also
 implements `declare()` (`DeclaringSource`), because a parser has to be told an
@@ -77,19 +67,6 @@ is on, so anything public must be listed there.
 
 All markers work as `Annotated[T, marker]`, and via the `T @ marker` shorthand
 (`_MarkerMixin.__rmatmul__`).
-
-| Marker | Purpose |
-|---|---|
-| `from_parent` | Value cascades from the enclosing config when the child does not set it |
-| `prefix="x"` (class kwarg) | Section name in files, and default env prefix. **Not** part of option names |
-| `name_prefix="x"` (class kwarg) | Prefixes every *field name*, in every source (`log_cli_level`) |
-| `named("log_file")` | Overrides one field's derived name everywhere |
-| `no_cli` | Field gets no CLI option (file/env only) |
-| `help("text")` | Help text, rendered by `format_help()` |
-| `config_source` | Field's value is a config file path; it gets added as a source |
-| `bootstrap_only` | Field may not be set via addopts — CLI/bootstrap only |
-| `addopts_field` | Field's value is re-parsed as CLI args and prepended |
-| `short("v")` | Adds a `-v` short option |
 
 `prefix` and `name_prefix` are separate on purpose. pytest's logging options
 live in the `[pytest]` section but are individually called `log_cli_level` — one
@@ -146,20 +123,6 @@ sources until you have read some config:
 7. re-load everything, merge `defaults < sources < cli`
 8. build nested `SubConfig` instances, applying the `from_parent` cascade
 9. instantiate and store
-
-## Developer Workflows
-
-The repo is **uv**-based. `[tool.uv] default-groups = ["test", "typing", "lint"]`
-means `uv run` already has pytest, mypy and ruff available.
-
-```bash
-uv run pytest -q                 # all tests
-uv run pytest testing/test_sources.py -q
-uv run pytest -q -k test_name
-uv run mypy src                  # strict
-uv run ruff check src testing
-pre-commit run -a                # everything, incl. zizmor on workflows
-```
 
 ## Constraints
 
