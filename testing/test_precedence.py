@@ -294,7 +294,7 @@ class TestUnknownKeysAtEveryDepth:
 
     class Nested(ConfigPart, prefix="app"):
         level: str = "WARNING"
-        cli: TestUnknownKeysAtEveryDepth.Cli  # type: ignore[name-defined]
+        cli: TestUnknownKeysAtEveryDepth.Cli
 
     def test_nested_unknown_key_warns_and_drops(self, tmp_path: Path) -> None:
         config_file = _toml(

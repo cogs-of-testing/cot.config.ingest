@@ -1,27 +1,43 @@
 [build-system]
 build-backend = "hatchling.build"
-
 requires = [ "hatch-vcs", "hatchling" ]
 
 [project]
 name = "cot-config"
 description = "type annotation based composable settings"
+readme = "README.md"
+keywords = [ "argparse", "cli", "configuration", "ini", "pytest", "settings", "toml" ]
+license = "MPL-2.0"
+license-files = [ "LICENSE" ]
+authors = [
+  { name = "Ronny Pfannschmidt", email = "opensource@ronnypfannschmidt.de" },
+]
 requires-python = ">=3.10"
 classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Framework :: Pytest",
+  "Intended Audience :: Developers",
   "Programming Language :: Python :: 3 :: Only",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "Typing :: Typed",
 ]
 dynamic = [ "version" ]
 dependencies = [
   "tomli>=2; python_version<'3.11'",
   "typing-extensions>=4",
 ]
-
+urls.Changelog = "https://github.com/cogs-of-testing/cot.config.ingest/blob/main/CHANGELOG.md"
+urls.Homepage = "https://github.com/cogs-of-testing/cot.config.ingest"
+urls.Issues = "https://github.com/cogs-of-testing/cot.config.ingest/issues"
+urls.Source = "https://github.com/cogs-of-testing/cot.config.ingest"
 # Auto-enables the proof of concept: loading this patches pytest's Parser and
-# Config with add_config/get_config. Disable with `-p no:cot_config`.
+# Config with add_config/get_config. Installing the package is therefore enough
+# to patch pytest -- see the README. Disable with `-p no:cot_config`.
 entry-points.pytest11.cot_config = "cot.config.pytest_plugin"
 
 [dependency-groups]
@@ -34,27 +50,40 @@ docs = [
   "mkdocs-material>=9",
   "mkdocstrings[python]>=0.24",
 ]
-
+lint = [
+  "ruff>=0.5",
+]
 typing = [
   "mypy>=1",
   "types-setuptools",
 ]
-lint = [
-  "ruff>=0.5",
+
+[tool.hatch]
+version.source = "vcs"
+build.targets.wheel.packages = [ "src/cot" ]
+build.targets.wheel.sources = [ "src" ]
+# Editor and tooling state is not part of the source distribution. Hatchling
+# does not read every ignore file that keeps these out of git, so they are
+# named here explicitly.
+build.targets.sdist.exclude = [
+  "/.claude",
+  "/.coverage",
+  "/.coverage.*",
+  "/.mypy_cache",
+  "/.pytest_cache",
+  "/.ruff_cache",
+  "/.venv",
+  "/dist",
+  "/site",
 ]
 
-[tool.hatch.version]
-source = "vcs"
-
-[tool.hatch.build.targets.wheel]
-sources = [ "src" ]
-packages = [ "src/cot" ]
+[tool.uv]
+default-groups = [ "test", "typing", "lint" ]
 
 [tool.ruff]
 target-version = "py310"
 line-length = 88
 src = [ "src", "testing" ]
-
 lint.select = [
   "B",   # flake8-bugbear
   "C4",  # flake8-comprehensions
@@ -65,36 +94,31 @@ lint.select = [
   "UP",  # pyupgrade
   "W",   # pycodestyle warnings
 ]
-lint.ignore = [  ]
+lint.ignore = []
 lint.isort.known-first-party = [ "cot" ]
 
-[tool.pytest.ini_options]
-testpaths = [ "testing" ]
-
-[tool.coverage.run]
-source_pkgs = [ "cot" ]
-branch = true
-parallel = true
-
-[tool.coverage.report]
-exclude_lines = [
-  "no cov",
-  "if __name__ == .__main__.:",
-  "if TYPE_CHECKING:",
-]
-
 [tool.mypy]
-python_version = "3.10"
-strict = true
-warn_return_any = true
-warn_unused_configs = true
-no_implicit_reexport = true
-namespace_packages = true
 mypy_path = "src"
+namespace_packages = true
 # `cot` is a PEP 420 namespace package, so mypy needs to be told where module
 # paths start; without it a bare file path resolves as both `config` and
 # `cot.config`.
 explicit_package_bases = true
+python_version = "3.10"
+warn_return_any = true
+strict = true
+warn_unused_configs = true
+no_implicit_reexport = true
 
-[tool.uv]
-default-groups = [ "test", "typing", "lint" ]
+[tool.pytest]
+ini_options.testpaths = [ "testing" ]
+
+[tool.coverage]
+run.branch = true
+run.parallel = true
+run.source_pkgs = [ "cot" ]
+report.exclude_lines = [
+  "if __name__ == .__main__.:",
+  "if TYPE_CHECKING:",
+  "no cov",
+]

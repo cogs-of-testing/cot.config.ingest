@@ -1,0 +1,53 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0  # hatch-vcs derives the version from tags
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+
+      # The tag is what the version comes from, so a release must not ship a
+      # tree that fails its own suite.
+      - run: uv run --frozen pytest -q
+
+      - run: uv build
+
+      # A wheel that cannot be imported from a clean environment is the one
+      # failure mode the test suite cannot see.
+      - name: smoke-test the built wheel
+        run: |
+          uv run --isolated --no-project --with dist/*.whl \
+            python -c "import cot.config; print(cot.config.__all__)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write  # PyPI trusted publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1

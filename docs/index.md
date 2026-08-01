@@ -58,12 +58,30 @@ the built instance. `get()` resolves implicitly, so `resolve()` only matters whe
 you want to pin the moment configuration freezes. Declaring after that raises
 `ConfigLifecycleError`.
 
-## pytest
+## pytest — a hack, on purpose
 
-A proof of concept lives in `cot.config.pytest_plugin`. It patches pytest so a
-plugin can `parser.add_config(...)` in `pytest_addoption` and
-`config.get_config(...)` afterwards, and is auto-enabled once the package is
-installed (`-p no:cot_config` turns it off).
+!!! warning "Installing this package patches pytest"
+
+    `cot.config.pytest_plugin` **monkeypatches pytest**, adding
+    `Parser.add_config`, `Config.get_config` and `Config.explain_config`. It is
+    registered as a `pytest11` entry point and patches at *import* time, so
+    installing the package activates it — in every environment it lands in,
+    including as a transitive dependency.
+
+    The patch is additive only: no option, ini key, hook or behaviour of
+    pytest's is replaced. Turn it off with `-p no:cot_config`.
+
+    This is deliberate for the proof of concept and is not how a stable release
+    should behave. It will change.
+
+A conftest-level `pytest_plugins = [...]` would be too late as an activation
+route — that conftest's own `pytest_addoption` runs before its plugin list is
+processed — which is why the entry point is used.
+
+With it in place, a plugin can `parser.add_config(...)` in `pytest_addoption`
+and `config.get_config(...)` afterwards. Because the patch happens at import
+time, a type checker cannot see those methods;
+`manager_for_config(config).get(T)` is the statically-typed equivalent.
 
 `cot.config.example_plugin` is a worked example — a slow-test reporter, opt-in
 with `-p cot.config.example_plugin`:

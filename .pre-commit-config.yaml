@@ -22,7 +22,7 @@ repos:
         - types-PyYAML
         - pytest>=9
 - repo: https://github.com/tox-dev/pyproject-fmt
-  rev: "v2.5.0"
+  rev: "v2.26.0"
   hooks:
     - id: pyproject-fmt
       # https://pyproject-fmt.readthedocs.io/en/latest/#calculating-max-supported-python-version

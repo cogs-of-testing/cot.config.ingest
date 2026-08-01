@@ -1,9 +1,10 @@
 """Proof of concept: cot.config fragments inside pytest.
 
-**This plugin monkeypatches pytest.** It adds two methods that pytest does not
-have -- `Parser.add_config` and `Config.get_config` -- so a plugin author can
-declare a whole nested ConfigPart in `pytest_addoption` and read it back as a
-typed object in `pytest_configure` or anywhere else that holds a `Config`.
+**This plugin monkeypatches pytest.** It adds three methods that pytest does not
+have -- `Parser.add_config`, `Config.get_config` and `Config.explain_config` --
+so a plugin author can declare a whole nested ConfigPart in `pytest_addoption`
+and read it back as a typed object in `pytest_configure` or anywhere else that
+holds a `Config`.
 
     def pytest_addoption(parser):
         parser.add_config(LoggingConfig)
@@ -23,7 +24,11 @@ package is enough:
     def pytest_addoption(parser):
         parser.add_config(MyConfig)     # just works
 
-Turn it off with `-p no:cot_config`.
+Which also means the patch applies to *every* environment this package is
+installed into, including ones that acquired it as a transitive dependency and
+never asked for it. That is a deliberate trade for a proof of concept and is
+not how a stable release should behave; it will change. Turn it off with
+`-p no:cot_config`.
 
 Note that `pytest_plugins = [...]` inside a conftest is *not* a working
 activation route: that conftest's own `pytest_addoption` runs before its plugin
