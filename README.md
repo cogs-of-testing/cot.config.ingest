@@ -251,7 +251,7 @@ activating.
 
 ## Not implemented yet
 
-Present in `docs/design.md` as intent, absent from the code:
+Present in `docs/design/` as intent, absent from the code:
 
 - plugin discovery — the `Discoverable` protocol has no implementors
 - list merge semantics (append / reset)

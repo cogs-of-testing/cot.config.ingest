@@ -216,10 +216,11 @@ file harder to write is going the wrong way.
 
 ## Not implemented yet
 
-`docs/design.md` is the normative design: every rule is marked **[built]**,
-**[change]** (the code does something else and is wrong) or **[new]**. Read it
-before changing behaviour — a **[change]** rule is a commitment, and the
-`Decisions` section records why.
+`docs/design/` is the normative design, split by component: every rule is marked
+**[built]**, **[change]** (the code does something else and is wrong) or
+**[new]**. Read it before changing behaviour — a **[change]** rule is a
+commitment, and `docs/design/decisions.md` records why. `docs/design/index.md`
+carries a gap list of every rule the code does not yet satisfy.
 
 The following are absent from the code entirely. Do not assume they exist:
 
