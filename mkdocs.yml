@@ -57,13 +57,7 @@ nav:
   - Home: index.md
   - Getting Started:
     - Inspiration: getting-started/inspiration.md
-  - Design:
-    - ConfigParts: design/config-parts.md
-    - Bootstrap Process: design/bootstrap-process.md
-    - ConfigManager: design/config-manager.md
-    - Name Matching: design/name-matching.md
-    - Feedback Loops: design/feedback-loops.md
-    - Change Notifications: design/change-notifications.md
+  - Design: design.md
 
 extra:
   social:
