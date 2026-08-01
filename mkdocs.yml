@@ -57,7 +57,19 @@ nav:
   - Home: index.md
   - Getting Started:
     - Inspiration: getting-started/inspiration.md
-  - Design: design.md
+  - Design:
+    - Overview: design/index.md
+    - Invariants: design/invariants.md
+    - ConfigParts: design/config-parts.md
+    - Names: design/names.md
+    - Types: design/types.md
+    - Sources: design/sources.md
+    - Lifecycle: design/lifecycle.md
+    - Merging: design/merging.md
+    - Reporting: design/reporting.md
+    - Host adapters: design/host-adapters.md
+    - Decisions: design/decisions.md
+    - Deferred: design/deferred.md
 
 extra:
   social:

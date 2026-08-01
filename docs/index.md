@@ -109,20 +109,25 @@ pytest --timing-report --timing-terminal-threshold=1.0
 
 ### Design
 
-[**Design**](design.md) is the single normative document: the invariants, the
-name mapping, the type rules, the precedence ladder, the lifecycle, provenance,
-and host adapters. Every rule is marked **[built]**, **[change]** or **[new]**,
-so it doubles as the gap list between the design and the code.
+[**Design**](design/index.md) is the normative specification, split by component.
+Every rule is marked **[built]**, **[change]** or **[new]**, so the design and
+the gap between it and the code are one artifact rather than two that drift
+apart. The [gap list](design/index.md#gap-list) collects every outstanding rule
+in one table.
 
-It replaces the five pre-implementation intent documents that used to live in
-`docs/design/`.
-
-Sections worth reading first:
-
-| Section | What it settles |
+| Document | What it settles |
 |----------|-------------|
-| [Invariants](design.md#2-invariants) | The eight rules everything else follows from |
-| [Names](design.md#4-names) | `prefix` vs `name_prefix`, `named()`, `no_cli`, `-o` |
-| [Types](design.md#5-types) | Coercion, unions, `Literal`, where validation happens |
-| [Lifecycle](design.md#7-lifecycle) | declare → resolve → get, and the feedback passes |
-| [Decisions](design.md#decisions) | Review findings, resolved, with rationale and cost |
+| [Invariants](design/invariants.md) | The eight rules everything else follows from |
+| [ConfigParts](design/config-parts.md) | Classes, fields, the field model, frozen semantics |
+| [Names](design/names.md) | The qualified path, `prefix`/`name_prefix`, `named()`, `-o` |
+| [Types](design/types.md) | Coercion, unions, `Literal`, where type checking happens |
+| [Sources](design/sources.md) | The source protocol, the precedence ladder, CLI parsing |
+| [Lifecycle](design/lifecycle.md) | declare → resolve → get, and the feedback passes |
+| [Merging](design/merging.md) | Deep merge, unknown keys, `from_parent` cascade |
+| [Reporting](design/reporting.md) | Provenance and help |
+| [Host adapters](design/host-adapters.md) | The pytest proof of concept, and conformance |
+| [Decisions](design/decisions.md) | Review findings, resolved, with rationale and cost |
+| [Deferred](design/deferred.md) | Absent from the code, plus the open questions |
+
+Start with [Invariants](design/invariants.md) — they are short, and everything
+else refers back to them.
