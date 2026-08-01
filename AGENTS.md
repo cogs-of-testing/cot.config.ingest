@@ -216,8 +216,12 @@ file harder to write is going the wrong way.
 
 ## Not implemented yet
 
-Documented in `docs/design/` as intent, but absent from the code. Do not assume these
-exist:
+`docs/design.md` is the normative design: every rule is marked **[built]**,
+**[change]** (the code does something else and is wrong) or **[new]**. Read it
+before changing behaviour — a **[change]** rule is a commitment, and the
+`Decisions` section records why.
+
+The following are absent from the code entirely. Do not assume they exist:
 
 - plugin discovery — the `Discoverable` protocol has no implementors
 - list merge semantics (append / reset). addopts *do* accumulate now: every

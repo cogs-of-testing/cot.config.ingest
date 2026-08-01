@@ -107,35 +107,22 @@ pytest --timing-report --timing-terminal-threshold=1.0
 
 - [Inspiration](getting-started/inspiration.md) - Why this project exists
 
-### Design Documents
+### Design
 
-Core concepts:
+[**Design**](design.md) is the single normative document: the invariants, the
+name mapping, the type rules, the precedence ladder, the lifecycle, provenance,
+and host adapters. Every rule is marked **[built]**, **[change]** or **[new]**,
+so it doubles as the gap list between the design and the code.
 
-| Document | Description |
+It replaces the five pre-implementation intent documents that used to live in
+`docs/design/`.
+
+Sections worth reading first:
+
+| Section | What it settles |
 |----------|-------------|
-| [ConfigParts](design/config-parts.md) | ConfigPart specification, fields, annotations, `discover()` protocol |
-| [ConfigManager](design/config-manager.md) | Manager API, source management, override semantics |
-| [Bootstrap Process](design/bootstrap-process.md) | Staged loading, discovery, bootstrap vs regular fragments |
-
-Supporting concepts:
-
-| Document | Description |
-|----------|-------------|
-| [Name Matching](design/name-matching.md) | Field name to CLI/env/file key mapping |
-| [Feedback Loops](design/feedback-loops.md) | How configuration loops cooperate |
-| [Change Notifications](design/change-notifications.md) | Dependencies and hot reload (future) |
-
-### Reading Order
-
-For understanding the system:
-
-1. **[ConfigParts](design/config-parts.md)** - What configuration looks like
-2. **[Bootstrap Process](design/bootstrap-process.md)** - How configuration is discovered
-3. **[ConfigManager](design/config-manager.md)** - How it all fits together
-4. **[Name Matching](design/name-matching.md)** - How names map between sources
-
-For implementing features:
-
-1. Start with [ConfigParts](design/config-parts.md) for the data model
-2. Review [ConfigManager](design/config-manager.md) for the API
-3. Check [Feedback Loops](design/feedback-loops.md) for advanced patterns
+| [Invariants](design.md#2-invariants) | The eight rules everything else follows from |
+| [Names](design.md#4-names) | `prefix` vs `name_prefix`, `named()`, `no_cli`, `-o` |
+| [Types](design.md#5-types) | Coercion, unions, `Literal`, where validation happens |
+| [Lifecycle](design.md#7-lifecycle) | declare → resolve → get, and the feedback passes |
+| [Decisions](design.md#decisions) | Review findings, resolved, with rationale and cost |
