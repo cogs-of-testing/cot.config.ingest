@@ -187,3 +187,78 @@ name only, so `("file","path")` stays `[pytest.log.file] path` structurally and
 pytest's keys really do live directly in the `[pytest]` section as
 `log_cli_level`, and moving them would break the flat spelling to fix the nested
 one.
+
+## D9
+
+**Options are specified as data; hosts bind that data.**
+([evolution](evolution.md#l1-option-specs))
+
+The mapping from a ConfigPart to `parser.addoption` / `parser.addini` currently
+lives inside `PytestOptionSource.declare`, entangled with the source that reads
+values back. That has three costs: the derivation can only be tested by standing
+up a real `Parser` and inspecting its private dicts; a second host would
+duplicate it; and `format_help()` derives the same facts separately, so the two
+can disagree about what an option is called.
+
+Splitting it into `option_specs(T) -> tuple[OptionSpec, ...]` — pure, host-free —
+plus a binder that loops over the result makes the derivation a value a test can
+compare against a table. It also gives exactly one place where the library's type
+vocabulary is translated into pytest's `action`/`ini_type` words, which is the
+part most likely to be wrong and hardest to notice.
+
+This is also what makes [D6](#d6)'s conformance suite mechanical rather than
+aspirational: two backends conform when they bind the same specs.
+
+*Cost:* one more layer and a dataclass to keep in step with pytest's option
+vocabulary. Worth it at two hosts; already worth it at one, because of the
+testability.
+
+## D10
+
+**The store retains every source's value, not just the winner.**
+([evolution](evolution.md#l3-the-layered-value-store))
+
+`getoption` and `getini` are per-layer accessors: one reports what the command
+line supplied, the other what the config file supplied, and a plugin combines
+them by hand. A fragment holds the merged value. Serving the legacy API over
+fragments therefore needs all three answers from one declaration, and the current
+manager can only give the third — it overwrites both the value and the
+[origin](reporting.md#the-manager-records-sources-refine) as it merges, discarding
+what the losing sources said.
+
+Retaining a `LayeredValue` per source per path makes provenance a *projection*
+of the store rather than a structure maintained alongside it, which also removes
+the ordering bug where origins are recorded before unknown keys are pruned.
+`explain()` gains the ability to show what lost, which is what someone debugging
+a merge is actually looking for.
+
+pytest is converging on the same shape independently:
+`_pytest.config.findpaths.ConfigValue` records `value`, `origin` and `mode`, and
+`Config._getini` resolves a two-rung ladder over it.
+
+*Cost:* the memory is now O(sources × paths) rather than O(paths), and
+`ConfigManager`'s internals change shape — `_origins` folds into the store.
+Nothing before [stage 3](evolution.md#stages) depends on it and nothing after is
+possible without it, so it is a single well-isolated commitment.
+
+## D11
+
+**The pytest monkeypatch is removed.**
+([host adapters](host-adapters.md#activation))
+
+`Parser.add_config`, `Config.get_config` and `Config.explain_config` are patched
+on at import time, through an entry point, into every environment the package
+lands in — including ones that acquired it as a transitive dependency and never
+asked for it. Because the patch happens at import time no type checker can see
+the methods, so every call site needs a `type: ignore`, as
+`example_plugin.pytest_configure` demonstrates.
+
+`add_config(parser, T)` and `get_config(config, T)` as importable functions are
+barely longer to write, fully typed, and do not touch anyone who has not imported
+them. The CHANGELOG already states the policy this falls under: pre-1.0,
+breaking changes are noted rather than deprecated.
+
+*Cost:* breaking for anyone using the patched spelling — in practice
+`example_plugin` and the acceptance tests. The entry point stays only if
+something still needs it; with the functions in place, nothing does, so
+`pytest11` and `install()` both go.

@@ -4,18 +4,26 @@ An adapter lets a host that already parses arguments and reads config files use
 this library for structure. There is one today, for pytest, and it is a proof of
 concept.
 
+This describes the adapter as it is. Where it is going — pytest's config layer
+implemented by this library, with `getoption`/`getini` served over fragments —
+is [Evolution](evolution.md).
+
 ## Division of labour
 
 `cot/config/pytest_plugin.py` **monkeypatches pytest**, adding
 `Parser.add_config`, `Config.get_config` and `Config.explain_config`. The patch
 is additive only: no option, ini key, hook or behaviour of pytest's is replaced.
-**[built]**
+**[built]**, and **[change]** — it is replaced by importable
+`add_config(parser, T)` / `get_config(config, T)` functions
+([D11](decisions.md#d11)).
 
 pytest keeps argument parsing; this library supplies the structure:
 
 - **declare** — each leaf field becomes a `parser.addoption` and/or
   `parser.addini` under [the same name mapping every other source
-  uses](names.md#the-qualified-path)
+  uses](names.md#the-qualified-path). The derivation moves out of the source
+  into [option specs](evolution.md#l1-option-specs) ([D9](decisions.md#d9)),
+  leaving the adapter a loop over them
 - **load** — values come back through `config.getoption` then `config.getini`
   (pytest's own `get_option_ini` precedence) and are reassembled into the nested
   shape, where defaults and the
@@ -58,4 +66,22 @@ backend what it does. Divergence is invisible by construction. Rationale in
 [D6](decisions.md#d6).
 
 The suite is also the answer to "is the eventual pytest replacement faithful?",
-which is why it is a design requirement rather than a testing preference.
+which is why it is a design requirement rather than a testing preference. Its
+strongest form is the [differential harness](evolution.md#testability): declare
+pytest's logging options both ways and assert `getoption`, `getini` and
+`get_option_ini` return identical values across a matrix of argv, ini, toml and
+`-o` inputs.
+
+## What the adapter predates
+
+The proof of concept was written against an earlier pytest. Three pieces of
+current surface it does not use, all cheap to adopt
+([stage 2](evolution.md#stages)):
+
+| pytest surface | What the adapter does instead |
+|---|---|
+| `addini(aliases=...)` | nothing — [`named()`](names.md#per-field-overrides) and legacy spellings have no route to pytest |
+| `int` / `float` / `paths` / `pathlist` / `args` ini types | collapses every non-bool, non-list field to `string` |
+| `Config.stash` | reaches into the private `config._parser` |
+
+**[change]**

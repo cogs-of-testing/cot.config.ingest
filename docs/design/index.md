@@ -96,6 +96,7 @@ be a bad idea, the rule changes here first and the reasoning is recorded in
 | [Merging](merging.md) | Deep merge, unknown keys, sub-config assembly, `from_parent` |
 | [Reporting](reporting.md) | Provenance and help — what the library tells the user |
 | [Host adapters](host-adapters.md) | The pytest proof of concept, and the conformance requirement |
+| [Evolution](evolution.md) | The staged plan from adapter to replacing pytest's config layer |
 | [Decisions](decisions.md) | Review findings resolved, with rationale and cost |
 | [Deferred](deferred.md) | Absent from the code, plus the open questions |
 
@@ -105,6 +106,8 @@ everything else refers back to them. Then [ConfigParts](config-parts.md) and
 [Sources](sources.md), [Lifecycle](lifecycle.md) and [Merging](merging.md),
 which are how a value gets from a file to a field. [Reporting](reporting.md)
 and [Host adapters](host-adapters.md) are self-contained.
+[Evolution](evolution.md) is the forward plan and reads on its own, but assumes
+[Sources](sources.md) and [Reporting](reporting.md).
 
 If you are here to change behaviour, read [Decisions](decisions.md) first: a
 **[change]** rule already has a rationale and a recorded cost, and disagreeing
@@ -138,6 +141,10 @@ between the design and `main`.
 | Origins recorded before unknown keys are pruned | change | [merging](merging.md#unknown-keys) | — |
 | Mutable defaults copied shallowly | change | [config parts](config-parts.md#configpart-and-subconfig) | — |
 | A `ConfigPart` nested in a `ConfigPart` fails obscurely | new | [config parts](config-parts.md#configpart-and-subconfig) | — |
+| The option derivation is entangled with the source that reads values | change | [evolution](evolution.md#l1-option-specs) | [D9](decisions.md#d9) |
+| The store keeps only the winning value, so `getoption`/`getini` cannot be served | change | [evolution](evolution.md#l3-the-layered-value-store) | [D10](decisions.md#d10) |
+| pytest is monkeypatched at import time | change | [host adapters](host-adapters.md#activation) | [D11](decisions.md#d11) |
+| `addini(aliases=)`, `int`/`float`/`paths` ini types and `Config.stash` unused | change | [host adapters](host-adapters.md#what-the-adapter-predates) | — |
 
 The rows without a decision are corrections with no design content — there is
 nothing to weigh, only work to do. The rest carry a cost that was argued.
