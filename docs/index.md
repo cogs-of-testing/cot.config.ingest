@@ -72,7 +72,9 @@ you want to pin the moment configuration freezes. Declaring after that raises
     pytest's is replaced. Turn it off with `-p no:cot_config`.
 
     This is deliberate for the proof of concept and is not how a stable release
-    should behave. It will change.
+    should behave. It is planned for removal in favour of importable
+    `add_config(parser, T)` / `get_config(config, T)` functions — see
+    [D11](design/decisions.md#d11) and [Evolution](design/evolution.md).
 
 A conftest-level `pytest_plugins = [...]` would be too late as an activation
 route — that conftest's own `pytest_addoption` runs before its plugin list is
@@ -126,6 +128,7 @@ in one table.
 | [Merging](design/merging.md) | Deep merge, unknown keys, `from_parent` cascade |
 | [Reporting](design/reporting.md) | Provenance and help |
 | [Host adapters](design/host-adapters.md) | The pytest proof of concept, and conformance |
+| [Evolution](design/evolution.md) | The staged plan toward replacing pytest's config layer |
 | [Decisions](design/decisions.md) | Review findings, resolved, with rationale and cost |
 | [Deferred](design/deferred.md) | Absent from the code, plus the open questions |
 

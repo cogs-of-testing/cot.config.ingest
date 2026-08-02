@@ -68,6 +68,7 @@ nav:
     - Merging: design/merging.md
     - Reporting: design/reporting.md
     - Host adapters: design/host-adapters.md
+    - Evolution: design/evolution.md
     - Decisions: design/decisions.md
     - Deferred: design/deferred.md
 
