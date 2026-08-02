@@ -145,6 +145,12 @@ between the design and `main`.
 | The store keeps only the winning value, so `getoption`/`getini` cannot be served | change | [evolution](evolution.md#l3-the-layered-value-store) | [D10](decisions.md#d10) |
 | pytest is monkeypatched at import time | change | [host adapters](host-adapters.md#activation) | [D11](decisions.md#d11) |
 | `addini(aliases=)`, `int`/`float`/`paths` ini types and `Config.stash` unused | change | [host adapters](host-adapters.md#what-the-adapter-predates) | — |
+| `config.option` writes cannot reach fragments | new | [evolution](evolution.md#the-runtime-layer) | [D13](decisions.md#d13) |
+| Fragments imply no plugin instance | new | [evolution](evolution.md#plugin-instances-and-lifetime) | [D13](decisions.md#d13) |
+| Only three of pytest's six argparse actions are modelled | new | [evolution](evolution.md#derivation-over-declaration) | [D9](decisions.md#d9) |
+| pytest's ini/toml dialects have no source of their own | new | [evolution](evolution.md#dialects-belong-to-sources-not-values) | [D15](decisions.md#d15) |
+| Every field is env-readable; there is no opt-in | change | [evolution](evolution.md#open-questions) | [D16](decisions.md#d16) |
+| No `no_ini` marker, so every field gets an ini key | new | [evolution](evolution.md#open-questions) | — |
 
 The rows without a decision are corrections with no design content — there is
 nothing to weigh, only work to do. The rest carry a cost that was argued.
