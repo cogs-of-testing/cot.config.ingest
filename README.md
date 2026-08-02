@@ -204,7 +204,9 @@ That is deliberate for now. The point of the proof of concept is to show the
 library driving real pytest options, and a conftest-level
 `pytest_plugins = [...]` would be too late: that conftest's own
 `pytest_addoption` runs before its plugin list is processed. It is not how a
-stable release should behave, and it will change.
+stable release should behave, and it will change: the plan is to replace it with
+importable `add_config(parser, T)` / `get_config(config, T)` functions. See
+`docs/design/evolution.md`.
 
 What you should know:
 

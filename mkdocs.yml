@@ -58,12 +58,23 @@ nav:
   - Getting Started:
     - Inspiration: getting-started/inspiration.md
   - Design:
+    - Overview: design/index.md
+    - Invariants: design/invariants.md
     - ConfigParts: design/config-parts.md
-    - Bootstrap Process: design/bootstrap-process.md
-    - ConfigManager: design/config-manager.md
-    - Name Matching: design/name-matching.md
-    - Feedback Loops: design/feedback-loops.md
-    - Change Notifications: design/change-notifications.md
+    - Names: design/names.md
+    - Types: design/types.md
+    - Specs: design/specs.md
+    - Sources: design/sources.md
+    - Lifecycle: design/lifecycle.md
+    - Merging: design/merging.md
+    - Reporting: design/reporting.md
+    - Binding contract: design/binding-contract.md
+    - Decisions: design/decisions.md
+    - Deferred: design/deferred.md
+  - pytest binding:
+    - Overview: design/pytest/index.md
+    - Evolution: design/pytest/evolution.md
+    - Decisions: design/pytest/decisions.md
 
 extra:
   social:

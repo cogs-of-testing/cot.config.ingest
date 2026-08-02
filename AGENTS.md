@@ -216,8 +216,19 @@ file harder to write is going the wrong way.
 
 ## Not implemented yet
 
-Documented in `docs/design/` as intent, but absent from the code. Do not assume these
-exist:
+`docs/design/` is the normative design, split by component: every rule is marked
+**[built]**, **[change]** (the code does something else and is wrong) or
+**[new]**. Read it before changing behaviour — a **[change]** rule is a
+commitment, and `docs/design/decisions.md` records why. `docs/design/index.md`
+carries a gap list of every rule the code does not yet satisfy.
+
+Core and host policy are separate. Everything directly under `docs/design/` is
+**core** — true for every host and for an application with none.
+`docs/design/pytest/` is **pytest policy** and may not be cited by a core
+document; `docs/design/binding-contract.md` is the boundary and says which side
+a rule belongs on. Core code must never import, name or accommodate a host.
+
+The following are absent from the code entirely. Do not assume they exist:
 
 - plugin discovery — the `Discoverable` protocol has no implementors
 - list merge semantics (append / reset). addopts *do* accumulate now: every

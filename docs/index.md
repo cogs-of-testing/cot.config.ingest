@@ -72,7 +72,10 @@ you want to pin the moment configuration freezes. Declaring after that raises
     pytest's is replaced. Turn it off with `-p no:cot_config`.
 
     This is deliberate for the proof of concept and is not how a stable release
-    should behave. It will change.
+    should behave. It is planned for removal in favour of importable
+    `add_config(parser, T)` / `get_config(config, T)` functions — see
+    [P1](design/pytest/decisions.md#p1) and
+    [Evolution](design/pytest/evolution.md).
 
 A conftest-level `pytest_plugins = [...]` would be too late as an activation
 route — that conftest's own `pytest_addoption` runs before its plugin list is
@@ -107,35 +110,40 @@ pytest --timing-report --timing-terminal-threshold=1.0
 
 - [Inspiration](getting-started/inspiration.md) - Why this project exists
 
-### Design Documents
+### Design
 
-Core concepts:
+[**Design**](design/index.md) is the normative specification, split by component.
+Every rule is marked **[built]**, **[change]** or **[new]**, so the design and
+the gap between it and the code are one artifact rather than two that drift
+apart. The [gap list](design/index.md#gap-list) collects every outstanding rule
+in one table.
 
-| Document | Description |
+| Document | What it settles |
 |----------|-------------|
-| [ConfigParts](design/config-parts.md) | ConfigPart specification, fields, annotations, `discover()` protocol |
-| [ConfigManager](design/config-manager.md) | Manager API, source management, override semantics |
-| [Bootstrap Process](design/bootstrap-process.md) | Staged loading, discovery, bootstrap vs regular fragments |
+| [Invariants](design/invariants.md) | The eight rules everything else follows from |
+| [ConfigParts](design/config-parts.md) | Classes, fields, the field model, frozen semantics |
+| [Names](design/names.md) | The qualified path, `prefix`/`name_prefix`, `named()`, `-o` |
+| [Types](design/types.md) | Coercion, unions, `Literal`, where type checking happens |
+| [Sources](design/sources.md) | The source protocol, the precedence ladder, CLI parsing |
+| [Lifecycle](design/lifecycle.md) | declare → resolve → get, and the feedback passes |
+| [Merging](design/merging.md) | Deep merge, unknown keys, `from_parent` cascade |
+| [Reporting](design/reporting.md) | Provenance and help |
+| [Specs](design/specs.md) | What an option is, as data, in the library's vocabulary |
+| [Reporting](design/reporting.md) | Provenance and help |
+| [Binding contract](design/binding-contract.md) | The core/host boundary, and conformance |
+| [Decisions](design/decisions.md) | D1–D13, core, with rationale and cost |
+| [Deferred](design/deferred.md) | Absent from the code, plus the open questions |
 
-Supporting concepts:
+Those are **core** — true for every host and for an application with no host.
+pytest's own policy is separate and may not be cited by a core document:
 
-| Document | Description |
+| Document | What it settles |
 |----------|-------------|
-| [Name Matching](design/name-matching.md) | Field name to CLI/env/file key mapping |
-| [Feedback Loops](design/feedback-loops.md) | How configuration loops cooperate |
-| [Change Notifications](design/change-notifications.md) | Dependencies and hot reload (future) |
+| [pytest binding](design/pytest/index.md) | the adapter as it is today |
+| [pytest → Evolution](design/pytest/evolution.md) | the staged plan to replace pytest's config layer |
+| [pytest → Decisions](design/pytest/decisions.md) | P1–P8, pytest policy |
 
-### Reading Order
-
-For understanding the system:
-
-1. **[ConfigParts](design/config-parts.md)** - What configuration looks like
-2. **[Bootstrap Process](design/bootstrap-process.md)** - How configuration is discovered
-3. **[ConfigManager](design/config-manager.md)** - How it all fits together
-4. **[Name Matching](design/name-matching.md)** - How names map between sources
-
-For implementing features:
-
-1. Start with [ConfigParts](design/config-parts.md) for the data model
-2. Review [ConfigManager](design/config-manager.md) for the API
-3. Check [Feedback Loops](design/feedback-loops.md) for advanced patterns
+Start with [Invariants](design/invariants.md) — they are short, and everything
+else refers back to them. Read
+[the binding contract](design/binding-contract.md) before anything under
+`pytest/`.
