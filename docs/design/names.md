@@ -171,6 +171,13 @@ because live logging is turned on from the command line with `--log-cli-level`.
 
 `short("v")` adds a short option. `-o` and `-h` are reserved. **[built]**
 
+There is no mirror of `no_cli` suppressing the *ini* spelling, so every field
+gets an ini key. That was harmless while the ini side was write-only, but
+[`-o` is scoped to ini-backed fields](#the-o-override-key), which makes "has an
+ini spelling" load-bearing and therefore something that needs to be able to be
+false. **[new]** — see
+[evolution, open question 2](evolution.md#open-questions).
+
 ## The -o override key
 
 ```
