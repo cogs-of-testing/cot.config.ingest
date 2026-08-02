@@ -222,6 +222,12 @@ file harder to write is going the wrong way.
 commitment, and `docs/design/decisions.md` records why. `docs/design/index.md`
 carries a gap list of every rule the code does not yet satisfy.
 
+Core and host policy are separate. Everything directly under `docs/design/` is
+**core** — true for every host and for an application with none.
+`docs/design/pytest/` is **pytest policy** and may not be cited by a core
+document; `docs/design/binding-contract.md` is the boundary and says which side
+a rule belongs on. Core code must never import, name or accommodate a host.
+
 The following are absent from the code entirely. Do not assume they exist:
 
 - plugin discovery — the `Discoverable` protocol has no implementors

@@ -43,7 +43,7 @@ carrying no weight.
 ## The precedence ladder
 
 ```
-defaults(-1)  <  file(15)  <  addopts(18)  <  env(20)  <  cli(25)
+defaults(-1)  <  file(15)  <  injected(18)  <  env(20)  <  cli(25)
 ```
 
 These are **defaults, not an enum**. Every source takes `precedence=`, and so
@@ -59,9 +59,13 @@ source, including one declared at precedence 0. Gaps between the rungs exist so
 callers can slot in without renumbering. **[built]**
 
 This ladder *is* the whole ordering rule ([I2](invariants.md#i2)). Nothing is
-special-cased above it — which is why `addopts` is a source at its own rung
-rather than a splice into argv
-([lifecycle](lifecycle.md#the-addopts-feedback-loop)).
+special-cased above it — which is why
+[injected arguments](lifecycle.md#the-injected-arguments-loop) are a source at
+their own rung rather than a splice into argv.
+
+The `injected` rung is named for the capability, not for the host that motivated
+it. It was `ADDOPTS`, which put a pytest concept in the core ladder for everyone.
+**[change]**
 
 Ties are broken by **insertion order**: the sort is stable, so among sources at
 the same precedence the one added later wins. This is how "the local config file
@@ -79,10 +83,10 @@ insertion order. No new constants. **[built]**
 | `TomlSource` | one TOML file, section by `prefix` | – | file + key |
 | `IniSource` | one INI file, section case-insensitive | – | file + key |
 | `CLISource` | argv tokens | ✓ | option, `-s/--long` if short exists |
-| `AddoptsSource` | tokens from `addopts_field` values | ✓ | `addopts --long` |
+| `InjectedArgsSource` | tokens from an `injected_args` field | ✓ | `injected --long` |
 | `EnvSource` | `os.environ` or an injected dict | – | variable name |
 | `ConfigFileDiscoverySource` | finds a file, delegates | – | delegates |
-| `PytestOptionSource` | pytest `Config` | ✓ | cli or ini ([host adapters](host-adapters.md)) |
+| a host binding's source | whatever the host already parsed | ✓ | host-specific |
 
 **[built]**
 
@@ -92,8 +96,9 @@ Which names each of these looks for is not their own business — it comes from
 ## CLI parsing
 
 The parser exists for one reason: **options must be registrable after parsing has
-already happened**. A config file read during resolution can contribute `addopts`
-that must be parsed against options a later plugin declared. argparse cannot
+already happened**. A config file read during resolution can contribute
+[injected arguments](lifecycle.md#the-injected-arguments-loop) that must be
+parsed against options a later plugin declared. argparse cannot
 re-open a parsed namespace; this parser re-parses from scratch on every `load()`,
 which makes registration order irrelevant. **[built]**
 
@@ -105,8 +110,8 @@ Rules:
   unless that token is itself a registered option spelling or the tokens are
   exhausted — in which case it is an error naming the option **[change]**
 - booleans get both `--flag` and `--no-flag` **[new]**
-- unknown tokens are collected for host passthrough, not treated as errors —
-  pytest needs `pytest tests/ -k foo` to work **[built]**
+- unknown tokens are collected for host passthrough, not treated as errors — a
+  host that takes positional arguments alongside options needs them **[built]**
 
 The two **[change]/[new]** items are the same hole from two sides: with a file
 layer *below* the CLI on the ladder, a value set in a file must be overridable
@@ -122,6 +127,23 @@ Both are silent ([I8](invariants.md#i8)). Rationale in [D2](decisions.md#d2).
 
 `-o` is reserved by the parser for [generic
 overrides](names.md#the-o-override-key), and `-h` for help.
+
+## Environment exposure
+
+`EnvSource` reads **every** field by default, which is what a standalone
+application following twelve-factor conventions wants. A host with hundreds of
+options that has never had environment support wants the opposite, and turning
+them all on at once is a real behaviour change rather than a feature.
+
+So it is a policy the constructor takes, not a fixed rule: **[new]**
+
+```python
+EnvSource("APP")                       # every field, as today
+EnvSource("APP", fields="marked")      # only fields carrying the opt-in marker
+```
+
+Each [binding](binding-contract.md) chooses. Rationale in
+[D13](decisions.md#d13).
 
 ## Config file discovery
 

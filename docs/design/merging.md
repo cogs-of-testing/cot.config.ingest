@@ -31,6 +31,38 @@ origins dict retains entries for keys that never reached the instance.
 `explain()` hides this because it iterates `leaf_fields`, but `origins()` leaks
 it.
 
+## The layered store
+
+The merge keeps **every source's value per path**, not only the winner.
+**[new]**
+
+```python
+@dataclass(frozen=True)
+class LayeredValue:
+    value: Any
+    source: ConfigSource      # the source carries its own dialect
+    origin: Origin
+
+store.layers(AppConfig, ("database", "host"))   # every source that supplied one, in ladder order
+store.winner(AppConfig, ("database", "host"))   # what the fragment got
+```
+
+Discarding the losers costs two things. [Provenance](reporting.md#the-provenance-api)
+has to be maintained as a structure *alongside* the merge rather than derived
+from it — which is how origins came to be recorded before unknown keys are
+pruned. And `explain()` can say where the winning value came from but not what
+it beat, which is the question someone debugging a merge is actually asking.
+
+With the store, `origin_of()` is `winner().origin` and provenance is a
+projection. **[change]** — today the manager keeps the merged value and the
+winning origin only.
+
+It is also the precondition for any host that exposes *per-layer* accessors —
+one reporting what the command line supplied and another what a file supplied,
+with the merged value a third answer. That is not a hypothetical: it is how
+pytest's `getoption` and `getini` differ, and no amount of merged value answers
+it. Rationale in [D10](decisions.md#d10).
+
 ## Building sub-configs
 
 For each `SubConfig`-typed field, in order: class defaults, then cascaded parent

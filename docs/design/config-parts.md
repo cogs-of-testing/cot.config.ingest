@@ -97,12 +97,17 @@ level: str @ from_parent @ help("log level") = "WARNING"      # _MarkerMixin.__r
 | `short("v")` | adds a short option | [names](names.md#per-field-overrides) |
 | `help("...")` | help text | [reporting](reporting.md#help) |
 | `config_source` | the value names a file that becomes a source | [sources](sources.md#config-file-discovery) |
-| `addopts_field` | the value is re-parsed as CLI tokens | [lifecycle](lifecycle.md#the-addopts-feedback-loop) |
-| `bootstrap_only` | cannot be set from `addopts` | [lifecycle](lifecycle.md#the-addopts-feedback-loop) |
+| `injected_args` | the value is re-parsed as CLI tokens | [lifecycle](lifecycle.md#the-injected-arguments-loop) |
+| `bootstrap_only` | cannot be set from injected arguments | [lifecycle](lifecycle.md#the-injected-arguments-loop) |
+| `no_ini` | suppresses the file spelling | [names](names.md#per-field-overrides) |
+| `from_env` | opts the field into environment reading | [sources](sources.md#environment-exposure) |
+| `counted` | occurrences are summed | [specs](specs.md#derivation-over-declaration) |
+| `contributes(v)` | presence contributes a fixed value | [specs](specs.md#derivation-over-declaration) |
 
-Every one of them works at any depth ([I7](invariants.md#i7)). The last three
-currently do not — see
-[names](names.md#names-are-never-constructed-by-hand).
+Every one of them works at any depth ([I7](invariants.md#i7)). `config_source`,
+`injected_args` and `bootstrap_only` currently do not — see
+[names](names.md#names-are-never-constructed-by-hand). The last four are
+**[new]**.
 
 `prefix=` and `name_prefix=` are class keywords rather than field markers,
 because they describe the ConfigPart, not a field. See

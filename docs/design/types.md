@@ -80,6 +80,6 @@ newlines (preferred) or commas from a single file or environment value.
 
 Across sources, a list is **replaced** wholesale by the highest-precedence source
 that supplies one. Append and reset semantics are [deferred](deferred.md); the
-one exception is `addopts`, which accumulates by construction because every
-contribution is appended to the single `AddoptsSource`
-([lifecycle](lifecycle.md#the-addopts-feedback-loop)). **[built]**
+one exception is [injected arguments](lifecycle.md#the-injected-arguments-loop),
+which accumulate by construction because every contribution is appended to the
+single source. **[built]**

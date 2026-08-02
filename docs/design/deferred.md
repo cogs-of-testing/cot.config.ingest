@@ -46,6 +46,12 @@ Genuinely undecided. Unlike a **[change]** rule, these have no committed answer.
    ([sources](sources.md#config-file-discovery)). Should a manager with no
    `CLISource` be required to state its own base directory instead?
 6. **`Literal` has no decision record.** It is the one substantive
-   [**[new]** rule](types.md#literal) with design content — how choices reach
-   help text and a host adapter's `choices=` — that is not argued anywhere. Write
-   it up as a decision, or is the rule self-evident enough to stand alone?
+   [**[new]** rule](types.md#literal) with design content — how a closed value
+   set reaches [help](reporting.md#help) and a binding — that is not argued
+   anywhere. Write it up as a decision, or is the rule self-evident enough to
+   stand alone?
+7. **How much of a fragment's lifetime is the library's?**
+   [D11](decisions.md#d11) gives a ConfigPart a context manager and the manager
+   enters it "when the host asks". A host with no obvious configure/teardown pair
+   has nowhere natural to put that. Does the library offer a default scope, or is
+   entering always the host's call?

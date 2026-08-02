@@ -74,7 +74,8 @@ you want to pin the moment configuration freezes. Declaring after that raises
     This is deliberate for the proof of concept and is not how a stable release
     should behave. It is planned for removal in favour of importable
     `add_config(parser, T)` / `get_config(config, T)` functions — see
-    [D11](design/decisions.md#d11) and [Evolution](design/evolution.md).
+    [P1](design/pytest/decisions.md#p1) and
+    [Evolution](design/pytest/evolution.md).
 
 A conftest-level `pytest_plugins = [...]` would be too late as an activation
 route — that conftest's own `pytest_addoption` runs before its plugin list is
@@ -127,10 +128,22 @@ in one table.
 | [Lifecycle](design/lifecycle.md) | declare → resolve → get, and the feedback passes |
 | [Merging](design/merging.md) | Deep merge, unknown keys, `from_parent` cascade |
 | [Reporting](design/reporting.md) | Provenance and help |
-| [Host adapters](design/host-adapters.md) | The pytest proof of concept, and conformance |
-| [Evolution](design/evolution.md) | The staged plan toward replacing pytest's config layer |
-| [Decisions](design/decisions.md) | Review findings, resolved, with rationale and cost |
+| [Specs](design/specs.md) | What an option is, as data, in the library's vocabulary |
+| [Reporting](design/reporting.md) | Provenance and help |
+| [Binding contract](design/binding-contract.md) | The core/host boundary, and conformance |
+| [Decisions](design/decisions.md) | D1–D13, core, with rationale and cost |
 | [Deferred](design/deferred.md) | Absent from the code, plus the open questions |
 
+Those are **core** — true for every host and for an application with no host.
+pytest's own policy is separate and may not be cited by a core document:
+
+| Document | What it settles |
+|----------|-------------|
+| [pytest binding](design/pytest/index.md) | the adapter as it is today |
+| [pytest → Evolution](design/pytest/evolution.md) | the staged plan to replace pytest's config layer |
+| [pytest → Decisions](design/pytest/decisions.md) | P1–P8, pytest policy |
+
 Start with [Invariants](design/invariants.md) — they are short, and everything
-else refers back to them.
+else refers back to them. Read
+[the binding contract](design/binding-contract.md) before anything under
+`pytest/`.
