@@ -30,11 +30,9 @@ kept as an alias: two spellings for one thing is the problem, not the fix.
 *Cost:* breaking. `-o cli.level=X` stops working. The library is pre-1.0 and this
 is noted in the changelog rather than deprecated.
 
-*Amended by [D17](#d17)'s interview:* `-o` keeps pytest's narrower **scope**. The
-flat-name addressing above stands, but `-o` reaches only fields that have an ini
-spelling; addressing a CLI-only field is an error naming the field. `-o` means
-"override a file setting", and widening it to every field would have made the two
-`-o` flags differ in more than spelling.
+Scope is a [binding](binding-contract.md) matter: a host may narrow which fields
+`-o` reaches, and the pytest binding does. The *addressing* settled here is not
+negotiable.
 
 ## D2
 
@@ -116,9 +114,9 @@ the types involved.
 ## D6
 
 **One conformance suite, parameterised over backends.**
-([host adapters](host-adapters.md#adapters-must-share-semantics))
+([the binding contract](binding-contract.md#conformance))
 
-The native ladder and the pytest adapter already disagree about
+The native ladder and the pytest binding already disagree about
 [collisions](names.md#collisions), and each test file only asks its own backend
 what it does. The library's value proposition is that one declaration behaves the
 same everywhere; nothing currently tests that claim.
@@ -136,7 +134,7 @@ fail cases the native one passes until it is brought into line.
 **Markers are honoured at every depth; names are never built by hand.**
 ([names](names.md#names-are-never-constructed-by-hand),
 [sources](sources.md#config-file-discovery),
-[lifecycle](lifecycle.md#the-addopts-feedback-loop))
+[lifecycle](lifecycle.md#the-injected-arguments-loop))
 
 `config_source`, `addopts_field` and `bootstrap_only` are scanned with
 `recurse=False`, so they silently vanish inside a `SubConfig`, while every other
@@ -197,7 +195,7 @@ one.
 ## D9
 
 **Options are specified as data; hosts bind that data.**
-([evolution](evolution.md#l1-option-specs))
+([specs](specs.md))
 
 The mapping from a ConfigPart to `parser.addoption` / `parser.addini` currently
 lives inside `PytestOptionSource.declare`, entangled with the source that reads
@@ -222,7 +220,7 @@ testability.
 ## D10
 
 **The store retains every source's value, not just the winner.**
-([evolution](evolution.md#l3-the-layered-value-store))
+([merging](merging.md#the-layered-store))
 
 `getoption` and `getini` are per-layer accessors: one reports what the command
 line supplied, the other what the config file supplied, and a plugin combines
@@ -244,165 +242,68 @@ pytest is converging on the same shape independently:
 
 *Cost:* the memory is now O(sources × paths) rather than O(paths), and
 `ConfigManager`'s internals change shape — `_origins` folds into the store.
-Nothing before [stage 3](evolution.md#stages) depends on it and nothing after is
-possible without it, so it is a single well-isolated commitment.
+Nothing before it depends on it and nothing after is possible without it, so it
+is a single well-isolated commitment.
 
 ## D11
 
-**The pytest monkeypatch is removed.**
-([host adapters](host-adapters.md#activation))
+**A runtime layer exists; fragments imply context-managed instances.**
+([lifecycle](lifecycle.md#the-runtime-layer),
+[lifecycle](lifecycle.md#plugin-instances-and-lifetime))
 
-`Parser.add_config`, `Config.get_config` and `Config.explain_config` are patched
-on at import time, through an entry point, into every environment the package
-lands in — including ones that acquired it as a transitive dependency and never
-asked for it. Because the patch happens at import time no type checker can see
-the methods, so every call site needs a `type: ignore`, as
-`example_plugin.pytest_configure` demonstrates.
+Fragments are frozen, but a host may need to derive one setting from another
+after resolution. A write lands in a **runtime source** at the top of the ladder,
+the affected fragment is rebuilt, and a warning names the fragment and the
+writer.
 
-`add_config(parser, T)` and `get_config(config, T)` as importable functions are
-barely longer to write, fully typed, and do not touch anyone who has not imported
-them. The CHANGELOG already states the policy this falls under: pre-1.0,
-breaking changes are noted rather than deprecated.
+The warning is load-bearing rather than defensive, and the reason is the second
+half of this decision: a fragment *implies* an instance. A ConfigPart exposes a
+context manager that creates the object it configures and destroys it, so
+mutating a fragment after that object exists means tearing it down and building a
+new one — observable behaviour, not something to do silently.
 
-*Cost:* breaking for anyone using the patched spelling — in practice
-`example_plugin` and the acceptance tests. The entry point stays only if
-something still needs it; with the functions in place, nothing does, so
-`pytest11` and `install()` both go.
+A constructor would have been enough to *build* an instance. A context manager is
+what makes *invalidation* well defined: without a defined exit there is no
+correct way to react to a mutation at all. It also gives configuration-scoped
+objects a teardown hook, which nothing in the library offered before.
+
+*Cost:* a mechanism that warns on every use is a mechanism that wants to be
+deleted; whether it outlives the migration that motivated it is open. Entering
+contexts eagerly also means a fragment that fails to build fails earlier and
+louder.
 
 ## D12
 
-**The legacy view is correct where pytest is wrong, and every divergence is
-listed.** ([evolution](evolution.md#where-the-view-deliberately-differs))
+**The library renders help from specs.** ([reporting](reporting.md#help),
+[specs](specs.md))
 
-The logging plugin's `get_option_ini` ends in `if ret: return ret` — a
-truthiness test, not a presence test — so an ini value of `0`, `""` or `[]`
-falls through to the next name in the chain. That is not what the declaration
-means, and the [`from_parent` cascade](merging.md#the-from_parent-cascade)
-already gets it right.
+Help derived from [`field_specs`](specs.md) can show what a host formatter built
+from registration calls cannot: the closed value set behind a `Literal`, the
+`--no-` form of a boolean, which file key an option corresponds to, and grouping
+that follows the declared structure. One renderer also means one place where an
+option's appearance is decided, for every host.
 
-Reproducing the wart would make the differential harness pass trivially and
-leave pytest carrying a bug into its replacement. Fixing it means the harness
-needs an explicit allowlist, where each entry names the input, both answers, and
-why the library's is better. That allowlist is the honest artifact: it is the
-list of behaviour changes the migration actually makes, in one place, reviewable.
+The library renders and returns text; it never prints and never exits
+([I4](invariants.md#i4)). Whether a host adopts the output is that host's
+decision, not this one.
 
-An unlisted divergence is a bug. Adding an entry is a design decision, not a
-test fix.
-
-*Cost:* the migration is no longer strictly invisible. Each allowlist entry is a
-potential surprise for someone relying on the old behaviour, and needs a
-changelog line on the pytest side.
+*Cost:* a host with an established help format must either adopt this one or
+forgo the extra information. That trade is the binding's to make, and is recorded in that
+binding's own decisions.
 
 ## D13
 
-**`config.option` is a runtime layer; fragments imply context-managed plugin
-instances.** ([evolution](evolution.md#the-runtime-layer),
-[evolution](evolution.md#plugin-instances-and-lifetime))
+**Environment exposure is a source-level policy plus a field marker.**
+([sources](sources.md#environment-exposure))
 
-Four places in pytest assign to `config.option.*` after parsing, deriving one
-option from another. Fragments are frozen, so something has to give.
+`EnvSource` currently reads *every* field, which is right for a standalone
+application following twelve-factor conventions and wrong for a host with two
+hundred options that has never had environment support. Neither default is
+correct for both.
 
-A write to `config.option` lands in a runtime source at the top of the ladder,
-the affected fragment is rebuilt, and a warning names the fragment and the
-writer. The warning is load-bearing rather than defensive: a fragment implies a
-plugin instance, so mutating it after that instance exists means tearing it down
-and rebuilding it, which is observable behaviour and not something to do
-silently.
+So it is a policy: `EnvSource(fields="all")` keeps today's behaviour and remains
+the default, `EnvSource(fields="marked")` reads only fields carrying the opt-in
+marker, and each binding chooses.
 
-The instance itself comes from a context manager on the ConfigPart, entered at
-`pytest_configure` and exited at `pytest_unconfigure`. A constructor would have
-been enough to build one; a context manager is what makes *invalidation* well
-defined, and gives config-scoped plugins a teardown hook they do not have today.
-
-The manager owns the store and `Config.stash` holds the manager, which removes
-the adapter's one private `config._parser` access.
-
-*Cost:* a mechanism that warns on every use is a mechanism that wants to be
-deleted — see open question 4. Entering contexts at configure time also means a
-plugin whose fragment fails to build now fails at configure rather than at first
-use, which is earlier and louder.
-
-## D14
-
-**The library renders `--help`; pytest adopts the new format.**
-([evolution](evolution.md#l1-option-specs))
-
-Help output derived from specs can show what pytest's formatter cannot: choices
-from a `Literal`, the `--no-` form of a boolean, which ini key an option
-corresponds to, and grouping that follows the declared structure rather than
-hand-maintained `getgroup` calls. Reproducing pytest's current layout through an
-adapter would forfeit all of that to preserve a format nobody chose deliberately.
-
-One renderer also means one place where an option's appearance is decided, for
-every host — and during the migration, ingested hand-written options render
-through the same path, so `--help` stays uniform and a reader cannot tell which
-options have been converted.
-
-*Cost:* visibly breaking. `--help` output changes, and pytest's own test suite
-asserts on it. This is the one place the replacement is not invisible from the
-outside, and it needs to be an announced change rather than a side effect.
-
-## D15
-
-**pytest's file dialects are pytest-specific sources; a dialect belongs to the
-source.** ([evolution](evolution.md#dialects-belong-to-sources-not-values))
-
-pytest reads five file shapes with two data models: ini mode, where every value
-is `str` or `list[str]`, and native TOML mode, where types survive. Using both
-`[tool.pytest]` and `[tool.pytest.ini_options]` in one file is already a
-`UsageError` — pytest saying they are two namespaces rather than two spellings
-of one.
-
-Teaching the core name model about that split would put host-specific
-compatibility policy into [names](names.md), which is the layer everything else
-derives from. Making each dialect its own source keeps the core with one name
-model and puts the compatibility surface in the adapter, where it can be deleted
-when the legacy namespace is.
-
-It also settles what was an open question about `mode`: it is a property of the
-source, not a field on `LayeredValue`, and it selects between
-[coercing and checking](types.md#values-from-typed-sources) — a distinction the
-type layer already draws.
-
-*Cost:* two more source classes in the pytest binding, and the ladder positions
-of the ini-mode and toml-mode sources relative to each other have to be decided
-rather than inherited.
-
-## D16
-
-**Environment variables are opt-in per field.**
-([evolution](evolution.md#open-questions))
-
-The library gives every field an env spelling for free. Carrying that into
-pytest would make roughly two hundred options environment-settable in one step —
-a real behaviour change, a CI surprise, and a mild attack surface, none of it
-requested by anyone.
-
-Fields opt in. `PYTEST_ADDOPTS` stays what it is: a hand-wired addopts source at
-its own rung.
-
-*Cost:* an asymmetry between the library's own model and its largest host, and
-one more marker. How far the opt-in reaches — pytest only, or library-wide — is
-open question 1; the plan assumes a source-level policy so standalone users keep
-today's behaviour.
-
-## D17
-
-**Conversion is plugin-first; ingested options share one flat legacy part.**
-([evolution](evolution.md#stages), [evolution](evolution.md#l2-binders))
-
-Plugin options are self-contained, individually verifiable and low-risk, so they
-prove the replacement before it touches anything load-bearing. pytest's core
-options are entangled with the runner. The pre-config bootstrap set (`-p`, `-c`,
-`--rootdir`) comes last, because before a config file exists there is no config
-system — and because `findpaths.py` is in flux upstream.
-
-Options not yet converted are ingested into a single flat ConfigPart with no
-structure, no cascade and no nesting. It is a holding pen: everything in it is
-waiting to be replaced by a real declaration, and giving it structure would
-invite it to become permanent.
-
-*Cost:* the legacy part has no meaningful provenance beyond "ingested", and
-until a plugin is converted its options get none of the library's benefits. The
-flat shape also means two ingested options that would collide by `dest` collide
-for real, where per-plugin parts would have kept them apart.
+*Cost:* one more constructor argument and one more marker, to avoid a choice that
+would have been wrong for half the users either way.

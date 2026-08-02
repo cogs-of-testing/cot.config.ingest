@@ -94,20 +94,32 @@ be a bad idea, the rule changes here first and the reasoning is recorded in
 | [Sources](sources.md) | The source protocol, the precedence ladder, CLI parsing, file discovery |
 | [Lifecycle](lifecycle.md) | declare → resolve → get, the feedback passes, `addopts` |
 | [Merging](merging.md) | Deep merge, unknown keys, sub-config assembly, `from_parent` |
+| [Specs](specs.md) | What an option is, as data, in the library's vocabulary |
 | [Reporting](reporting.md) | Provenance and help — what the library tells the user |
-| [Host adapters](host-adapters.md) | The pytest proof of concept, and the conformance requirement |
-| [Evolution](evolution.md) | The staged plan from adapter to replacing pytest's config layer |
-| [Decisions](decisions.md) | Review findings resolved, with rationale and cost |
+| [Binding contract](binding-contract.md) | The core/host boundary, and conformance |
+| [Decisions](decisions.md) | D1–D13, core, with rationale and cost |
 | [Deferred](deferred.md) | Absent from the code, plus the open questions |
+
+Everything above is **core**: it holds for every host and for an application with
+no host at all. Host policy lives separately and may not be cited by a core
+document:
+
+| Binding | |
+|---|---|
+| [pytest](pytest/index.md) | the binding as it is today |
+| [pytest → Evolution](pytest/evolution.md) | the staged plan to replace pytest's config layer |
+| [pytest → Decisions](pytest/decisions.md) | P1–P8, pytest policy |
 
 **Reading order.** [Invariants](invariants.md) first — they are short and
 everything else refers back to them. Then [ConfigParts](config-parts.md) and
 [Names](names.md), which are what a user of the library actually touches. Then
 [Sources](sources.md), [Lifecycle](lifecycle.md) and [Merging](merging.md),
-which are how a value gets from a file to a field. [Reporting](reporting.md)
-and [Host adapters](host-adapters.md) are self-contained.
-[Evolution](evolution.md) is the forward plan and reads on its own, but assumes
-[Sources](sources.md) and [Reporting](reporting.md).
+which are how a value gets from a file to a field. [Reporting](reporting.md) and
+[Specs](specs.md) are self-contained.
+
+Read [the binding contract](binding-contract.md) before anything under
+[pytest/](pytest/index.md) — it is what says which of the two you are looking
+at.
 
 If you are here to change behaviour, read [Decisions](decisions.md) first: a
 **[change]** rule already has a rationale and a recorded cost, and disagreeing
@@ -132,25 +144,27 @@ between the design and `main`.
 | Typed sources are neither coerced nor checked | change | [types](types.md#values-from-typed-sources) | [D4](decisions.md#d4) |
 | `resolve()` does not reach a fixpoint | change | [lifecycle](lifecycle.md#the-passes-iterate-to-a-fixpoint) | [D5](decisions.md#d5) |
 | Backends disagree on option collisions | change | [names](names.md#collisions) | [D6](decisions.md#d6) |
-| No cross-backend conformance suite | new | [host adapters](host-adapters.md#adapters-must-share-semantics) | [D6](decisions.md#d6) |
+| No cross-backend conformance suite | new | [the binding contract](binding-contract.md#conformance) | [D6](decisions.md#d6) |
 | `config_source` / `addopts_field` / `bootstrap_only` ignored below the top level | change | [names](names.md#names-are-never-constructed-by-hand) | [D7](decisions.md#d7) |
-| `bootstrap_only` compares munged token strings | change | [lifecycle](lifecycle.md#the-addopts-feedback-loop) | [D7](decisions.md#d7) |
+| `bootstrap_only` compares munged token strings | change | [lifecycle](lifecycle.md#the-injected-arguments-loop) | [D7](decisions.md#d7) |
 | `config_source` silently ignores non-`.toml` files | change | [sources](sources.md#config-file-discovery) | [D7](decisions.md#d7) |
 | `ConfigFileDiscoverySource` uses a raw name and private access | change | [sources](sources.md#config-file-discovery) | [D7](decisions.md#d7) |
 | `DeclaringSource` / `OriginAware` tested with `getattr` | change | [sources](sources.md#the-protocol) | — |
 | Origins recorded before unknown keys are pruned | change | [merging](merging.md#unknown-keys) | — |
 | Mutable defaults copied shallowly | change | [config parts](config-parts.md#configpart-and-subconfig) | — |
 | A `ConfigPart` nested in a `ConfigPart` fails obscurely | new | [config parts](config-parts.md#configpart-and-subconfig) | — |
-| The option derivation is entangled with the source that reads values | change | [evolution](evolution.md#l1-option-specs) | [D9](decisions.md#d9) |
-| The store keeps only the winning value, so `getoption`/`getini` cannot be served | change | [evolution](evolution.md#l3-the-layered-value-store) | [D10](decisions.md#d10) |
-| pytest is monkeypatched at import time | change | [host adapters](host-adapters.md#activation) | [D11](decisions.md#d11) |
-| `addini(aliases=)`, `int`/`float`/`paths` ini types and `Config.stash` unused | change | [host adapters](host-adapters.md#what-the-adapter-predates) | — |
-| `config.option` writes cannot reach fragments | new | [evolution](evolution.md#the-runtime-layer) | [D13](decisions.md#d13) |
-| Fragments imply no plugin instance | new | [evolution](evolution.md#plugin-instances-and-lifetime) | [D13](decisions.md#d13) |
-| Only three of pytest's six argparse actions are modelled | new | [evolution](evolution.md#derivation-over-declaration) | [D9](decisions.md#d9) |
-| pytest's ini/toml dialects have no source of their own | new | [evolution](evolution.md#dialects-belong-to-sources-not-values) | [D15](decisions.md#d15) |
-| Every field is env-readable; there is no opt-in | change | [evolution](evolution.md#open-questions) | [D16](decisions.md#d16) |
-| No `no_ini` marker, so every field gets an ini key | new | [evolution](evolution.md#open-questions) | — |
+| There is no spec layer; the derivation is entangled with the source | new | [specs](specs.md) | [D9](decisions.md#d9) |
+| The store keeps only the winning value | change | [merging](merging.md#the-layered-store) | [D10](decisions.md#d10) |
+| No runtime layer; a late write cannot reach a fragment | new | [lifecycle](lifecycle.md#the-runtime-layer) | [D11](decisions.md#d11) |
+| Fragments imply no instance and have no lifetime | new | [lifecycle](lifecycle.md#plugin-instances-and-lifetime) | [D11](decisions.md#d11) |
+| Help is not rendered from specs | new | [reporting](reporting.md#help) | [D12](decisions.md#d12) |
+| Env exposure is all-or-nothing, with no policy | new | [sources](sources.md#environment-exposure) | [D13](decisions.md#d13) |
+| The injected-arguments rung is named for pytest | change | [sources](sources.md#the-precedence-ladder) | — |
+| No way to suppress a field's file spelling | new | [names](names.md#per-field-overrides) | — |
+
+Host policy is tracked separately, in
+[the pytest gap list](pytest/index.md#what-the-binding-predates) and
+[P1–P8](pytest/decisions.md).
 
 The rows without a decision are corrections with no design content — there is
 nothing to weigh, only work to do. The rest carry a cost that was argued.

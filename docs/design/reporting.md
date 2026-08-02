@@ -14,7 +14,7 @@ why adding a source type costs nothing in provenance support. **[built]**
 ```python
 @dataclass(frozen=True)
 class Origin:
-    kind: OriginKind      # default | file | env | cli | addopts | override
+    kind: OriginKind      # default | file | env | cli | injected | override | runtime
     location: str         # "PYTEST_LOG_CLI_LEVEL", "pytest.ini[log_level]", "--log-level"
     precedence: int
 ```
@@ -61,10 +61,15 @@ That is provenance actively lying, in exactly the case provenance exists for
 application owns the process, decides whether help goes to stdout or a pager, and
 decides the exit code. **[built]**
 
-Help text comes from the `help()` marker. Choices from a
-[`Literal`](types.md#literal) annotation appear in the rendered option.
-**[built]** / **[new]**
+Help is rendered from [specs](specs.md), which is what lets it show things a
+host formatter built from registration calls cannot: the closed value set behind
+a [`Literal`](types.md#literal), the `--no-` form of a boolean, and the file key
+an option corresponds to. **[built]** for the `help()` marker, **[new]** for the
+rest. Rationale in [D12](decisions.md#d12).
 
 An option's rendered name is [the CLI spelling of its qualified
 path](names.md#the-qualified-path), so help text and error messages cannot drift
 from what the parser accepts.
+
+Whether a host adopts this output instead of its own formatter is that host's
+decision, not the library's ([the contract](binding-contract.md#what-a-binding-may-decide)).

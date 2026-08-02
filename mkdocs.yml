@@ -63,14 +63,18 @@ nav:
     - ConfigParts: design/config-parts.md
     - Names: design/names.md
     - Types: design/types.md
+    - Specs: design/specs.md
     - Sources: design/sources.md
     - Lifecycle: design/lifecycle.md
     - Merging: design/merging.md
     - Reporting: design/reporting.md
-    - Host adapters: design/host-adapters.md
-    - Evolution: design/evolution.md
+    - Binding contract: design/binding-contract.md
     - Decisions: design/decisions.md
     - Deferred: design/deferred.md
+  - pytest binding:
+    - Overview: design/pytest/index.md
+    - Evolution: design/pytest/evolution.md
+    - Decisions: design/pytest/decisions.md
 
 extra:
   social:

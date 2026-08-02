@@ -7,6 +7,11 @@ It is the densest part of the design, and the one with the most outstanding
 **[change]** rules, because [I1](invariants.md#i1) — *a field's identity is its
 path* — is the invariant the code has drifted furthest from.
 
+Every rule here is general. pytest appears throughout as the *stress case*,
+because its option naming is the most demanding example available — but nothing
+in this document is pytest policy, and a host may only suppress a spelling, never
+rename one ([the contract](binding-contract.md#what-a-binding-may-not-decide)).
+
 ## The qualified path
 
 A field's **qualified path** is its structural path with the ConfigPart's
@@ -30,8 +35,25 @@ varies:
 | nested file | `[section, *qualified[:-1]]` + leaf | `[pytest.log.cli] level` |
 
 `section` comes from `prefix=` and is a **separate axis**
-([below](#prefix-versus-name_prefix)). For
-`LoggingConfig(ConfigPart, prefix="pytest", name_prefix="log")`:
+([below](#prefix-versus-name_prefix)). An ordinary application:
+
+```python
+class PoolConfig(SubConfig):
+    size: int = 5
+
+class DatabaseConfig(ConfigPart, prefix="app", name_prefix="db"):
+    host: str = "localhost"
+    pool: PoolConfig
+```
+
+| path | flat | CLI | env | nested |
+|---|---|---|---|---|
+| `("host",)` | `db_host` | `--db-host` | `APP_DB_HOST` | `[app.db] host` |
+| `("pool", "size")` | `db_pool_size` | `--db-pool-size` | `APP_DB_POOL_SIZE` | `[app.db.pool] size` |
+
+The stress case, `LoggingConfig(ConfigPart, prefix="pytest", name_prefix="log")`,
+is the same rules under more pressure — a shared section, a three-level path and
+a field whose conventional name does not match its structure:
 
 | path | flat | CLI | env | nested |
 |---|---|---|---|---|
@@ -171,12 +193,10 @@ because live logging is turned on from the command line with `--log-cli-level`.
 
 `short("v")` adds a short option. `-o` and `-h` are reserved. **[built]**
 
-There is no mirror of `no_cli` suppressing the *ini* spelling, so every field
-gets an ini key. That was harmless while the ini side was write-only, but
-[`-o` is scoped to ini-backed fields](#the-o-override-key), which makes "has an
-ini spelling" load-bearing and therefore something that needs to be able to be
-false. **[new]** — see
-[evolution, open question 2](evolution.md#open-questions).
+There is no mirror of `no_cli` suppressing the *file* spelling, so every field
+gets one. A host that wants command-line-only options — or that scopes an
+override flag to file-backed fields — needs "has a file spelling" to be able to
+be false. **[new]**, tracked as `file_key` in [specs](specs.md).
 
 ## The -o override key
 
@@ -198,6 +218,10 @@ Rationale in [D1](decisions.md#d1). The dotted-path spelling is *not* retained a
 an alias: two spellings for one thing is how the current confusion arose. What
 `-o` reports as its origin is covered in
 [reporting](reporting.md#overrides-report-as-overrides).
+
+Which fields `-o` may reach is a [binding](binding-contract.md) matter — a host
+may narrow it to file-backed fields, and the pytest binding does. The addressing
+above is not negotiable.
 
 ## Names are never constructed by hand
 
@@ -229,9 +253,9 @@ Two ConfigParts declaring the same flat name is **one rule for every backend**:
 **[change]** — the native CLI source silently skips the second registration and
 lets the second part read a value parsed under the first part's type (an `int`
 field and a `str` field both get `--level 7`, one as `7` and one as `"7"`), while
-the pytest adapter raises. The two backends currently disagree about a core rule
-— see [host adapters](host-adapters.md#adapters-must-share-semantics).
+the pytest binding raises. Two bindings disagreeing about a core rule is exactly
+what [conformance](binding-contract.md#conformance) exists to catch.
 
-An **ini key** the host already declares is always adopted, never clobbered: the
-existing help and type survive and the value is read. **[built]** in the pytest
-adapter, and it is load-bearing for a migration.
+A **file key** the host already declares is always adopted, never clobbered: the
+existing help and type survive and the value is read. **[built]**, and
+load-bearing for any migration where an option exists on both sides at once.
