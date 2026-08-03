@@ -136,7 +136,7 @@ in one table, and [order of work](design/index.md#order-of-work) sequences them.
 | [Reporting](design/reporting.md) | Provenance and help |
 | [Diagnostics](design/diagnostics.md) | The warning and error set, and which one an input gets |
 | [Binding contract](design/binding-contract.md) | The core/host boundary, and conformance |
-| [Decisions](design/decisions.md) | D1–D17, core, with rationale and cost |
+| [Decisions](design/decisions.md) | D1–D19, core, with rationale and cost |
 | [Deferred](design/deferred.md) | Absent from the code, plus the open questions |
 
 Those are **core** — true for every host and for an application with no host.
@@ -147,6 +147,7 @@ pytest's own policy is separate and may not be cited by a core document:
 | [pytest binding](design/pytest/index.md) | the adapter as it is today |
 | [pytest → Evolution](design/pytest/evolution.md) | the staged plan to replace pytest's config layer |
 | [pytest → Decisions](design/pytest/decisions.md) | P1–P8, pytest policy |
+| [vcs-versioning](design/vcs-versioning/index.md) | a candidate binding, evaluated against the design |
 
 Start with [Invariants](design/invariants.md) — they are short, and everything
 else refers back to them. Read

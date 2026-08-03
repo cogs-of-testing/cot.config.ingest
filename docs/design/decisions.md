@@ -422,3 +422,54 @@ questions.
 *Cost:* a format in the design with no implementation and no acceptance test
 behind it. The risk is that its open questions get answered incidentally by the
 first person who needs it; naming them is the mitigation.
+
+## D18
+
+**Conversion is a registry keyed on the annotation, and `Enum` joins `Literal`.**
+([types](types.md#the-conversion-registry), [types](types.md#enum))
+
+Coercion answered "what does this string mean for this annotation" for a fixed
+set: the scalars, `list[T]`, and now `Literal`. Real configuration has domain
+types in it — a compiled pattern, an enum, a class resolved from an entry point,
+a version object. With no registry, each of those is converted by hand *after*
+the fragment is built, which means the fragment briefly holds a value that does
+not match its declaration ([I6](invariants.md#i6)), and means every source
+converts it separately or not at all.
+
+`Enum` is not a separate feature: it is a closed value set whose members have
+names, so it is [`Literal`](types.md#literal) with a type attached and reaches
+help and bindings through the same `FieldSpec.values`.
+
+An unregistered, non-built-in annotation is an error at *declaration* time rather
+than a value left as a string at merge time. A field the library cannot convert
+is a declaration it cannot honour, and [I8](invariants.md#i8) says that is
+programmer error, reported when the class is declared.
+
+*Cost:* a registry is global state, with the usual hazards — registration order,
+and two libraries registering the same type. Scoping it to the manager was
+considered and rejected: a conversion is a property of the *type*, and making it
+per-manager means the same annotation means different things in two parts of one
+program. The narrower risk is worth the narrower rule.
+
+## D19
+
+**Conversion receives the origin of the value it converts.**
+([types](types.md#coercion-sees-the-origin))
+
+A relative path means different things depending on which source supplied it:
+in a config file it is relative to that file, on the command line to the
+invocation directory, in the environment to whatever the application decides. A
+converter with the signature `(raw, annotation) -> value` cannot get all three
+right, so `Path` fields are either wrong for one of them or fixed up by the
+caller after construction — the same [I6](invariants.md#i6) violation the
+conversion registry exists to remove.
+
+The [`Origin`](reporting.md#the-manager-records-sources-refine) already records
+the file or variable, so nothing new has to be discovered; it only has to be
+threaded to the place that needs it.
+
+*Cost:* every converter's signature gains a parameter, including the trivial
+ones, and sources have to supply their origin *before* the merge attributes it
+rather than after. That ordering constraint is the real cost, and it points the
+same way as the [layered store](merging.md#the-layered-store) — a source that
+knows what it supplied and where it came from, at the moment it supplies it.

@@ -99,7 +99,7 @@ be a bad idea, the rule changes here first and the reasoning is recorded in
 | [Reporting](reporting.md) | Provenance and help — what the library tells the user |
 | [Diagnostics](diagnostics.md) | The warning and error set, and which one an input gets |
 | [Binding contract](binding-contract.md) | The core/host boundary, and conformance |
-| [Decisions](decisions.md) | D1–D17, core, with rationale and cost |
+| [Decisions](decisions.md) | D1–D19, core, with rationale and cost |
 | [Deferred](deferred.md) | Absent from the code, plus the open questions |
 
 Everything above is **core**: it holds for every host and for an application with
@@ -111,6 +111,7 @@ document:
 | [pytest](pytest/index.md) | the binding as it is today |
 | [pytest → Evolution](pytest/evolution.md) | the staged plan to replace pytest's config layer |
 | [pytest → Decisions](pytest/decisions.md) | P1–P8, pytest policy |
+| [vcs-versioning](vcs-versioning/index.md) | a candidate binding, evaluated — no argument parser at all |
 
 **Reading order.** [Invariants](invariants.md) first — they are short and
 everything else refers back to them. Then [ConfigParts](config-parts.md) and
@@ -146,6 +147,9 @@ someone may be relying on; the rest are additive or corrective.
 | A value beginning with `-` is dropped | change | ✓ | [sources](sources.md#cli-parsing) | [D2](decisions.md#d2) |
 | Unions take the first member unconditionally | change | ✓ | [types](types.md#unions) | [D3](decisions.md#d3) |
 | `Literal` is unsupported | new | | [types](types.md#literal) | — |
+| `Enum` is unsupported | new | | [types](types.md#enum) | [D18](decisions.md#d18) |
+| No conversion for domain types; the coercible set is fixed | new | | [types](types.md#the-conversion-registry) | [D18](decisions.md#d18) |
+| Conversion cannot see where a value came from | change | | [types](types.md#coercion-sees-the-origin) | [D19](decisions.md#d19) |
 | Typed sources are neither coerced nor checked | change | ✓ | [types](types.md#values-from-typed-sources) | [D4](decisions.md#d4) |
 | `EnvSource(parse_toml=)` conflates two dialects in one source | change | ✓ | [sources](sources.md#two-sources-two-dialects) | [D15](decisions.md#d15) |
 | Every field is environment-readable without opting in | change | ✓ | [sources](sources.md#exposure-is-opt-in) | [D13](decisions.md#d13) |
@@ -162,6 +166,8 @@ someone may be relying on; the rest are additive or corrective.
 | Mutable defaults copied shallowly | change | | [config parts](config-parts.md#configpart-and-subconfig) | — |
 | A `ConfigPart` nested in a `ConfigPart` fails obscurely | new | | [config parts](config-parts.md#configpart-and-subconfig) | — |
 | Warnings and errors are ad hoc; no shared base, three silent drops | change | ✓ | [diagnostics](diagnostics.md) | [D16](decisions.md#d16) |
+| Using a deprecated alias warns nowhere | new | | [diagnostics](diagnostics.md#warnings) | — |
+| No way to pin an absolute environment variable name | new | | [names](names.md#per-field-overrides) | — |
 | Missing required fields raise a bare `TypeError` | change | ✓ | [config parts](config-parts.md#required-and-optional) | [D16](decisions.md#d16) |
 | There is no spec layer; the derivation is entangled with the source | new | | [specs](specs.md) | [D9](decisions.md#d9) |
 | The store keeps only the winning value | change | | [merging](merging.md#the-layered-store) | [D10](decisions.md#d10) |
@@ -192,7 +198,7 @@ merely inconvenient.
 | 4 | **The ladder** ([D14](decisions.md#d14)) | `override(30)` and `runtime(40)`; `-o` becomes a source | — |
 | 5 | **Names** ([D8](decisions.md#d8), [D1](decisions.md#d1)) | the qualified path, unknown keys judged across the section, `-o` by flat name | 1, 3, 4 |
 | 6 | **CLI parsing** ([D2](decisions.md#d2)) | `--no-` forms; unconditional value consumption | 3 |
-| 7 | **Types** ([D3](decisions.md#d3), [D4](decisions.md#d4), [D15](decisions.md#d15), `Literal`) | left-to-right unions, checked typed values, split env dialects | 3 |
+| 7 | **Types** ([D3](decisions.md#d3), [D4](decisions.md#d4), [D15](decisions.md#d15), [D18](decisions.md#d18), [D19](decisions.md#d19), `Literal`) | left-to-right unions, checked typed values, split env dialects, the conversion registry, origin-aware paths | 3 |
 | 8 | **Environment opt-in** ([D13](decisions.md#d13)) | `from_env`; no implicit exposure | 7 — the dialect split moves the same constructors |
 | 9 | **Fixpoint resolve** ([D5](decisions.md#d5)) | passes 2–5 iterate; `discover()` becomes implementable | 3 |
 | 10 | **Specs** ([D9](decisions.md#d9)) | `field_specs(T)`, host-free | 5, 7, 8 — a spec is spellings, and every spelling has to be settled first |
@@ -218,3 +224,10 @@ Three things this ordering makes visible:
 
 The binding's [staged plan](pytest/evolution.md#stages) consumes steps 10, 11,
 12 and 15 as its stages 1, 3 and 7. Nothing else here is visible to a host.
+
+A second binding — [vcs-versioning](vcs-versioning/index.md), evaluated and not
+committed to — needs steps 1–8 and then step 9, because an environment variable
+whose name embeds a value read from the configuration cannot be added without
+[the fixpoint](lifecycle.md#the-passes-iterate-to-a-fixpoint). D18 and D19 exist
+because of that evaluation and have no other consumer yet, which is an argument
+for implementing them against its requirements rather than ahead of them.

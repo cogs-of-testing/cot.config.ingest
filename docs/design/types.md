@@ -54,6 +54,61 @@ its own parser calls a closed set. **[new]**
 currently declares it `str`. Until this exists the
 [yardstick](index.md#the-yardstick) is being measured against a softened target.
 
+## Enum
+
+`Enum` behaves as [`Literal`](#literal) does: a closed set, matched by value,
+reported by name. `GitPreParse("warn-on-shallow")` is the same question as
+`Literal["warn-on-shallow", ...]` with a type attached, and both reach
+[help](reporting.md#help) and a binding as
+[`FieldSpec.values`](specs.md#the-record). **[new]**
+
+Nothing else about an enum is special — it is a closed value set that happens to
+name its members.
+
+## The conversion registry
+
+A field's annotation decides how a string becomes its value, and the mapping is
+a **registry keyed on the annotation**, not a chain of `if` branches:
+
+```python
+register_conversion(Pattern[str], re.compile)
+register_conversion(MyVersion, MyVersion.parse)
+```
+
+The built-in entries are the scalars, `list[T]`, `Literal`, `Enum` and `Path`.
+An application registers the rest. A field whose annotation has no entry and is
+not built in is a
+[`ConfigValueError`](diagnostics.md#errors) at declaration time, naming the field
+and its type — not a value silently left as a string. **[new]**
+
+The registry exists because "what does this string mean for this annotation" was
+answered [in one place](#tokenisation-versus-interpretation) for a fixed set of
+types, and a real configuration has domain types in it: a compiled pattern, an
+enum, a class resolved from an entry point, a version. Converting those by hand
+after construction means the fragment briefly holds a value that does not match
+its declaration, which [I6](invariants.md#i6) forbids, and means every source
+converts them separately or not at all.
+
+What stays out is *validation* — a converter turns text into a value of the
+declared type and raises if it cannot. Range checks and cross-field constraints
+remain [out of scope](deferred.md). Rationale in [D18](decisions.md#d18).
+
+## Coercion sees the origin
+
+Conversion receives the [`Origin`](reporting.md#the-manager-records-sources-refine)
+of the value it is converting. **[new]**
+
+This exists for exactly one reason, and it is not a small one: **a relative path
+means different things depending on who supplied it.** A `root = "../src"` in a
+config file means "relative to that file". The same string on the command line
+means "relative to the invocation directory". From the environment it means
+whatever the application decides. Without the origin, `Path` fields are either
+wrong for one of those or resolved by the caller after the fact — which is the
+same [I6](invariants.md#i6) violation as any other post-construction fixup.
+
+The origin already carries the file or variable a value came from, so this is
+plumbing rather than new information. Rationale in [D19](decisions.md#d19).
+
 ## Values from typed sources
 
 Some sources deliver values that are *already* typed: TOML and YAML files,

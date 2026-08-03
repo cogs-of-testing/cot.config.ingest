@@ -93,6 +93,7 @@ level: str @ from_parent @ help("log level") = "WARNING"      # _MarkerMixin.__r
 |---|---|---|
 | `from_parent` | value cascades from the parent field of the same name | [merging](merging.md#the-from_parent-cascade) |
 | `named("...")` | replaces the derived flat name | [names](names.md#per-field-overrides) |
+| `env_named("...")` | pins an absolute environment variable name | [names](names.md#per-field-overrides) |
 | `no_cli` | suppresses the CLI option, keeps ini and env | [names](names.md#per-field-overrides) |
 | `short("v")` | adds a short option | [names](names.md#per-field-overrides) |
 | `help("...")` | help text | [reporting](reporting.md#help) |
@@ -106,8 +107,8 @@ level: str @ from_parent @ help("log level") = "WARNING"      # _MarkerMixin.__r
 
 Every one of them works at any depth ([I7](invariants.md#i7)). `config_source`,
 `injected_args` and `bootstrap_only` currently do not — see
-[names](names.md#names-are-never-constructed-by-hand). The last four are
-**[new]**.
+[names](names.md#names-are-never-constructed-by-hand). `env_named`, `no_ini`,
+`from_env`, `counted` and `contributes` are **[new]**.
 
 `prefix=` and `name_prefix=` are class keywords rather than field markers,
 because they describe the ConfigPart, not a field. See

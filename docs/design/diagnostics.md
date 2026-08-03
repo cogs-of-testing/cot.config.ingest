@@ -35,6 +35,7 @@ Two corollaries, both load-bearing:
 ConfigWarning(UserWarning)
 ├── UnknownConfigKeyWarning       a key no declared ConfigPart claims          [built]
 ├── UnknownOverrideKeyWarning     an -o key addressing no field                [new]
+├── DeprecatedNameWarning         a field reached by a deprecated alias        [new]
 └── RuntimeMutationWarning        a fragment rebuilt after resolve             [new]
 ```
 
@@ -47,7 +48,19 @@ its own. **[change]**
 |---|---|---|
 | `UnknownConfigKeyWarning` | a source supplied a key that *no* declared part claims, at any depth ([merging](merging.md#unknown-keys)) | every offending dotted path, and the source it came from |
 | `UnknownOverrideKeyWarning` | an [`-o` key](names.md#the-o-override-key) matches no field's flat name | the key, and the parts that were searched |
+| `DeprecatedNameWarning` | a value arrives under one of a field's [aliases](specs.md#the-record) rather than its current name | the alias, the current spelling, and the source that used it |
 | `RuntimeMutationWarning` | a [runtime write](lifecycle.md#the-runtime-layer) rebuilds a fragment | the fragment, the field, and the writer |
+
+`DeprecatedNameWarning` is a `ConfigWarning` rather than a `DeprecationWarning`
+so that it reaches a user by default. Python hides `DeprecationWarning` outside
+`__main__`, which is precisely wrong here: the person who needs to rename a key
+in a config file is not the person running the interpreter that reads it. A host
+that prefers the standard category filters this one and re-emits.
+
+The alternative — deriving nothing and leaving each alias to warn by hand — is
+what makes deprecation machinery grow: an alias is a declared fact
+([`FieldSpec.aliases`](specs.md#the-record)), so noticing that one was used is
+the merge's job, not the field's.
 
 ## Errors
 

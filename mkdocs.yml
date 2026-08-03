@@ -76,6 +76,8 @@ nav:
     - Overview: design/pytest/index.md
     - Evolution: design/pytest/evolution.md
     - Decisions: design/pytest/decisions.md
+  - Candidate bindings:
+    - vcs-versioning: design/vcs-versioning/index.md
 
 extra:
   social:

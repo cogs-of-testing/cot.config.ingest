@@ -209,6 +209,22 @@ because live logging is turned on from the command line with `--log-cli-level`.
 
 `short("v")` adds a short option. `-o` and `-h` are reserved. **[built]**
 
+`env_named("SOURCE_DATE_EPOCH")` pins an **absolute** environment variable name:
+no source prefix, no part prefix, no derivation. **[new]**
+
+It exists for cross-tool conventions. `SOURCE_DATE_EPOCH` is not one
+application's variable — it is a reproducible-builds convention that every tool
+reading it must spell identically, and no amount of prefix composition produces
+a name that deliberately has no prefix. `named()` cannot serve: it replaces the
+flat name and the environment spelling is then *derived* from that, which is the
+right behaviour for a field that is merely spelled unusually and the wrong one
+for a field whose name belongs to somebody else.
+
+This is the only escape from [the qualified path](#the-qualified-path), and it is
+deliberately narrow: it sets one spelling, states it literally, and a field
+carrying it still needs [`from_env`](sources.md#exposure-is-opt-in) to be read at
+all.
+
 There is no mirror of `no_cli` suppressing the *file* spelling, so every field
 gets one. A host that wants command-line-only options — or that scopes an
 override flag to file-backed fields — needs "has a file spelling" to be able to
