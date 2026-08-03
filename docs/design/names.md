@@ -106,6 +106,22 @@ shadowing the other: `EnvSource("APP")` reading a part with `prefix="log"` looks
 at `APP_LOG_*`. An application that namespaces its environment keeps that
 namespace even for parts that name a file section of their own. **[built]**
 
+### When there is no prefix
+
+`prefix=` is optional, and both axes have to say what its absence means. They
+currently disagree: a part with no `prefix=` occupies a file section named after
+**the class** (`[LoggingConfig]`, undowncased), while the environment simply
+drops the segment.
+
+Neither half is stated anywhere, and the file half is the wrong answer — a
+config file section named after a Python class exposes an implementation detail
+as user-facing surface, and renaming the class silently moves the section.
+
+A part with no `prefix=` has **no section of its own**: its keys sit at the top
+level of the file, and its variables under the source's prefix alone. Nesting is
+opt-in, which is what makes an application with a single ConfigPart write a flat
+config file rather than one wrapped in a name it never chose. **[change]**
+
 ## Both spellings in files
 
 A nested table and a flat key reach the same field:
@@ -211,8 +227,16 @@ nowhere else and that nothing in the help output mentions. The two spellings a
 user has actually seen (`log_cli_level` and `log.cli.level`) both silently do
 nothing today.
 
-A `-o` key matching no field is a warning naming the key and the ConfigPart
-([I8](invariants.md#i8)). **[change]** — currently silent.
+Overrides are collected by a source of their own at
+[`override(30)`](sources.md#the-two-rungs-above-the-command-line), above the
+command line: `-o` names a field and says "use this value regardless", which is
+more specific than the option it competes with. `--log-level=A -o log_level=B`
+is `B`. **[new]** — `-o` is applied as a post-merge fixup today, so what it
+outranks is undefined rather than decided.
+
+A `-o` key matching no field is an
+[`UnknownOverrideKeyWarning`](diagnostics.md#warnings) naming the key and the
+ConfigPart ([I8](invariants.md#i8)). **[change]** — currently silent.
 
 Rationale in [D1](decisions.md#d1). The dotted-path spelling is *not* retained as
 an alias: two spellings for one thing is how the current confusion arose. What
@@ -247,14 +271,19 @@ Two ConfigParts declaring the same flat name is **one rule for every backend**:
 - identical declared type **and** identical default → **adoption**: one option,
   both parts read it. This is the migration case — a plugin and its host
   declaring the same option during a transition.
-- anything else → `ConfigLifecycleError` naming both ConfigParts, the field
-  paths, and the ways out (`named()`, `no_cli`, `name_prefix`).
+- anything else → [`ConfigCollisionError`](diagnostics.md#errors) naming both
+  ConfigParts, the field paths, and the ways out (`named()`, `no_cli`,
+  `name_prefix`), raised at `declare()` because it is the declaration that is
+  wrong, not any input.
 
 **[change]** — the native CLI source silently skips the second registration and
 lets the second part read a value parsed under the first part's type (an `int`
 field and a `str` field both get `--level 7`, one as `7` and one as `"7"`), while
-the pytest binding raises. Two bindings disagreeing about a core rule is exactly
-what [conformance](binding-contract.md#conformance) exists to catch.
+the pytest binding raises a `ConfigLifecycleError`. Two bindings disagreeing about
+a core rule is exactly what [conformance](binding-contract.md#conformance) exists
+to catch, and the third spelling — an unexported `CLIConflictError` in the CLI
+parser — is why the error itself gets a
+[named type](diagnostics.md#errors).
 
 A **file key** the host already declares is always adopted, never clobbered: the
 existing help and type survive and the value is read. **[built]**, and

@@ -1,240 +1,132 @@
 # AI Coding Agent Instructions
 
-## Project Overview
+## What this is
 
-An **experimental** Python library for type-safe configuration management. It lets you
-declare configuration as dataclass-like `ConfigPart` classes and ingest values from
-multiple sources (CLI args, environment variables, TOML/INI files) with automatic
-merging by precedence.
+An **experimental** Python library for type-safe configuration management: you
+declare configuration as dataclass-like `ConfigPart` classes and ingest values
+from CLI args, environment variables and TOML/INI files, merged by precedence.
 
-**Key inspiration**: pytest's configuration complexity, where CLI args and ini options
-are handled by two separate mechanisms, making `pyproject.toml` support daunting. The
-acceptance target for this library is replicating pytest's logging plugin
-configuration (see `docs/pytest-logging-options.txt`) from a single declaration.
+**`docs/design/` is normative.** This file is not a summary of it — it is the
+part an agent needs that the design does not cover: where things live, how to
+run them, and which mistakes this codebase has already made.
 
-## Architecture (as built)
+## Read before changing behaviour
 
-The flow is **ConfigParts + Sources → ConfigManager → instances**.
+| Question | Document |
+|---|---|
+| what are the rules everything follows from? | `docs/design/invariants.md` — eight, short, cited by number |
+| what does this name/spelling become? | `docs/design/names.md` |
+| when does what happen? | `docs/design/lifecycle.md` |
+| which source wins? | `docs/design/sources.md` |
+| does this warn or raise? | `docs/design/diagnostics.md` |
+| why is it like that? | `docs/design/decisions.md` — D1–D17, each with a cost |
+| what is still wrong with the code? | `docs/design/index.md#gap-list`, sequenced by `#order-of-work` |
 
-```python
-from cot.config import ConfigManager, ConfigPart, SubConfig, CLISource, EnvSource
+Every rule carries **[built]**, **[change]** (the code does something else and
+the *code* is wrong) or **[new]**. A **[change]** rule is a commitment, not a
+suggestion: implement it, or amend the decision that records it. Do not "fix" the
+code to match a **[change]** description of today's behaviour.
 
-class LogCliConfig(SubConfig):
-    level: Annotated[str, from_parent] = "WARNING"
-    enabled: bool = False
+**Core and host policy are separate.** Everything directly under `docs/design/`
+is core — true for every host and for an application with none.
+`docs/design/pytest/` is pytest policy. `docs/design/binding-contract.md` is the
+boundary. Core code must never import, name or accommodate a host, and a core
+document may never cite a `pytest/` one.
 
-class LoggingConfig(ConfigPart, prefix="log"):
-    level: str = "WARNING"
-    cli: LogCliConfig
+### Keeping the design and the code in step
 
-manager = ConfigManager(sources=[CLISource(sys.argv[1:]), EnvSource("APP")])
-manager.declare(LoggingConfig)
-config = manager.get(LoggingConfig)
+The markers are the whole value of these documents, and they only stay true if
+they are maintained with the code. When you change behaviour:
+
+1. flip the rule's marker in the component document (**[change]**/**[new]** →
+   **[built]**),
+2. delete its row from the gap list in `docs/design/index.md`,
+3. if you did something the design did not call for, add the rule *first* — and
+   a decision if it has a cost worth arguing.
+
+A change that leaves a **[change]** rule describing code that no longer does that
+is worse than no documentation, because the next reader trusts it.
+
+## Layout
+
+```
+src/cot/config/     the library; every _-prefixed module is internal
+  _fields.py        the field model — the only place class shape is derived
+  _names.py         path -> every source-facing spelling
+  _coerce.py        string -> declared type
+  _sources.py       the source implementations
+  _manager.py       declare/resolve/get, merging, provenance
+  _cli_parser.py    the re-parsing argument parser
+  pytest_plugin.py  the pytest binding (public)
+  example_plugin.py a worked example plugin (public)
+testing/            the tests — note: not tests/
+docs/design/        normative design
 ```
 
-### Lifecycle: declare → resolve → get
-
-| Phase | Call | What happens |
-|---|---|---|
-| declare | `manager.declare(T)` | The type is recorded and its options registered with any source that accepts declarations. Nothing is loaded. |
-| resolve | `manager.resolve()` | Bootstrap runs once for *all* declared types, then every fragment is built. Idempotent; triggered lazily by the first `get()`. |
-| access | `manager.get(T)` | The built, typed instance. |
-
-Declaring after `resolve()` raises `ConfigLifecycleError` — the configuration
-is frozen.
-
-The split exists because a host collects declarations from independent plugins
-before any of them can be resolved. In pytest every plugin's `pytest_addoption`
-runs before a single argument is parsed, so a fragment built at declaration
-time could not see a config file or `addopts` contributed by a plugin loaded
-after it. `testing/test_lifecycle.py` pins that property: declaration order
-must not change the result.
-
-### Modules under `src/cot/config/`
-
-`pytest_plugin.py` and `example_plugin.py` are public; every `_`-prefixed
-module is internal.
-
-A source implements `load()`; a source backed by an argument parser also
-implements `declare()` (`DeclaringSource`), because a parser has to be told an
-option exists before it can parse it. File and env sources have nothing to
-declare.
-
-`__init__.py` is a pure re-export facade with an explicit `__all__`; `no_implicit_reexport`
-is on, so anything public must be listed there.
-
-### Markers (`_annotations.py`)
-
-All markers work as `Annotated[T, marker]`, and via the `T @ marker` shorthand
-(`_MarkerMixin.__rmatmul__`).
-
-`prefix` and `name_prefix` are separate on purpose. pytest's logging options
-live in the `[pytest]` section but are individually called `log_cli_level` — one
-prefix names the section, the other names the options.
-
-### Name mapping
-
-A field's structural path becomes a different name in each source. See
-`_names.py`; for `LoggingConfig(prefix="pytest", name_prefix="log")`:
-
-| path | CLI | INI / flat | env | TOML nested |
-|---|---|---|---|---|
-| `("level",)` | `--log-level` | `log_level` | `PYTEST_LOG_LEVEL` | `[pytest] level` |
-| `("cli","level")` | `--log-cli-level` | `log_cli_level` | `PYTEST_LOG_CLI_LEVEL` | `[pytest.cli] level` |
-
-File sources accept both spellings, so a nested table and a flat prefixed key
-reach the same field.
-
-### Provenance
-
-Origins are recorded by the manager as it merges, so sources need no changes —
-one that says nothing about itself is attributed by class and precedence. A
-source that can be more specific implements `describe_origin`.
-
-```python
-manager.origin_of(LoggingConfig, "cli.level")   # Origin(kind="env", location="PYTEST_LOG_CLI_LEVEL", ...)
-print(manager.explain(LoggingConfig))            # table of field / value / origin
-```
-
-### Help
-
-`manager.format_help()` renders the registered options and returns the text.
-`manager.help_requested()` reports whether `-h`/`--help` was passed. **Neither
-prints nor exits** — this is a library, the application owns the process.
-
-### Precedence ladder
-
-`defaults(-1) < file(15) < addopts(18) < env(20) < cli(25)` — the values live in
-`Precedence` (`_precedence.py`) and are the *defaults*, not an enum. Every
-source takes `precedence=`, and so does every marker that creates one, so
-`TomlSource(path, precedence=Precedence.CLI + 1)` really does outrank a typed
-argument.
-
-That is the whole ordering rule: sources are sorted by `precedence` and merged
-in order, and nothing is special-cased above the ladder. `ConfigManager.add_source()`
-maintains the order, including for sources added during `resolve()`.
-
-`addopts` is a source (`AddoptsSource`), not a splice into `argv`. That is what
-lets it sit *below* env and above files, and lets an injected option be reported
-as `addopts --level` rather than looking like something the user typed.
-
-### The addopts feedback loop
-
-`resolve()` is deliberately multi-pass, because you cannot know all
-sources until you have read some config:
-
-1. collect defaults from the class
-2. call `discover()` if the type defines it (may add sources)
-3. process `config_source` fields → add the named config file as a source
-4. load every source to obtain `addopts`
-5. hand addopts to `AddoptsSource`, which parses them at its own precedence
-6. re-load everything and merge in precedence order
-7. build nested `SubConfig` instances, applying the `from_parent` cascade
-8. instantiate and store
-
-Each pass runs for *every* declared type before the next begins, so no fragment
-is built against a source a later fragment was about to add.
+`__init__.py` is a pure re-export facade with an explicit `__all__`;
+`no_implicit_reexport` is on, so anything public must be listed there.
 
 ## Constraints
 
-1. **Type annotations are required** on fields — there is no type inference.
+1. **Type annotations are required** on fields — there is no inference.
 2. **Tests live in `testing/`**, not `tests/` (`testpaths = ["testing"]`).
 3. **`mypy --strict` must stay clean.** Use `from __future__ import annotations`,
    `if TYPE_CHECKING:` blocks, and keep `Annotated` metadata by passing
    `include_extras=True` to `get_type_hints`.
-4. **Read field metadata through `_fields.iter_fields()`**, never by re-implementing
-   a `get_origin(x) is Annotated` loop. That duplication is what the field model
-   replaced.
-5. `cot` is a **PEP 420 namespace package** — do not add `src/cot/__init__.py`.
+4. **Read field metadata through `_fields`**, never by re-implementing a
+   `get_origin(x) is Annotated` loop. That duplication, in eight places, is what
+   the field model replaced.
+5. **Derive names through `_names.py`**, never by string manipulation. Five sites
+   currently do it by hand and all five are wrong at the edges — that is
+   invariant I1 and decision D7.
+6. `cot` is a **PEP 420 namespace package** — do not add `src/cot/__init__.py`.
    The PEP 561 marker lives at `src/cot/config/py.typed`.
-6. Keep inheritance simple. Sub-configs pick up fields via `__mro__`; elaborate
-   multiple inheritance causes hard-to-follow field resolution.
+7. Keep inheritance simple. Sub-configs pick up fields via `__mro__`; elaborate
+   multiple inheritance causes field resolution nobody can follow.
 
-## pytest integration (proof of concept)
+## The acceptance test
 
-`cot/config/pytest_plugin.py` **monkeypatches pytest**, adding methods it does
-not have. It is **auto-enabled** via a `pytest11` entry point (`cot_config`), so
-installing the package is enough — turn it off with `-p no:cot_config`.
+`testing/test_pytest_logging.py` declares pytest's whole logging plugin — the 13
+ini options in `docs/pytest-logging-options.txt` plus the CLI-only `log_disable`
+— as one nested structure, and checks each is reachable by its real pytest name
+from ini, TOML, env and CLI, with the fallback chains, the provenance and the
+help output.
 
-The patch is additive only: no option, ini key, hook or behaviour of pytest's is
-replaced. Note that `pytest_plugins = [...]` inside a conftest would be *too
-late* as an activation route — that conftest's own `pytest_addoption` runs
-before its plugin list is processed — which is why the entry point is used.
+**A change that makes that file harder to write is going the wrong way.**
 
-Because it patches at import time, a type checker cannot see `add_config` /
-`get_config`. `manager_for_config(config).get(T)` is the statically-typed
-equivalent.
+`testing/test_readme.py` executes the README's declaration for the same reason:
+the README once shipped a proposed API that had never existed. Any example
+anywhere in this repo is either executed by a test or explicitly marked as not
+yet buildable.
 
-```python
-def pytest_addoption(parser):
-    parser.add_config(LoggingConfig)      # declare
+## Things that will surprise you
 
-def pytest_configure(config):
-    log = config.get_config(LoggingConfig)   # resolve + get, typed
-    config.explain_config(LoggingConfig)     # provenance table
-```
+- **Installing the package patches pytest.** `pytest_plugin.py` monkeypatches
+  `Parser` and `Config` through a `pytest11` entry point, at import time. It is
+  additive only, `-p no:cot_config` disables it, and P1 removes it. A type
+  checker cannot see the patched methods; `manager_for_config(config).get(T)` is
+  the typed equivalent.
+- **`resolve()` is multi-pass on purpose**, because you cannot know every source
+  until you have read some configuration. Each pass runs for *every* declared
+  type before the next begins — that is invariant I3, and
+  `testing/test_lifecycle.py` pins it.
+- **The library never prints and never exits** (I4). `format_help()` returns
+  text; the application owns the process.
 
-**Division of labour.** pytest keeps argument parsing; this library supplies
-the structure. Each leaf field becomes a `parser.addoption` and/or
-`parser.addini` under the same name mapping every other source uses, and values
-come back through `config.getoption` then `config.getini` — pytest's own
-`get_option_ini` precedence — to be reassembled into the nested shape, where
-defaults and the `from_parent` cascade apply. The intended end state is the
-reverse: pytest using the library directly.
+## Absent from the code entirely
 
-Two collision behaviours, both load-bearing for a migration and both tested:
+Do not assume these exist: plugin discovery (the `Discoverable` protocol has no
+implementors), list append/reset merge semantics, YAML files, the spec layer,
+the layered store, the runtime layer, change notification and hot reload, and
+validation hooks beyond required-field and unknown-kwarg checks.
 
-- an **ini key** pytest already declares (`log_level`) is *adopted*, not
-  clobbered — the existing help and type survive and the value is read;
-- a **CLI option** pytest already owns raises `ConfigLifecycleError` naming the
-  field and pointing at `named()`, `no_cli` and `name_prefix`, instead of
-  argparse's bare "conflicting option string".
+Injected arguments (`addopts`) *do* accumulate: every contribution is appended to
+the one source, later ones winning.
 
-### Example plugin
-
-`cot/config/example_plugin.py` is a working slow-test reporter built on the
-PoC — nested structure, `from_parent` cascade, `named()`, `no_cli`, help text,
-ini and CLI. It is **not** auto-enabled (it is an example, not infrastructure):
+## Running things
 
 ```bash
-pytest -p cot.config.example_plugin --timing-report --timing-threshold=0.5
+uv run pytest -q
+uv run mypy src
+pre-commit run -a
 ```
-
-Everything it adds lives under `timing_` / `--timing-*`, a namespace pytest does
-not use. `testing/test_example_plugin.py` pins that it clobbers nothing: with no
-options given it registers no hooks and the run output is unchanged, and
-pytest's own `--durations` keeps working alongside it.
-
-## Acceptance test
-
-`testing/test_pytest_logging.py` declares pytest's whole logging plugin — all 13
-ini options from `docs/pytest-logging-options.txt` plus the CLI-only
-`log_disable` — as one nested structure, and checks each one is reachable by its
-real pytest name from ini, TOML, env and CLI, with the fallback chains, the
-provenance and the help output. It is the yardstick: a change that makes that
-file harder to write is going the wrong way.
-
-## Not implemented yet
-
-`docs/design/` is the normative design, split by component: every rule is marked
-**[built]**, **[change]** (the code does something else and is wrong) or
-**[new]**. Read it before changing behaviour — a **[change]** rule is a
-commitment, and `docs/design/decisions.md` records why. `docs/design/index.md`
-carries a gap list of every rule the code does not yet satisfy.
-
-Core and host policy are separate. Everything directly under `docs/design/` is
-**core** — true for every host and for an application with none.
-`docs/design/pytest/` is **pytest policy** and may not be cited by a core
-document; `docs/design/binding-contract.md` is the boundary and says which side
-a rule belongs on. Core code must never import, name or accommodate a host.
-
-The following are absent from the code entirely. Do not assume they exist:
-
-- plugin discovery — the `Discoverable` protocol has no implementors
-- list merge semantics (append / reset). addopts *do* accumulate now: every
-  contribution is appended to the one `AddoptsSource`, later ones winning
-- change notification, hot reload, dependency graphs
-- validation hooks (construction checks required fields and rejects unknown
-  kwargs, but does not coerce types — coercion is `_coerce.py`; what stays in
-  each source is *tokenisation*, which genuinely differs between an INI list
-  and a repeated CLI option)

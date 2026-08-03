@@ -68,6 +68,7 @@ nav:
     - Lifecycle: design/lifecycle.md
     - Merging: design/merging.md
     - Reporting: design/reporting.md
+    - Diagnostics: design/diagnostics.md
     - Binding contract: design/binding-contract.md
     - Decisions: design/decisions.md
     - Deferred: design/deferred.md

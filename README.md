@@ -145,6 +145,10 @@ environment; `name_prefix=` prefixes the option names. They are separate because
 pytest's logging options live in `[pytest]` but are individually called
 `log_cli_level`.
 
+> Every field currently gets an environment variable. The design
+> [makes that opt-in](docs/design/sources.md#exposure-is-opt-in) — a field will
+> need a `from_env` marker to be readable from the environment at all.
+
 ### Precedence
 
 ```
@@ -206,7 +210,7 @@ library driving real pytest options, and a conftest-level
 `pytest_addoption` runs before its plugin list is processed. It is not how a
 stable release should behave, and it will change: the plan is to replace it with
 importable `add_config(parser, T)` / `get_config(config, T)` functions. See
-`docs/design/evolution.md`.
+[`docs/design/pytest/evolution.md`](docs/design/pytest/evolution.md).
 
 What you should know:
 
@@ -257,21 +261,34 @@ Present in `docs/design/` as intent, absent from the code:
 
 - plugin discovery — the `Discoverable` protocol has no implementors
 - list merge semantics (append / reset)
+- YAML config files — [in the design](docs/design/sources.md#yaml), deliberately
+  underspecified
 - change notification, hot reload, dependency graphs
 - type coercion as a validation hook (construction checks required fields and
   rejects unknown kwargs; coercion itself lives in `_coerce.py`, driven by the
   sources)
 
+The [gap list](docs/design/index.md#gap-list) is the full account of where the
+code and the design differ, and [order of work](docs/design/index.md#order-of-work)
+is the sequence for closing it.
+
 ## Open questions
 
 - [x] mapping of prefixes/underscores and sub-objects — `prefix=` names the file
       section, `name_prefix=` prefixes the option names, and a field's dotted
-      path flattens into each source's spelling. See `src/cot/config/_names.py`.
+      path flattens into each source's spelling. See
+      [names](docs/design/names.md).
 - [x] mapping of ini options — INI has no nesting, so flat keys are resolved
       against the same mapping; `log_cli_level` reaches `cli.level`.
-- [ ] ingestion of backward compatibility fields
-- [ ] toml/yaml behaviours — TOML accepts both nested tables and flat keys;
-      YAML is not implemented.
+- [x] ingestion of backward compatibility fields — hand-written host options
+      become specs and join the store; see
+      [evolution](docs/design/pytest/evolution.md#binding-the-specs).
+- [x] toml behaviours — TOML accepts both nested tables and flat keys, and is a
+      [typed-dialect source](docs/design/sources.md#dialect-is-a-property-of-the-source):
+      its values are type-checked rather than coerced.
+- [ ] yaml behaviours — [admitted as a format](docs/design/sources.md#yaml),
+      with the parser dependency, safe-loading, multi-document streams and YAML
+      1.1's type surprises all still open.
 
 ## Development
 

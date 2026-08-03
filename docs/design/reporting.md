@@ -4,6 +4,11 @@ What the library tells the user: where a value came from, and what the options
 are. Both obey [I4](invariants.md#i4) — it renders text and returns it, and never
 prints or exits.
 
+What it tells the user when something is *wrong* is
+[diagnostics](diagnostics.md), which shares this document's vocabulary: an error
+about a value names the same [`Origin`](#the-manager-records-sources-refine) that
+`explain()` would show for it.
+
 ## The manager records; sources refine
 
 Origins are recorded by the manager as it merges, so a source that says nothing
@@ -40,10 +45,12 @@ that the winner is not obvious from any one of them. **[built]**
 
 ## Overrides report as overrides
 
-A value set with [`-o`](names.md#the-o-override-key) has `kind="override"` and a
-location naming the `-o` key. **[change]** — `OriginKind` declares `"override"`
-and nothing ever constructs one; a `-o` value is reported as coming from the CLI
-option it happens to address:
+A value set with [`-o`](names.md#the-o-override-key) has `kind="override"`, a
+location naming the `-o` key, and the precedence of
+[the `override` rung](sources.md#the-two-rungs-above-the-command-line) it was
+merged at. **[change]** — `OriginKind` declares `"override"` and nothing ever
+constructs one; a `-o` value is reported as coming from the CLI option it happens
+to address:
 
 ```
 -o level=D    ->    origin = cli:--log-level     # the user never typed that

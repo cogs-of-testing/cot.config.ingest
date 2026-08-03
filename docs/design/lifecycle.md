@@ -54,8 +54,10 @@ a plugin loaded from a config file — must receive every pass, not just the one
 that have not run yet.
 
 `resolve()` therefore repeats passes 2–5 until the set of declared types stops
-growing, then runs 6–8 once. A type declared during the final build pass is an
-error: the configuration is closing. **[change]** — the passes are a flat
+growing, then runs 6–8 once. A type declared during the final build pass is a
+[`ConfigLifecycleError`](diagnostics.md#errors): the configuration is closing, and
+so is a set of declarations that never stops growing, which is the same error
+naming the types in the cycle. **[change]** — the passes are a flat
 sequence of `for t in self._declared` loops today. A type declared during pass 2
 happens to be picked up (list iteration sees appends); a type declared during
 pass 3 or later never gets `discover()` and contributes no config file, silently.
@@ -112,7 +114,8 @@ precedence rung are named for the capability rather than for pytest.
 `Precedence.ADDOPTS`.
 
 `bootstrap_only` refuses an injected contribution that tries to set a field whose
-decisions have already been made — which config file to open, above all.
+decisions have already been made — which config file to open, above all. The
+refusal is a [`ConfigUsageError`](diagnostics.md#errors) naming the field.
 Enforcement resolves the parsed tokens to field paths through the parser
 ([names](names.md#names-are-never-constructed-by-hand)), not by munging the token
 string. **[change]**
@@ -123,8 +126,14 @@ A host may need to derive one setting from another *after* resolution — readin
 one resolved value and writing another. Fragments are frozen, so that write
 cannot land on the instance.
 
-It lands in a **runtime source** at the top of the ladder. The affected fragment
-is rebuilt, and a warning names the fragment and the writer. **[new]**
+It lands in a **runtime source**, at
+[`runtime(40)`](sources.md#the-two-rungs-above-the-command-line) — the top rung,
+above `override` and everything below it. A late write is made with the whole
+merged configuration already in view, so it wins over every input that produced
+that view; anything else would discard the derivation it encodes. The affected
+fragment is rebuilt, and a
+[`RuntimeMutationWarning`](diagnostics.md#warnings) names the fragment and the
+writer. **[new]**
 
 ```
 app.option.setup_show = True

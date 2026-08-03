@@ -17,8 +17,8 @@ Because every source omits what it does not supply
 
 A key a source supplied that **no declared ConfigPart** claims, at any depth, is
 user error in a config file — not programmer error. It is dropped with an
-`UnknownConfigKeyWarning` naming every offending dotted path, and the load
-continues. Letting it reach the constructor raised `TypeError` and took the whole
+[`UnknownConfigKeyWarning`](diagnostics.md#warnings) naming every offending
+dotted path, and the load continues. Letting it reach the constructor raised `TypeError` and took the whole
 load down over a typo in one nested table. **[built]**, except that the judgement
 is made per-part rather than across all declared parts, so a shared section
 produces warnings on correct configuration — see

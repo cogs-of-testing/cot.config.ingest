@@ -35,9 +35,14 @@ Genuinely undecided. Unlike a **[change]** rule, these have no committed answer.
    ([config parts](config-parts.md#configpart-and-subconfig)). Is a single class
    with a `nested=` marker simpler, or is the type-level distinction worth
    keeping for the reader?
-3. **Required fields with no source.** Construction raises `TypeError` naming
-   them. Should that be a distinct exception type carrying the ConfigPart and the
-   [origins](reporting.md#the-provenance-api) that *were* found?
+3. **YAML's unanswered half.** [D17](decisions.md#d17) admits
+   [YAML](sources.md#yaml) as a file format and stops there, because pytest does
+   not read YAML and nothing else exerts pressure on the answers. Four questions,
+   each with a plausible answer that should not be settled by accident: the
+   third-party parser dependency and what its absence does; safe-loading, aliases
+   and merge keys competing with the ladder; multi-document streams; and YAML
+   1.1's duplicate keys and `no`-means-`False` conversions. The first
+   implementation answers all four whether or not it means to.
 4. **Per-source list tokenisation.** Newline-preferred-over-comma is an INI
    convention ([types](types.md#lists)). Does a TOML string field holding
    `"a,b"` really want splitting, or should only INI do it?
@@ -55,3 +60,12 @@ Genuinely undecided. Unlike a **[change]** rule, these have no committed answer.
    enters it "when the host asks". A host with no obvious configure/teardown pair
    has nowhere natural to put that. Does the library offer a default scope, or is
    entering always the host's call?
+8. **Bulk environment opt-in.** [D13](decisions.md#d13) makes `from_env`
+   per-field, which is right for the field that needs justifying and verbose for
+   a twelve-factor application where every field is meant to be readable. A class
+   keyword would restore the bulk case without restoring the implicit default —
+   but a whole-class opt-in is one edit away from being the thing D13 removed.
+
+*Settled since this list was written:* whether missing required fields deserve
+their own exception type — they get [`MissingConfigError`](diagnostics.md#errors),
+carrying the ConfigPart and the origins that *were* found.

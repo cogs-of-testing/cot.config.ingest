@@ -100,7 +100,7 @@ level: str @ from_parent @ help("log level") = "WARNING"      # _MarkerMixin.__r
 | `injected_args` | the value is re-parsed as CLI tokens | [lifecycle](lifecycle.md#the-injected-arguments-loop) |
 | `bootstrap_only` | cannot be set from injected arguments | [lifecycle](lifecycle.md#the-injected-arguments-loop) |
 | `no_ini` | suppresses the file spelling | [names](names.md#per-field-overrides) |
-| `from_env` | opts the field into environment reading | [sources](sources.md#environment-exposure) |
+| `from_env` | gives the field an environment spelling; without it there is none | [sources](sources.md#exposure-is-opt-in) |
 | `counted` | occurrences are summed | [specs](specs.md#derivation-over-declaration) |
 | `contributes(v)` | presence contributes a fixed value | [specs](specs.md#derivation-over-declaration) |
 
@@ -116,6 +116,8 @@ because they describe the ConfigPart, not a field. See
 ## Required and optional
 
 A field with no default and no `SubConfig` type is **required**: if no source
-supplies it, construction raises `TypeError` naming every missing field at once.
-A `SubConfig` field never needs a default — the manager builds it from its own
-defaults. **[built]**
+supplies it, construction raises
+[`MissingConfigError`](diagnostics.md#errors) naming every missing field at once,
+along with the origins that *were* found. A `SubConfig` field never needs a
+default — the manager builds it from its own defaults. **[built]**, except that
+the error is a bare `TypeError` today **[change]**.

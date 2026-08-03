@@ -204,18 +204,18 @@ up a real `Parser` and inspecting its private dicts; a second host would
 duplicate it; and `format_help()` derives the same facts separately, so the two
 can disagree about what an option is called.
 
-Splitting it into `option_specs(T) -> tuple[OptionSpec, ...]` — pure, host-free —
-plus a binder that loops over the result makes the derivation a value a test can
-compare against a table. It also gives exactly one place where the library's type
-vocabulary is translated into pytest's `action`/`ini_type` words, which is the
-part most likely to be wrong and hardest to notice.
+Splitting it into [`field_specs(T) -> tuple[FieldSpec, ...]`](specs.md) — pure,
+host-free — plus a binder that loops over the result makes the derivation a value
+a test can compare against a table. It also gives exactly one place, *inside the
+binding*, where the library's vocabulary is translated into the host's parser
+words, which is the part most likely to be wrong and hardest to notice.
 
 This is also what makes [D6](#d6)'s conformance suite mechanical rather than
 aspirational: two backends conform when they bind the same specs.
 
-*Cost:* one more layer and a dataclass to keep in step with pytest's option
-vocabulary. Worth it at two hosts; already worth it at one, because of the
-testability.
+*Cost:* one more layer and a dataclass, plus a per-host translation function to
+keep in step with that host's option vocabulary. Worth it at two hosts; already
+worth it at one, because of the testability.
 
 ## D10
 
@@ -293,17 +293,132 @@ binding's own decisions.
 
 ## D13
 
-**Environment exposure is a source-level policy plus a field marker.**
-([sources](sources.md#environment-exposure))
+**The environment is never implied: a field is environment-readable only when it
+says so.** ([sources](sources.md#exposure-is-opt-in))
 
-`EnvSource` currently reads *every* field, which is right for a standalone
-application following twelve-factor conventions and wrong for a host with two
-hundred options that has never had environment support. Neither default is
-correct for both.
+`EnvSource` reads every field today, which makes exposure a property of *having
+been declared* rather than of anyone deciding. An earlier version of this
+decision made it a source-level policy with all-fields as the default; that
+picked the wrong end of the problem twice over — a switch on the source cannot
+distinguish `database.password` from `database.host`, and defaulting to open
+means every field a part ever adds joins the surface silently.
 
-So it is a policy: `EnvSource(fields="all")` keeps today's behaviour and remains
-the default, `EnvSource(fields="marked")` reads only fields carrying the opt-in
-marker, and each binding chooses.
+The environment is the one source nobody declares. Files are opened because
+something named them and a command line is typed on purpose; an environment is
+inherited from a CI runner, a container image or a shell profile that the person
+reading the configuration never saw. Requiring `from_env` puts the decision next
+to the field, in the diff that introduced it, where it can be reviewed.
 
-*Cost:* one more constructor argument and one more marker, to avoid a choice that
-would have been wrong for half the users either way.
+It also makes [`FieldSpec`](specs.md) honest: `env_key` is answerable from the
+class alone, so a spec stays a pure function of a ConfigPart instead of varying
+with which manager is asking.
+
+*Cost:* breaking, and it removes a capability rather than adding one — a
+twelve-factor application that wants every field environment-readable now marks
+every field. That is the trade: the verbose case is the one where exposure was
+deliberate, and it is visible in the source instead of implied by a constructor
+argument. A future `from_env` on a *class* would restore the bulk case without
+restoring the implicit default.
+
+## D14
+
+**The ladder gains an `override` rung and a `runtime` rung, in that order, above
+the command line.**
+([sources](sources.md#the-two-rungs-above-the-command-line))
+
+[I2](invariants.md#i2) says precedence is a total order with no exceptions, and
+two mechanisms were quietly exempt from it. `-o` was applied as a post-merge
+fixup, so what it beat was undefined — `--log-level=A -o log_level=B` had no
+documented answer. The [runtime layer](lifecycle.md#the-runtime-layer) said "the
+top of the ladder" without a rung to point at.
+
+Both get one. `override(30)` sits above `cli(25)` because `-o` is the more
+specific statement: it names a field and supplies a value regardless of what else
+addressed it. `runtime(40)` is the top and stays the top, because a runtime write
+is made *after* the merge, with the whole configuration in view — a derivation
+computed from the final values cannot be outranked by the inputs it was computed
+from without discarding it.
+
+Nothing may be constructed above `runtime`. A source that wants to outrank a late
+write is describing input, and input belongs below the command line.
+
+*Cost:* two constants, and `-o` becomes a source rather than a fixup —which is
+what lets it carry [its own origin kind](reporting.md#overrides-report-as-overrides)
+instead of impersonating the option it addresses. Any application that relied on
+`-o` losing to an explicit CLI option was relying on undefined behaviour, but it
+was undefined in a direction some code may have observed.
+
+## D15
+
+**A source's dialect is a property of the source, so the TOML-aware environment
+reader is its own class.** ([sources](sources.md#two-sources-two-dialects))
+
+`EnvSource(parse_toml=True)` makes one source deliver strings or native values
+depending on a constructor argument, and [D4](#d4) then cannot say whether its
+values are coerced or checked — the answer depends on a flag that nobody reading
+the merge can see.
+
+`EnvSource` (string dialect, coerced) and `TomlEnvSource` (typed dialect,
+checked) are two sources. The dialect is visible where the source is
+constructed, `describe_origin` can say which one supplied a value, and the
+coerce-versus-check rule stays a property of the source rather than a per-value
+guess.
+
+The same reasoning applies to any format readable both ways, and it is the rule a
+host splitting its own file dialects follows.
+
+*Cost:* one more class, and `parse_toml=` goes. Anyone passing it changes a
+constructor name.
+
+## D16
+
+**Warnings and errors are a designed set with a shared base and one rule for
+choosing between them.** ([diagnostics](diagnostics.md))
+
+[I8](invariants.md#i8) was stated as an invariant and then left for each
+component to satisfy in its own vocabulary. The result is three silent drops, a
+warning that fires on correct configuration, a `RuntimeError` subclass doing
+duty as both "you called `declare()` too late" and "these two parts collide", an
+unexported `CLIConflictError` that is the same collision under a second name, and
+a bare `TypeError` for missing required fields.
+
+A taxonomy fixes the part that matters: **a host can filter or promote the whole
+set at once**, an application can tell "this library rejected the configuration"
+from any other exception, and a new diagnostic has a place to go and a rule that
+says whether it warns or raises.
+
+The rule is that a warning means the run continues with everything the user got
+right intact, an error means the input cannot be honoured, and a wrong
+*declaration* raises at `declare()` rather than waiting for `resolve()`.
+
+*Cost:* breaking in the exception hierarchy — `ConfigLifecycleError` is rebased
+from `RuntimeError` onto `ConfigError`, and collisions raise a different type.
+Aggregation-per-`resolve()` also means a diagnostic cannot be emitted the moment
+it is discovered, which is a small constraint on the merge's internals.
+
+## D17
+
+**YAML is a config file format like TOML and INI, and is deliberately
+underspecified.** ([sources](sources.md#yaml))
+
+Every question YAML raises is a *source* question — which suffix maps to which
+loader, and whether that loader hands over strings or typed values. The
+[name model](names.md#the-qualified-path), the ladder and the merge are already
+format-blind, so admitting YAML costs a row in the suffix table and a loader.
+
+Leaving it out would not have kept it out. It is the third format anyone asks
+for, and the [catalogue is open](sources.md#catalogue) by design; the only effect
+of silence would have been that whoever added it first did so without a rule to
+follow.
+
+What it does *not* get is a settled specification. pytest does not read YAML, so
+the [yardstick](index.md#the-yardstick) exerts no pressure on it and there is no
+real requirement to test a decision against. The parser dependency, safe-loading
+and merge keys, multi-document streams, and YAML 1.1's type surprises are listed
+as open questions rather than answered from an armchair —
+[several of them are I8 questions](invariants.md#i8) before they are parsing
+questions.
+
+*Cost:* a format in the design with no implementation and no acceptance test
+behind it. The risk is that its open questions get answered incidentally by the
+first person who needs it; naming them is the mitigation.

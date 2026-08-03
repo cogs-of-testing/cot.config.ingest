@@ -17,8 +17,9 @@ level = get_option_ini(config, "log_cli_level", "log_level")   # by hand, per op
 ```
 
 Ninety lines of `pytest_addoption` and a local helper produce thirteen ini keys
-and twelve options, with the fallback chains open-coded at each use site. Adding
-`pyproject.toml` means a third mechanism.
+and thirteen options — twelve of them paired, plus one of each that stands alone
+— with the fallback chains open-coded at each use site. Adding `pyproject.toml`
+means a third mechanism.
 
 The duplication is not accidental. Each source needs different things: a parser
 must be told an option exists before it can parse it; a file needs a section and
@@ -91,13 +92,14 @@ be a bad idea, the rule changes here first and the reasoning is recorded in
 | [ConfigParts](config-parts.md) | Classes, fields, the field model, frozen semantics |
 | [Names](names.md) | The qualified path, `prefix`/`name_prefix`, `named()`, `-o`, collisions |
 | [Types](types.md) | Coercion, unions, `Literal`, where type checking happens |
-| [Sources](sources.md) | The source protocol, the precedence ladder, CLI parsing, file discovery |
-| [Lifecycle](lifecycle.md) | declare → resolve → get, the feedback passes, `addopts` |
+| [Sources](sources.md) | The source protocol, the precedence ladder, dialects, CLI parsing, file discovery |
+| [Lifecycle](lifecycle.md) | declare → resolve → get, the feedback passes, injected arguments |
 | [Merging](merging.md) | Deep merge, unknown keys, sub-config assembly, `from_parent` |
 | [Specs](specs.md) | What an option is, as data, in the library's vocabulary |
 | [Reporting](reporting.md) | Provenance and help — what the library tells the user |
+| [Diagnostics](diagnostics.md) | The warning and error set, and which one an input gets |
 | [Binding contract](binding-contract.md) | The core/host boundary, and conformance |
-| [Decisions](decisions.md) | D1–D13, core, with rationale and cost |
+| [Decisions](decisions.md) | D1–D17, core, with rationale and cost |
 | [Deferred](deferred.md) | Absent from the code, plus the open questions |
 
 Everything above is **core**: it holds for every host and for an application with
@@ -114,8 +116,8 @@ document:
 everything else refers back to them. Then [ConfigParts](config-parts.md) and
 [Names](names.md), which are what a user of the library actually touches. Then
 [Sources](sources.md), [Lifecycle](lifecycle.md) and [Merging](merging.md),
-which are how a value gets from a file to a field. [Reporting](reporting.md) and
-[Specs](specs.md) are self-contained.
+which are how a value gets from a file to a field. [Reporting](reporting.md),
+[Diagnostics](diagnostics.md) and [Specs](specs.md) are self-contained.
 
 Read [the binding contract](binding-contract.md) before anything under
 [pytest/](pytest/index.md) — it is what says which of the two you are looking
@@ -128,39 +130,46 @@ with it means amending that record rather than the code.
 ## Gap list
 
 Every rule the code does not yet satisfy, in one place. This is the difference
-between the design and `main`.
+between the design and `main`. **Break** marks a row that changes behaviour
+someone may be relying on; the rest are additive or corrective.
 
-| Gap | Status | Where | Decision |
-|---|---|---|---|
-| `name_prefix` missing from the nested file spelling | change | [names](names.md#the-qualified-path) | [D8](decisions.md#d8) |
-| Unknown keys judged per-part, not across the section | change | [names](names.md#unknown-keys-are-judged-across-the-section) | [D8](decisions.md#d8) |
-| `-o` addresses the structural path, not the flat name | change | [names](names.md#the-o-override-key) | [D1](decisions.md#d1) |
-| `-o` values report as CLI options | change | [reporting](reporting.md#overrides-report-as-overrides) | [D1](decisions.md#d1) |
-| An unrecognised `-o` key is silent | change | [names](names.md#the-o-override-key) | [D1](decisions.md#d1) |
-| Booleans have no `--no-` form | new | [sources](sources.md#cli-parsing) | [D2](decisions.md#d2) |
-| A value beginning with `-` is dropped | change | [sources](sources.md#cli-parsing) | [D2](decisions.md#d2) |
-| Unions take the first member unconditionally | change | [types](types.md#unions) | [D3](decisions.md#d3) |
-| `Literal` is unsupported | new | [types](types.md#literal) | — |
-| Typed sources are neither coerced nor checked | change | [types](types.md#values-from-typed-sources) | [D4](decisions.md#d4) |
-| `resolve()` does not reach a fixpoint | change | [lifecycle](lifecycle.md#the-passes-iterate-to-a-fixpoint) | [D5](decisions.md#d5) |
-| Backends disagree on option collisions | change | [names](names.md#collisions) | [D6](decisions.md#d6) |
-| No cross-backend conformance suite | new | [the binding contract](binding-contract.md#conformance) | [D6](decisions.md#d6) |
-| `config_source` / `addopts_field` / `bootstrap_only` ignored below the top level | change | [names](names.md#names-are-never-constructed-by-hand) | [D7](decisions.md#d7) |
-| `bootstrap_only` compares munged token strings | change | [lifecycle](lifecycle.md#the-injected-arguments-loop) | [D7](decisions.md#d7) |
-| `config_source` silently ignores non-`.toml` files | change | [sources](sources.md#config-file-discovery) | [D7](decisions.md#d7) |
-| `ConfigFileDiscoverySource` uses a raw name and private access | change | [sources](sources.md#config-file-discovery) | [D7](decisions.md#d7) |
-| `DeclaringSource` / `OriginAware` tested with `getattr` | change | [sources](sources.md#the-protocol) | — |
-| Origins recorded before unknown keys are pruned | change | [merging](merging.md#unknown-keys) | — |
-| Mutable defaults copied shallowly | change | [config parts](config-parts.md#configpart-and-subconfig) | — |
-| A `ConfigPart` nested in a `ConfigPart` fails obscurely | new | [config parts](config-parts.md#configpart-and-subconfig) | — |
-| There is no spec layer; the derivation is entangled with the source | new | [specs](specs.md) | [D9](decisions.md#d9) |
-| The store keeps only the winning value | change | [merging](merging.md#the-layered-store) | [D10](decisions.md#d10) |
-| No runtime layer; a late write cannot reach a fragment | new | [lifecycle](lifecycle.md#the-runtime-layer) | [D11](decisions.md#d11) |
-| Fragments imply no instance and have no lifetime | new | [lifecycle](lifecycle.md#plugin-instances-and-lifetime) | [D11](decisions.md#d11) |
-| Help is not rendered from specs | new | [reporting](reporting.md#help) | [D12](decisions.md#d12) |
-| Env exposure is all-or-nothing, with no policy | new | [sources](sources.md#environment-exposure) | [D13](decisions.md#d13) |
-| The injected-arguments rung is named for pytest | change | [sources](sources.md#the-precedence-ladder) | — |
-| No way to suppress a field's file spelling | new | [names](names.md#per-field-overrides) | — |
+| Gap | Status | Break | Where | Decision |
+|---|---|---|---|---|
+| `name_prefix` missing from the nested file spelling | change | ✓ | [names](names.md#the-qualified-path) | [D8](decisions.md#d8) |
+| Unknown keys judged per-part, not across the section | change | | [names](names.md#unknown-keys-are-judged-across-the-section) | [D8](decisions.md#d8) |
+| A part with no `prefix=` takes its class name as a file section | change | ✓ | [names](names.md#when-there-is-no-prefix) | — |
+| `-o` addresses the structural path, not the flat name | change | ✓ | [names](names.md#the-o-override-key) | [D1](decisions.md#d1) |
+| `-o` values report as CLI options | change | | [reporting](reporting.md#overrides-report-as-overrides) | [D1](decisions.md#d1) |
+| An unrecognised `-o` key is silent | change | | [names](names.md#the-o-override-key) | [D1](decisions.md#d1) |
+| `-o` is a post-merge fixup with no rung | new | | [sources](sources.md#the-two-rungs-above-the-command-line) | [D14](decisions.md#d14) |
+| Booleans have no `--no-` form | new | | [sources](sources.md#cli-parsing) | [D2](decisions.md#d2) |
+| A value beginning with `-` is dropped | change | ✓ | [sources](sources.md#cli-parsing) | [D2](decisions.md#d2) |
+| Unions take the first member unconditionally | change | ✓ | [types](types.md#unions) | [D3](decisions.md#d3) |
+| `Literal` is unsupported | new | | [types](types.md#literal) | — |
+| Typed sources are neither coerced nor checked | change | ✓ | [types](types.md#values-from-typed-sources) | [D4](decisions.md#d4) |
+| `EnvSource(parse_toml=)` conflates two dialects in one source | change | ✓ | [sources](sources.md#two-sources-two-dialects) | [D15](decisions.md#d15) |
+| Every field is environment-readable without opting in | change | ✓ | [sources](sources.md#exposure-is-opt-in) | [D13](decisions.md#d13) |
+| YAML is not a supported file format | new | | [sources](sources.md#yaml) | [D17](decisions.md#d17) |
+| `resolve()` does not reach a fixpoint | change | | [lifecycle](lifecycle.md#the-passes-iterate-to-a-fixpoint) | [D5](decisions.md#d5) |
+| Backends disagree on option collisions | change | | [names](names.md#collisions) | [D6](decisions.md#d6) |
+| No cross-backend conformance suite | new | | [the binding contract](binding-contract.md#conformance) | [D6](decisions.md#d6) |
+| `config_source` / `addopts_field` / `bootstrap_only` ignored below the top level | change | | [names](names.md#names-are-never-constructed-by-hand) | [D7](decisions.md#d7) |
+| `bootstrap_only` compares munged token strings | change | | [lifecycle](lifecycle.md#the-injected-arguments-loop) | [D7](decisions.md#d7) |
+| `config_source` silently ignores non-`.toml` files | change | | [sources](sources.md#config-file-discovery) | [D7](decisions.md#d7) |
+| `ConfigFileDiscoverySource` uses a raw name and private access | change | | [sources](sources.md#config-file-discovery) | [D7](decisions.md#d7) |
+| `DeclaringSource` / `OriginAware` tested with `getattr` | change | | [sources](sources.md#the-protocol) | — |
+| Origins recorded before unknown keys are pruned | change | | [merging](merging.md#unknown-keys) | — |
+| Mutable defaults copied shallowly | change | | [config parts](config-parts.md#configpart-and-subconfig) | — |
+| A `ConfigPart` nested in a `ConfigPart` fails obscurely | new | | [config parts](config-parts.md#configpart-and-subconfig) | — |
+| Warnings and errors are ad hoc; no shared base, three silent drops | change | ✓ | [diagnostics](diagnostics.md) | [D16](decisions.md#d16) |
+| Missing required fields raise a bare `TypeError` | change | ✓ | [config parts](config-parts.md#required-and-optional) | [D16](decisions.md#d16) |
+| There is no spec layer; the derivation is entangled with the source | new | | [specs](specs.md) | [D9](decisions.md#d9) |
+| The store keeps only the winning value | change | | [merging](merging.md#the-layered-store) | [D10](decisions.md#d10) |
+| No runtime layer or rung; a late write cannot reach a fragment | new | | [lifecycle](lifecycle.md#the-runtime-layer) | [D11](decisions.md#d11), [D14](decisions.md#d14) |
+| Fragments imply no instance and have no lifetime | new | | [lifecycle](lifecycle.md#plugin-instances-and-lifetime) | [D11](decisions.md#d11) |
+| Help is not rendered from specs | new | | [reporting](reporting.md#help) | [D12](decisions.md#d12) |
+| The injected-arguments rung is named for pytest | change | ✓ | [sources](sources.md#the-precedence-ladder) | — |
+| No way to suppress a field's file spelling | new | | [names](names.md#per-field-overrides) | — |
 
 Host policy is tracked separately, in
 [the pytest gap list](pytest/index.md#what-the-binding-predates) and
@@ -168,3 +177,44 @@ Host policy is tracked separately, in
 
 The rows without a decision are corrections with no design content — there is
 nothing to weigh, only work to do. The rest carry a cost that was argued.
+
+## Order of work
+
+The gap list says *what*; this says *in what order*, and why some rows cannot
+move. A step's **needs** are the steps whose absence would make it wrong, not
+merely inconvenient.
+
+| # | Step | Delivers | Needs |
+|---|---|---|---|
+| 1 | **Hand-built names** ([D7](decisions.md#d7)) | the five name-construction sites route through `_names.py`; markers work at every depth | — |
+| 2 | **Small corrections** | deep-copied defaults, `isinstance` protocol checks, the nested-`ConfigPart` error, one suffix→source map, the `injected` rename | — |
+| 3 | **Diagnostics** ([D16](decisions.md#d16)) | `ConfigError` / `ConfigWarning` and the set beneath them | 1 — every message names a field, and step 1 is what makes the name right |
+| 4 | **The ladder** ([D14](decisions.md#d14)) | `override(30)` and `runtime(40)`; `-o` becomes a source | — |
+| 5 | **Names** ([D8](decisions.md#d8), [D1](decisions.md#d1)) | the qualified path, unknown keys judged across the section, `-o` by flat name | 1, 3, 4 |
+| 6 | **CLI parsing** ([D2](decisions.md#d2)) | `--no-` forms; unconditional value consumption | 3 |
+| 7 | **Types** ([D3](decisions.md#d3), [D4](decisions.md#d4), [D15](decisions.md#d15), `Literal`) | left-to-right unions, checked typed values, split env dialects | 3 |
+| 8 | **Environment opt-in** ([D13](decisions.md#d13)) | `from_env`; no implicit exposure | 7 — the dialect split moves the same constructors |
+| 9 | **Fixpoint resolve** ([D5](decisions.md#d5)) | passes 2–5 iterate; `discover()` becomes implementable | 3 |
+| 10 | **Specs** ([D9](decisions.md#d9)) | `field_specs(T)`, host-free | 5, 7, 8 — a spec is spellings, and every spelling has to be settled first |
+| 11 | **Layered store** ([D10](decisions.md#d10)) | every source's value per path; provenance as a projection | 4, and the origins/pruning fix from step 2 |
+| 12 | **Runtime layer** ([D11](decisions.md#d11)) | late writes land at `runtime`, fragments rebuild | 4, 11 |
+| 13 | **Help from specs** ([D12](decisions.md#d12)) | one renderer, showing what registration calls cannot | 10 |
+| 14 | **Conformance suite** ([D6](decisions.md#d6)) | one suite, parameterised over bindings | 10, and everything it compares |
+| 15 | **Fragment lifetime** ([D11](decisions.md#d11)) | context-managed instances | 12 |
+| 16 | **YAML** ([D17](decisions.md#d17)) | a third file format | 2 for the suffix map; otherwise blocked on [its open questions](deferred.md#open-questions) |
+
+Three things this ordering makes visible:
+
+- **Steps 1–4 are the whole foundation**, and only one of them (the `injected`
+  rename) is breaking. Everything downstream either names a field, reports a
+  problem, or sorts a source.
+- **The breaking set lands between steps 5 and 8** — names, types and the
+  environment. Grouping them into one release is what keeps the number of
+  releases anyone has to read the changelog for down to one.
+- **Step 10 is the hinge.** Specs need every spelling settled, and help,
+  conformance and any second binding need specs. It is also
+  [the pytest binding's stage 1](pytest/evolution.md#stages), which is why it
+  cannot be reached by skipping the name work.
+
+The binding's [staged plan](pytest/evolution.md#stages) consumes steps 10, 11,
+12 and 15 as its stages 1, 3 and 7. Nothing else here is visible to a host.

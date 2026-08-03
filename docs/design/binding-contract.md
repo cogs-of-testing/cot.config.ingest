@@ -42,8 +42,9 @@ is something any application debugging a merge wants, so it is core.
 
 The inverse trap is more common: a general mechanism given a host's *name*. The
 precedence rung for arguments injected by configuration is a general idea;
-calling it `ADDOPTS` made it pytest's ([D2](decisions.md#d2) territory, corrected
-in [sources](sources.md#the-precedence-ladder)).
+calling it `ADDOPTS` made it pytest's, and put a pytest word in the ladder every
+other application reads (corrected in
+[sources](sources.md#the-precedence-ladder)).
 
 ## What a binding may decide
 
@@ -52,7 +53,7 @@ A binding owns its host's policy entirely. It may decide:
 | Area | Examples |
 |---|---|
 | **Which sources exist, and where on the ladder** | a host's own file dialects; whether its injected-argument mechanism sits above or below the environment |
-| **Which spellings a field gets** | suppressing the environment spelling by default; suppressing file keys for command-line-only options |
+| **Which spellings a field gets** | suppressing file keys for command-line-only options; declining to add `from_env` to an option it converts |
 | **Legacy accessors** | whether they exist, what they report, and where they deliberately diverge from the host's current behaviour |
 | **Help rendering and errors** | which formatter is used, and whether the host adopts a new format |
 | **File layout and section naming** | which tables in which files, and which are compatibility namespaces |

@@ -7,6 +7,13 @@ It is what [bindings](binding-contract.md) bind, what [help](reporting.md#help)
 renders, and what the [conformance suite](binding-contract.md#conformance)
 compares.
 
+*Pure function of a ConfigPart* is a constraint, not a description. Every
+spelling in the record has to be answerable from the class alone — which is why
+[environment exposure](sources.md#exposure-is-opt-in) is a marker on the field
+and not a policy on the source. A spec that needed to know which sources exist
+would be a different value for each manager, and neither help nor conformance
+could compare it to anything.
+
 ## The record
 
 ```python
@@ -18,7 +25,7 @@ class FieldSpec:
     negative: str | None        # "--no-log-cli", booleans only
     short: str | None           # "-v"
     file_key: str | None        # None when the field has no file spelling
-    env_key: str | None         # None unless the field opts in
+    env_key: str | None         # None unless the field carries from_env
     annotation: Any
     default: Any
 
@@ -52,21 +59,22 @@ derivation wherever options get registered:
 
 ## The vocabulary is the library's
 
-`flag`, `repeatable`, `counts` and `values` describe the *field*. A binding maps
-them to whatever its host calls them, inside the binding, as a function rather
-than a stored record — so there is exactly one translation step and it is
-per-host.
+`flag`, `repeatable`, `counts`, `optional`, `values` and `accumulates_to`
+describe the *field*: what it does when it appears, whether appearing twice means
+something, and whether its values are a closed set. They are answerable by
+reading the annotation, with no parser in the room.
 
-```
-flag=True                ->  argparse action="store_true"
-repeatable=True          ->  argparse action="append"
-counts=True              ->  argparse action="count"
-values=(...)             ->  argparse choices=(...)
-accumulates_to=X         ->  argparse action="store_const", const=X
-optional=True            ->  argparse nargs="?"
-```
+A host's own words for the same ideas — the action names, the type names, the
+attribute a parser stores under — are that host's, and the mapping onto them
+lives in that [binding](binding-contract.md), as a function over specs rather
+than a field on one. There is then exactly one translation step per host, in one
+place, and **the core never learns any host's vocabulary**
+([the contract](binding-contract.md#vocabulary-stops-at-the-boundary)).
 
-None of those words appear in the core.
+That table used to be printed here, in argparse's terms, immediately above a
+sentence claiming none of those words appear in the core. It was the residue of a
+spec layer designed inside a pytest plan; it now lives on the binding side, where
+its second copy already was.
 
 ## Derivation over declaration
 
@@ -82,7 +90,7 @@ where nothing can be inferred.
 | `values` | `Literal[...]` | – |
 | `long` / `short` / `flat` | the [qualified path](names.md#the-qualified-path), `named()`, `short()` | – |
 | `file_key` | the flat name, unless suppressed | `no_ini` |
-| `env_key` | the flat name, only when opted in | required |
+| `env_key` | the flat name, only when the field opts in | `from_env`, required |
 | `aliases` | `named()` plus declared legacy spellings | – |
 | `counts` | **nothing** — `-j 4` and `-v -v` are both `int` with a short option | required |
 | `accumulates_to` | **nothing** — the constant is not in the type | required |

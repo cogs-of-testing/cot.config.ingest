@@ -1,16 +1,25 @@
 # Inspiration
 
-## inspiring use case
+Why this library exists, and what the itch was.
 
-pytest as of 2024 is suffering from the design of the configuration system
-as cli args and ini options are handled differently.
+The sketch on this page came first; the [design](../design/index.md) is what it
+turned into. The proposed API below has been rewritten to be the one that
+actually exists — an earlier version of this page showed `Config`, `field()` and
+`sub_config()`, names that were never built, which is a rot the
+[README's own tests](https://github.com/cogs-of-testing/cot.config.ingest/blob/main/testing/test_readme.py)
+exist to prevent.
+
+## The inspiring use case
+
+pytest as of 2024 suffers from the design of its configuration system: CLI args
+and ini options are handled by two different mechanisms.
 
 Additionally, adding correct support for `pyproject.toml` data seems daunting.
 
-### problem example
+### The problem
 
-the following code snippet sets up the configuration options and cli arguments for the logging plugin
-
+This is real pytest — the code that sets up configuration options and CLI
+arguments for the logging plugin:
 
 ```python
 
@@ -121,58 +130,97 @@ def pytest_addoption(parser: Parser) -> None:
 
 ```
 
+Thirteen ini keys, thirteen options, ninety lines and a local helper — and the
+fallback from `log_cli_format` to `log_format` open-coded at every read site with
+`get_option_ini`.
 
-### propose example
+### The same thing, declared once
+
+This is the declaration the library actually accepts. It is lifted from
+`testing/test_pytest_logging.py`, the [acceptance test](../design/index.md#the-yardstick),
+so it is executed on every run rather than being an illustration:
+
 ```python
-from pathlib import Path
-from typing import Literal
+from typing import Annotated
 
 from pytest import Parser
-from cot.config import Config, from_parent, sub_config, field
 
+from cot.config import ConfigPart, SubConfig, from_parent, help, named, no_cli
 
 DEFAULT_LOG_FORMAT = "%(levelname)-8s %(name)s:%(filename)s:%(lineno)d %(message)s"
 DEFAULT_LOG_DATE_FORMAT = "%H:%M:%S"
 
 
-class LogBaseConfig(Config):
-    level: int | str | None = field(from_parent, default=None, help=(
-            "Level of messages to catch/display."
-            " Not set by default, so it depends on the root/parent log handler's"
-            ' effective level, where it is "WARNING" by default.'
-        ))
-    date_format: str = field(from_parent, default=DEFAULT_LOG_DATE_FORMAT)
-    format: str = field(from_parent, default=DEFAULT_LOG_FORMAT,
-                        help="Log format used by the logging module")
+class LogOutputConfig(SubConfig):
+    """Settings shared by every log output.
 
-class LogCliConfig(LogBaseConfig):
-    enable: bool = field(help='Enable log display during test run (also known as "live logging")')
+    `from_parent` is what makes `log_cli_level` fall back to `log_level`.
+    """
 
-
-class LogFileConfig(LogCliConfig):
-    path: Path | None = field(default=None)
-    mode : Literal["w", "a"] = field(default="w")
+    level: Annotated[str | None, from_parent, help("level of messages to catch")] = None
+    format: Annotated[str, from_parent, help("log format")] = DEFAULT_LOG_FORMAT
+    date_format: Annotated[str, from_parent, help("log date format")] = (
+        DEFAULT_LOG_DATE_FORMAT
+    )
 
 
-class LogingPluginConfig(Config, LogBaseConfig, prefix="log"):
-    cli: LogCliConfig = sub_config(primary=LogBaseConfig.enable)
-    file: LogFileConfig = sub_config(primary=LogCliConfig.path)
-    auto_indent: bool | int | None = field(default=None)
-    disable: list[str] = field(default_factory=list)
+class LogCliConfig(LogOutputConfig):
+    # pytest calls this `log_cli`, and it is ini-only: live logging is switched
+    # on from the command line with --log-cli-level instead.
+    enabled: Annotated[bool, named("log_cli"), no_cli, help("enable live logs")] = False
 
 
-def pytest_addoption(parser: Parser):
-    parser.add_config(LogingPluginConfig)
+class LogFileConfig(LogOutputConfig):
+    # Structurally `file.path`, but pytest calls it `log_file`.
+    path: Annotated[str | None, named("log_file"), help("path to log file")] = None
+    mode: Annotated[str, named("log_file_mode"), help("log file open mode")] = "w"
 
 
+class LoggingConfig(LogOutputConfig, ConfigPart, prefix="pytest", name_prefix="log"):
+    auto_indent: Annotated[str | None, help("auto-indent multiline messages")] = None
+    logger_disable: Annotated[
+        list[str], named("log_disable"), help("disable a logger by name")
+    ] = []
+
+    cli: LogCliConfig
+    file: LogFileConfig
 
 
+def pytest_addoption(parser: Parser) -> None:
+    parser.add_config(LoggingConfig)
 ```
 
+What the sketch got right and what it got wrong, both worth recording:
 
-### open questions
+- **Markers on fields, not a parallel schema.** The sketch's `field(from_parent,
+  help=...)` is `Annotated[T, from_parent, help(...)]` — the annotation *is* the
+  schema ([ConfigParts](../design/config-parts.md#markers)).
+- **Inheritance for the shared settings.** `LogBaseConfig` became
+  `LogOutputConfig`, and `from_parent` on its fields is what replaces every
+  hand-written `get_option_ini` fallback
+  ([the cascade](../design/merging.md#the-from_parent-cascade)).
+- **`sub_config(primary=...)` did not survive.** The sketch tried to nominate one
+  field of a sub-config as the one the parent's own name refers to — `log_file`
+  meaning `file.path`. That is a naming problem, not a structural one, and it is
+  solved by [`named()`](../design/names.md#per-field-overrides) without giving
+  sub-configs a second kind of field.
+- **`prefix` turned out to be two knobs.** The sketch's `prefix="log"` is doing
+  the job of `name_prefix=` — pytest's options live in the `[pytest]` section but
+  are individually called `log_*`, and
+  [one knob cannot say both](../design/names.md#prefix-versus-name_prefix).
 
-- [ ] mapping of prefixes/underscores and sbu-objects
-- [ ] mapping of ini options
-- [ ] ingestion of backward compatibility fields
-- [ ] toml/yaml behaviours
+Two of the sketch's types are still ahead of the code. `mode` wants
+`Literal["w", "a"]` and `auto_indent` wants `bool | int | None`; both are
+[specified](../design/types.md#literal) and neither is
+[built yet](../design/index.md#gap-list), which is why the declaration above
+softens them to `str` and `str | None`.
+
+## The open questions, since answered
+
+| Question | Where it landed |
+|---|---|
+| mapping of prefixes/underscores and sub-objects | [the qualified path](../design/names.md#the-qualified-path) — one path, rendered per source |
+| mapping of ini options | [both spellings in files](../design/names.md#both-spellings-in-files) — flat keys and nested tables reach the same field |
+| ingestion of backward compatibility fields | [ingest](../design/pytest/evolution.md#binding-the-specs) — host options become specs and join the store |
+| toml behaviours | a [typed-dialect source](../design/sources.md#dialect-is-a-property-of-the-source): values are checked, not coerced |
+| yaml behaviours | [admitted as a format](../design/sources.md#yaml), and deliberately still open |

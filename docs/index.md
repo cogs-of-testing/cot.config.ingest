@@ -21,8 +21,13 @@ The library uses dataclass-like `ConfigPart` classes to define configuration str
 - **Value cascade** from parent config to sub-configs via `from_parent`
 - **Bootstrap feedback** — config files and `addopts` discovered from earlier stages
 
-> Not implemented yet: plugin discovery, list append/reset merge semantics, change
-> notification and hot reload. Those appear in the design documents as intent only.
+> Not implemented yet: plugin discovery, list append/reset merge semantics, YAML
+> files, change notification and hot reload. Those appear in the design documents
+> as intent only.
+>
+> Changing: the environment reads **every** field today, and the design makes it
+> [opt-in per field](design/sources.md#exposure-is-opt-in). Do not build on the
+> current behaviour.
 
 ## Quick Example
 
@@ -116,7 +121,7 @@ pytest --timing-report --timing-terminal-threshold=1.0
 Every rule is marked **[built]**, **[change]** or **[new]**, so the design and
 the gap between it and the code are one artifact rather than two that drift
 apart. The [gap list](design/index.md#gap-list) collects every outstanding rule
-in one table.
+in one table, and [order of work](design/index.md#order-of-work) sequences them.
 
 | Document | What it settles |
 |----------|-------------|
@@ -127,11 +132,11 @@ in one table.
 | [Sources](design/sources.md) | The source protocol, the precedence ladder, CLI parsing |
 | [Lifecycle](design/lifecycle.md) | declare → resolve → get, and the feedback passes |
 | [Merging](design/merging.md) | Deep merge, unknown keys, `from_parent` cascade |
-| [Reporting](design/reporting.md) | Provenance and help |
 | [Specs](design/specs.md) | What an option is, as data, in the library's vocabulary |
 | [Reporting](design/reporting.md) | Provenance and help |
+| [Diagnostics](design/diagnostics.md) | The warning and error set, and which one an input gets |
 | [Binding contract](design/binding-contract.md) | The core/host boundary, and conformance |
-| [Decisions](design/decisions.md) | D1–D13, core, with rationale and cost |
+| [Decisions](design/decisions.md) | D1–D17, core, with rationale and cost |
 | [Deferred](design/deferred.md) | Absent from the code, plus the open questions |
 
 Those are **core** — true for every host and for an application with no host.

@@ -44,9 +44,11 @@ Because `str` parses everything, a union containing `str` should list it last.
 ## Literal
 
 `Literal["w", "a"]` declares both the type and the permitted values. A value
-outside the set is an error naming the field and the choices; the choices appear
-in [`format_help()`](reporting.md#help) and are passed to the host adapter
-(`choices=` for pytest). **[new]**
+outside the set is a [`ConfigValueError`](diagnostics.md#errors) naming the field
+and the permitted values; those values appear in
+[`format_help()`](reporting.md#help) and reach a host as
+[`FieldSpec.values`](specs.md#the-record), which its binding renders in whatever
+its own parser calls a closed set. **[new]**
 
 `log_file_mode` is `choices=["w", "a"]` in real pytest, and the acceptance test
 currently declares it `str`. Until this exists the
@@ -54,9 +56,16 @@ currently declares it `str`. Until this exists the
 
 ## Values from typed sources
 
-TOML and the host adapter deliver values that are *already* typed. Those are
-checked against the declared annotation and rejected on mismatch; they are not
-run through `coerce`. **[change]** — they are neither checked nor coerced today:
+Some sources deliver values that are *already* typed: TOML and YAML files,
+[`TomlEnvSource`](sources.md#two-sources-two-dialects), and a host adapter
+handing back what its own parser produced. Those are checked against the declared
+annotation and rejected on mismatch; they are not run through `coerce`.
+
+Which of the two a source gets is decided by
+[its dialect](sources.md#dialect-is-a-property-of-the-source), once, rather than
+by inspecting each value to guess whether it has been interpreted already.
+
+**[change]** — typed values are neither checked nor coerced today:
 
 ```toml
 [app]
@@ -66,8 +75,9 @@ port = "not-a-number"    # int field  -> instance holds "not-a-number"
 
 The check belongs in `_FrozenFromKwargsMixin.__init__`, which already walks every
 field, so it covers [direct construction](config-parts.md#configpart-and-subconfig)
-as well as the merge path ([I6](invariants.md#i6)). Rationale in
-[D4](decisions.md#d4).
+as well as the merge path ([I6](invariants.md#i6)). A failure is a
+[`ConfigValueError`](diagnostics.md#errors) naming the field, the declared type,
+the value and its origin. Rationale in [D4](decisions.md#d4).
 
 Type *checking* is not type *validation*: range checks, cross-field constraints
 and "is this file readable" remain [out of scope](deferred.md).

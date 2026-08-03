@@ -85,7 +85,8 @@ honoured on top-level fields
 
 A misspelled key, an option with no value, an `-o` key that addresses nothing:
 each produces a warning or an error naming the thing that went wrong. Programmer
-error raises.
+error raises, at `declare()`. Which of the three an input gets, and what the
+message must contain, is [diagnostics](diagnostics.md).
 
 **[change]** — several silent drops remain: the
 [`-o` key](names.md#the-o-override-key), a
@@ -95,4 +96,5 @@ error raises.
 A corollary that is easy to miss: a warning that fires on *correct*
 configuration is as much a violation as a silent drop, because it trains the
 user to stop reading warnings. See
-[unknown keys](names.md#unknown-keys-are-judged-across-the-section).
+[unknown keys](names.md#unknown-keys-are-judged-across-the-section) for the case
+that does this today.

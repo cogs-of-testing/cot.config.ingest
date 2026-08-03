@@ -18,7 +18,9 @@ The core capabilities the plan depends on live on the other side of
 | runtime mutation and rebuild | [The runtime layer](../lifecycle.md#the-runtime-layer) |
 | fragments implying instances | [Plugin lifetime](../lifecycle.md#plugin-instances-and-lifetime) |
 | help rendered from specs | [Help](../reporting.md#help) |
-| environment exposure policy | [Sources](../sources.md#environment-exposure) |
+| opt-in environment exposure | [Sources](../sources.md#exposure-is-opt-in) |
+| the warning and error set | [Diagnostics](../diagnostics.md) |
+| the `override` and `runtime` rungs | [The ladder](../sources.md#the-two-rungs-above-the-command-line) |
 
 None of those are pytest's. What follows is.
 
@@ -68,6 +70,8 @@ aliases               ->  addini(aliases=...)
 That table is the whole of what this binding knows that the core does not, and
 it is why the vocabulary translation is
 [a function in the binding rather than a field on the spec](../binding-contract.md#vocabulary-stops-at-the-boundary).
+It is also the **only** copy of the mapping: [specs](../specs.md) carried a
+second one for a while, in argparse's words, in a core document.
 
 **Ingest** is the reverse: existing `parser.addoption(...)` / `addini(...)` calls
 become specs and their values join the store. Without it the legacy view would be
@@ -105,7 +109,7 @@ native types and their values are **checked**.
 |---|---|
 | `config.getoption(name)` | the CLI **and injected-argument** layers for `flat == name`, else the declared default |
 | `config.getoption("--log-cli-level")` | same, after option-string → `flat` resolution |
-| `config.getini(name)` | the file layers for `flat == name` or an alias, else the declared default |
+| `config.getini(name)` | the file **and override** layers for `flat == name` or an alias, else the declared default |
 | `config.option.<dest>` | the same as `getoption`, writable via the [runtime layer](../lifecycle.md#the-runtime-layer) ([P3](decisions.md#p3)) |
 | `get_option_ini(config, *names)` | the existing helper, unchanged, over the two above |
 
@@ -114,6 +118,12 @@ returns today: it splices `addopts` into argv before parsing. The
 [ladder](../sources.md#the-precedence-ladder) still holds them apart internally,
 so provenance can say `addopts --log-level` while the legacy accessor gives the
 flattened answer. Faithful on the outside, honest on the inside.
+
+`getini` reads the [`override` rung](../sources.md#the-two-rungs-above-the-command-line)
+as well as the file layers, because `-o` means "override an ini setting" in
+pytest and must keep meaning it. That the rung sits above `cli` is invisible to
+this view — the two accessors read different layer sets, so neither has to
+know the order.
 
 This is a property of *this view*, not of the ladder. A binding without a legacy
 accessor reports the layers separately and nothing is lost.

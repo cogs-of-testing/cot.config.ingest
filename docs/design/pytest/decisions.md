@@ -142,20 +142,29 @@ standalone application.
 
 ## P7
 
-**Only opted-in fields get environment variables.**
+**No pytest option is environment-settable unless it is converted and marked.**
 ([evolution](evolution.md#stages))
 
-The core gives every field an env spelling by default. Carrying that into pytest
-would make roughly two hundred options environment-settable in one step — a real
-behaviour change, a CI surprise, and a mild attack surface, none of it requested.
+This decision used to select a marked-fields-only policy from a core that
+exposed every field by default. [D13](../decisions.md#d13) now makes opt-in the
+core rule, so there is nothing left to select — the binding gets the behaviour it
+needs by doing nothing, which is the right outcome for a rule that was never
+pytest-specific in the first place.
 
-This binding selects the marked-fields-only policy that [D13](../decisions.md#d13)
-provides. `PYTEST_ADDOPTS` stays what it is: a hand-wired injected-arguments
-source at its own rung.
+What remains is this binding's own: converting an option is *not* the moment to
+give it an environment spelling. Roughly two hundred options become
+environment-settable in one step otherwise — a real behaviour change, a CI
+surprise, and a mild attack surface, none of it requested. `from_env` is added
+per option, deliberately, by someone who wants it.
 
-*Cost:* a pytest option is not environment-settable unless someone says so,
-which is a smaller capability than the core offers. That asymmetry is deliberate
-and is the binding's to make.
+`PYTEST_ADDOPTS` is untouched by any of this: it stays a hand-wired
+injected-arguments source at
+[its own rung](../sources.md#the-precedence-ladder), not an env spelling of a
+field.
+
+*Cost:* none, now that the core agrees. The entry stays because "converted" and
+"environment-settable" being separate steps is a policy someone will otherwise
+collapse during [stage 8](evolution.md#stages).
 
 ## P8
 
