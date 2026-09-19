@@ -9,69 +9,56 @@ or another host.
 
 | Document | What it settles |
 |---|---|
-| this page | the binding as it is today |
+| this page | the binding |
 | [Evolution](evolution.md) | the staged plan to replace pytest's config layer |
 | [Decisions](decisions.md) | P1 to P8, pytest policy with rationale and cost |
 
 ## Division of labour
 
-`cot/config/pytest_plugin.py` monkeypatches pytest, adding
-`Parser.add_config`, `Config.get_config` and `Config.explain_config`. The patch
-is additive only: no option, ini key, hook or behaviour of pytest's is replaced.
-**[built]**, and **[change]**: it is replaced by importable
-`add_config(parser, T)` and `get_config(config, T)` functions
-([P1](decisions.md#p1)).
+Two importable, typed functions in `cot.config.pytest_binding`:
+`add_config(parser, T)` and `get_config(config, T)`. Nothing is patched onto
+pytest, nothing is auto-enabled, and a plugin that does not import them is
+untouched ([P1](decisions.md#p1)).
 
 pytest keeps argument parsing; the library supplies the structure:
 
-- **declare**: each leaf field becomes a `parser.addoption` and/or
-  `parser.addini`, named by [the qualified path](../names.md#the-qualified-path).
-  The derivation belongs to the core as [specs](../specs.md); this binding is a
-  loop over them that translates into argparse's vocabulary.
-- **load**: values come back through `config.getoption` then `config.getini`
-  and are reassembled into the nested shape, where defaults and the
-  [`from_parent` cascade](../merging.md#the-from_parent-cascade) apply.
+- **declare**: `add_config` declares `T` with a manager kept in
+  `Config.stash` and runs the forward binder, the `bind()` of a
+  [binding source](../sources.md#the-protocol): a loop over
+  [`field_specs(T)`](../specs.md) that translates each spec into
+  `parser.addoption` and `parser.addini` calls. The translation table is in
+  [Evolution](evolution.md#binding-the-specs) and it is the only copy.
+- **load**: the same source, at the host's rung, reads each spec's value back
+  through `config.getoption` and `config.getini` and yields readings, so the
+  [store](../merging.md#the-layered-store), the
+  [`from_parent` cascade](../merging.md#the-from_parent-cascade) and
+  provenance are the core's.
 
-**[built]**
+`get_config(config, T)` resolves the manager on first use and returns the
+fragment.
 
-## Activation
+## What the binder emits
 
-A `pytest11` entry point, patching at import time. A conftest-level
-`pytest_plugins = [...]` would be too late, because that conftest's own
-`pytest_addoption` runs before its plugin list is processed. Plugins loaded
-with `-p` load before entry points and must call `install()` themselves; it is
-idempotent. **[built]**
+| spec | pytest call |
+|---|---|
+| each [CLI form](../specs.md#cli-forms) | one `addoption(...)` with `dest=flat`; a form with a constant uses `store_const` |
+| `file_key` | `addini(file_key, type=..., default=..., help=...)`, with the ini type chosen from the annotation: `bool`, `int`, `float`, `paths`, `linelist`, `args` or `string` |
+| `aliases` | `addini(..., aliases=aliases)` |
+| `values` | `choices=` |
 
-Auto-enabling means the patch reaches every environment the package lands in,
-including as a transitive dependency. That is a trade for a proof of concept
-and not how a stable release should behave. See [P1](decisions.md#p1).
+A `getini` value comes back already typed for the ini types pytest knows, so
+the source is a typed-dialect source for those keys and a string-dialect one
+for `string`; it says which per reading.
 
 ## Collisions
 
-The binding raises `ConfigLifecycleError` when pytest already owns a CLI
-option, naming the field and pointing at `named()`, `no_cli` and
-`name_prefix`. **[built]**
+The binding raises [`ConfigCollisionError`](../diagnostics.md#errors) when
+pytest already owns a CLI option, naming the field and pointing at `named()`,
+`no_cli` and `name_prefix`, exactly as the native parser does
+([collisions](../names.md#collisions)).
 
 An ini key pytest already declares is adopted, never clobbered: the existing
-help and type survive and the value is read. **[built]**
-
-The native ladder disagrees with this binding about collisions: it silently
-shares the registration instead of raising. That divergence is a core bug. See
-[collisions](../names.md#collisions) and [D6](../decisions.md#d6).
-
-## What the binding predates
-
-The proof of concept was written against an earlier pytest. Three pieces of
-current surface it does not use, all cheap to adopt
-([stage 2](evolution.md#stages)):
-
-| pytest surface | What the binding does instead |
-|---|---|
-| `addini(aliases=...)` | nothing; [`named()`](../names.md#per-field-overrides) and legacy spellings have no route to pytest |
-| `int` / `float` / `paths` / `pathlist` / `args` ini types | collapses every non-bool, non-list field to `string` |
-| `Config.stash` | reaches into the private `config._parser` |
-
-**[change]**
+help and type survive and the value is read.
 
 ## The example plugin
 
@@ -85,7 +72,6 @@ pytest -p cot.config.example_plugin --timing-report --timing-threshold=0.5
 
 Everything it adds lives under `timing_` and `--timing-*`, a namespace pytest
 does not use. `testing/test_example_plugin.py` pins that it clobbers nothing.
-**[built]**
 
 It collapses to a declaration plus a context manager once
 [plugin lifetime](../lifecycle.md#plugin-instances-and-lifetime) lands.

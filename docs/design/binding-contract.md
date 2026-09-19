@@ -16,13 +16,12 @@ accommodate one, or carry a vocabulary borrowed from one.
 Two consequences, both testable:
 
 - **No core module may reference a host.** If expressing a host's policy needs
-  a change to `_names.py`, `_fields.py`, `_coerce.py` or the manager, that
+  a change to `_names.py`, `_fields.py`, the registry or the manager, that
   policy is in the wrong place, or the core is missing a general capability,
   which requires a core decision.
 - **No normative core document may cite a binding document.** `pytest/` may
-  cite `names.md`; `names.md` may not cite `pytest/`. The [index](index.md) and
-  its [gap list](index.md#gap-list) are maps rather than normative text, and
-  are exempt.
+  cite `names.md`; `names.md` may not cite `pytest/`. The [index](index.md) is
+  a map rather than normative text, and is exempt.
 
 ## The test for which side a rule belongs on
 
@@ -38,9 +37,18 @@ what each source said" is something any application debugging a merge wants,
 so it is core.
 
 The inverse trap is a general mechanism given a host's name. The precedence
-rung for arguments injected by configuration is a general idea; calling it
-`ADDOPTS` put a pytest word in the ladder every other application reads
-(corrected in [sources](sources.md#the-precedence-ladder)).
+rung for arguments injected by configuration is a general idea; it is called
+`injected`, not `addopts`, so that no pytest word sits in the ladder every
+other application reads.
+
+## What a binding is made of
+
+A binding is a [`BindingSource`](sources.md#the-protocol) and the loop inside
+its `bind()`. The loop translates each [spec](specs.md) into the host's
+registration calls; `load()` reads the host's parsed values back and yields
+[readings](sources.md#the-protocol). Everything else, the index, the store,
+the cascade, conversion and provenance, is the core's, and a binding that
+finds itself reimplementing one of them has found a missing core capability.
 
 ## What a binding may decide
 
@@ -49,7 +57,7 @@ rung for arguments injected by configuration is a general idea; calling it
 | **Which sources exist, and where on the ladder** | a host's own file dialects; whether its injected-argument mechanism sits above or below the environment |
 | **Which spellings a field gets** | suppressing file keys for command-line-only options; declining to add `from_env` to an option it converts |
 | **Legacy accessors** | whether they exist, what they report, and where they deliberately diverge from the host's current behaviour |
-| **Help rendering and errors** | which formatter is used, and whether the host adopts a new format |
+| **Help rendering and errors** | which formatter is used, whether the host adopts a new format, whether [strict mode](diagnostics.md#strict-mode) is the default |
 | **File layout and section naming** | which tables in which files, and which are compatibility namespaces |
 | **Migration policy** | ingest, conversion order, what un-migrated options look like |
 
@@ -89,13 +97,11 @@ argparse's limitations on the way through.
 Every binding must satisfy one shared conformance suite, parameterised over
 bindings, covering name derivation, the
 [`from_parent` cascade](merging.md#the-from_parent-cascade), collision policy,
-type handling, unknown keys, and provenance kind. **[new]**
+type handling, unknown keys, and provenance kind.
 
 A binding conforms when it binds the same [specs](specs.md) to its host and
 produces the same answers for everything the invariants cover, while remaining
 free to differ on everything in
-[what a binding may decide](#what-a-binding-may-decide).
-
-Today the [yardstick](index.md#the-yardstick) has two implementations that
-each only ask their own backend what it does, so divergence is invisible by
-construction. Rationale in [D6](decisions.md#d6).
+[what a binding may decide](#what-a-binding-may-decide). The native parser is
+the first backend, so the suite has two before a second host exists.
+Rationale in [D6](decisions.md#d6).

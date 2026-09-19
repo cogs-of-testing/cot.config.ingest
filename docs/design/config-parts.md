@@ -1,12 +1,12 @@
 # ConfigParts
 
-The data model: the classes a user writes, and the field model everything else
-reads them through.
+The data model: the class a user writes, and the field model everything else
+reads it through.
 
-## ConfigPart and SubConfig
+## One class, two roles
 
 ```python
-class LogCliConfig(SubConfig):
+class LogCliConfig(ConfigPart):
     level: Annotated[str | None, from_parent] = None
     enabled: bool = False
 
@@ -15,40 +15,44 @@ class LoggingConfig(ConfigPart, prefix="pytest", name_prefix="log"):
     cli: LogCliConfig
 ```
 
-`ConfigPart` is a top-level unit, the thing a plugin declares and a host
-retrieves. `SubConfig` is a nested section inside one. They share all
-construction behaviour. The distinction is structural, and it is what
-`FieldInfo.is_sub_config` reports.
+There is one class. A ConfigPart handed to `manager.declare()` is a **root**:
+the unit a plugin declares and a host retrieves. A ConfigPart that is the type
+of another part's field is **nested**: a section inside its parent, positioned
+by its path. The same class may play both roles in different declarations,
+because a field's identity is its path within the root ([I1](invariants.md#i1))
+and a class carries no position of its own. `FieldInfo.is_nested` reports
+which fields hold a part.
 
-A `ConfigPart` used as a nested field is a
+`prefix=`, `name_prefix=` and `from_env=` are class keywords that describe a
+root. A nested part carrying any of them is a
 [`ConfigDeclarationError`](diagnostics.md#errors) at `declare()`, naming the
-field and both classes. **[new]**: today it produces
-`TypeError: Outer missing required field(s): inner` at build time.
+field and the keyword: the keyword would have no effect, and its author
+expected one. Rationale in [D30](decisions.md#d30).
 
-Both are:
+Instances in either role are:
 
-- **keyword-only**, with no positional construction **[built]**
-- **frozen**: `__setattr__` and `__delattr__` raise **[built]**
+- **keyword-only**, with no positional construction
+- **frozen**: `__setattr__` and `__delattr__` raise
 - **materialised**: defaults are written into the instance `__dict__`, so
   equality, `repr` and [`explain()`](reporting.md#the-provenance-api) do not
-  depend on whether a value was passed or inherited **[built]**
+  depend on whether a value was passed or inherited
 - **hashable**: list, dict and set values are frozen structurally for
-  `__hash__` **[built]**
+  `__hash__`
 
-A mutable class-level default is copied per instance. The copy is deep, so a
-`list[list[str]]` default is not shared through its inner lists. **[change]**:
-the copy is shallow today.
+A mutable class-level default is deep-copied per instance, so a
+`list[list[str]]` default is not shared through its inner lists.
 
 `@dataclass_transform(eq_default=True, kw_only_default=True, frozen_default=True)`
-gives type checkers the right synthesised `__init__`. **[built]**
+gives type checkers the right synthesised `__init__`.
 
-Construction is also where type checking belongs. See
-[types](types.md#values-from-typed-sources).
+Construction is where required fields are enforced and where a directly
+constructed instance is type-checked
+([types](types.md#construction-checks)).
 
 ## Fields
 
 Type annotations are required. A class attribute without an annotation is not a
-field. **[built]**
+field.
 
 The field model in `_fields.py` is the single source of truth about a class's
 shape. `fields_of(cls)` walks the MRO, resolves annotations with
@@ -63,18 +67,18 @@ shape. `fields_of(cls)` walks the MRO, resolves annotations with
 | `default` | the class-level default, or `MISSING` |
 | `markers` | the `Annotated` extras, in declaration order |
 | `owner` | the MRO class that declared it |
-| `is_sub_config` | whether `type` is a `SubConfig` subclass |
+| `is_nested` | whether `type` is a `ConfigPart` subclass |
 
 No other module may re-derive this. A `get_origin(x) is Annotated` loop outside
-`_fields.py` is a bug. **[built]**
+`_fields.py` is a bug.
 
 Results are cached per `(cls, recurse)` in a `WeakKeyDictionary`, so classes
-defined inside test functions do not leak. **[built]**
+defined inside test functions do not leak.
 
-Inheritance stays simple: sub-configs pick up fields via `__mro__`, base classes
+Inheritance stays simple: parts pick up fields via `__mro__`, base classes
 first. Nothing beyond what the acceptance test needs is supported, which is
-`LogCliConfig(LogOutputConfig)` and `LoggingConfig(LogOutputConfig, ConfigPart)`.
-**[built]**
+`LogCliConfig(LogOutputConfig)` and
+`LoggingConfig(LogOutputConfig, ConfigPart, ...)`.
 
 ## Markers
 
@@ -95,31 +99,27 @@ alone and the marker is lost. A union takes `Annotated[...]` or parentheses:
 | `named("...")` | replaces the derived flat name | [names](names.md#per-field-overrides) |
 | `formerly("...")` | declares a legacy flat spelling; a value arriving under it warns | [names](names.md#per-field-overrides) |
 | `env_named("...")` | pins an absolute environment variable name | [names](names.md#per-field-overrides) |
-| `no_cli` | suppresses the CLI option, keeps ini and env | [names](names.md#per-field-overrides) |
-| `short("v")` | adds a short option | [names](names.md#per-field-overrides) |
+| `from_env` | gives the field, or a nested part's whole subtree, an environment spelling | [sources](sources.md#exposure-is-opt-in) |
+| `no_cli` | suppresses the CLI option, keeps file and env | [names](names.md#per-field-overrides) |
+| `no_ini` | suppresses the file spelling, keeps CLI and env | [names](names.md#per-field-overrides) |
+| `short("v")` | adds a short option to the field's own CLI form | [names](names.md#per-field-overrides) |
+| `form("--exitfirst", short="x", contributes=1)` | adds a further CLI form, optionally supplying a constant | [specs](specs.md#cli-forms) |
+| `counted` | occurrences of any CLI form are summed | [specs](specs.md#derivation-over-declaration) |
 | `help("...")` | help text | [reporting](reporting.md#help) |
 | `config_source` | the value names a file that becomes a source | [sources](sources.md#config-file-discovery) |
 | `injected_args` | the value is re-parsed as CLI tokens | [lifecycle](lifecycle.md#the-injected-arguments-loop) |
 | `bootstrap_only` | cannot be set from injected arguments | [lifecycle](lifecycle.md#the-injected-arguments-loop) |
-| `no_ini` | suppresses the file spelling | [names](names.md#per-field-overrides) |
-| `from_env` | gives the field an environment spelling; without it there is none | [sources](sources.md#exposure-is-opt-in) |
-| `counted` | occurrences are summed | [specs](specs.md#derivation-over-declaration) |
-| `contributes(v)` | presence contributes a fixed value | [specs](specs.md#derivation-over-declaration) |
 
-Every one of them works at any depth ([I7](invariants.md#i7)). `config_source`,
-`injected_args` and `bootstrap_only` currently do not; see
-[names](names.md#names-are-never-constructed-by-hand). `formerly`, `env_named`,
-`no_ini`, `from_env`, `counted` and `contributes` are **[new]**.
+Every one of them works at any depth ([I7](invariants.md#i7)).
 
-`prefix=` and `name_prefix=` are class keywords rather than field markers,
-because they describe the ConfigPart, not a field. See
-[names](names.md#prefix-versus-name_prefix).
+`prefix=`, `name_prefix=` and `from_env=` are class keywords rather than field
+markers, because they describe the root, not a field. See
+[names](names.md#prefix-versus-name_prefix) and
+[the environment](sources.md#exposure-is-opt-in).
 
 ## Required and optional
 
-A field with no default and no `SubConfig` type is required. If no source
-supplies it, construction raises
-[`MissingConfigError`](diagnostics.md#errors) naming every missing field at once,
-along with the origins that were found. A `SubConfig` field never needs a
-default; the manager builds it from its own defaults. **[built]**, except that
-the error is a bare `TypeError` today **[change]**.
+A field with no default and no nested type is required. If no source supplies
+it, construction raises [`MissingConfigError`](diagnostics.md#errors) naming
+every missing field at once, along with the origins that were found. A nested
+field never needs a default; the manager builds it from its own defaults.

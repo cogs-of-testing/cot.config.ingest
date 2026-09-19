@@ -5,7 +5,7 @@ implemented by this library, with `getoption` and `getini` served as a legacy
 view over fragments.
 
 This document is a staging area for pytest policy. Everything in it is
-**[new]**. As each stage lands, its rules move into [the binding](index.md).
+not yet built. As each stage lands, its rules move into [the binding](index.md).
 
 The core capabilities the plan depends on are specified on the other side of
 [the contract](../binding-contract.md):
@@ -54,7 +54,7 @@ flag=True             ->  action="store_true"
 repeatable=True       ->  action="append"
 counts=True           ->  action="count"
 values=(...)          ->  choices=(...)
-accumulates_to=X      ->  action="store_const", const=X
+form(contributes=X)   ->  action="store_const", const=X
 file_key + annotation ->  addini(type="string"|"bool"|"int"|"float"|"linelist"|"paths")
 aliases               ->  addini(aliases=...)
 ```
@@ -85,7 +85,7 @@ pytest reads five file shapes with two data models:
 
 Each becomes a source in this binding ([P5](decisions.md#p5)). The ini-mode
 sources hand over strings and their values are
-[coerced](../types.md#values-from-typed-sources); the toml-mode sources hand
+[converted](../types.md#two-dialects); the toml-mode sources hand
 over native types and their values are checked.
 
 ## The legacy view
@@ -154,9 +154,9 @@ capability that this binding then consumes.
 
 | # | Stage | Delivers | Side |
 |---|---|---|---|
-| 1 | [Specs](../specs.md) + forward binder; remove the monkeypatch | `add_config(parser, T)` and `get_config(config, T)`, importable and typed | core + binding |
-| 2 | Adopt pytest 9 surface | `addini(aliases=)`, `int`/`float`/`paths` ini types, `Config.stash` | binding |
-| 3 | [Layered store](../merging.md#the-layered-store) + [runtime layer](../lifecycle.md#the-runtime-layer) | `explain()` shows losing values | core |
+| 1 | [Specs](../specs.md) + forward binder | `add_config(parser, T)` and `get_config(config, T)`, importable and typed | delivered by [the rebuild](../index.md#build-order) |
+| 2 | Adopt pytest 9 surface | `addini(aliases=)`, `int`/`float`/`paths` ini types, `Config.stash` | delivered by the rebuild |
+| 3 | [Layered store](../merging.md#the-layered-store) + [runtime layer](../lifecycle.md#the-runtime-layer) | `explain()` shows losing values | delivered by the rebuild |
 | 4 | Legacy view | `getoption`/`getini` answerable from fragments | binding |
 | 5 | Differential harness + allowlist | proof the view is faithful where it means to be | binding |
 | 6 | Ingest binder | hand-written options join the store; `--help` uniform | binding |
@@ -165,9 +165,9 @@ capability that this binding then consumes.
 | 9 | Convert pytest core options | `-x`, `--tb`, `-k`, `-m`, … | binding |
 | 10 | Discovery and bootstrap | `-p`, `-c`, `--rootdir`, rootdir determination | binding |
 
-**Stage 1 stands alone.** It is worth doing whether or not the later stages
-happen, because it removes the [monkeypatch](index.md#activation) and makes
-the mapping testable.
+**Stages 1 to 3 are the rebuild's.** The binding is built as a spec binder
+from the start and the store and runtime layer are core, so the plan begins at
+stage 4.
 
 **Stage 10 is blocked on pytest.** `findpaths.py` stays pytest's for now, and
 its result is handed to the library as constructed sources. A pytest PR in

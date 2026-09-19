@@ -180,12 +180,12 @@ activating.
 
 ## Where the code and the design differ
 
-`docs/design/` is normative and every rule in it is marked **[built]**,
-**[change]** or **[new]**. The [gap list](docs/design/index.md#gap-list) is the
-full account of what the code does not do yet, and
-[order of work](docs/design/index.md#order-of-work) is the sequence for closing
-it. Plugin discovery, list merge semantics, YAML, the conversion registry and
-hot reload are all design intent with no code behind them.
+`docs/design/` is normative. The code is being rebuilt to it
+([D20](docs/design/decisions.md#d20)) in
+[the build order](docs/design/index.md#build-order); until that lands, the
+code in `src/` is the pre-rebuild shape and the design describes the target.
+Plugin discovery, list merge semantics, YAML and hot reload are design intent
+with no code behind them either way.
 
 ## Development
 

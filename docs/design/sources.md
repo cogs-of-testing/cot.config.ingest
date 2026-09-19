@@ -5,38 +5,58 @@ Where values come from, and the single rule that decides which one wins.
 ## The protocol
 
 ```python
+@dataclass(frozen=True)
+class Reading:
+    root: type[ConfigPart]
+    path: tuple[str, ...]       # resolved through the index
+    raw: Any                    # text, or a typed value, by dialect
+    location: str               # "pytest.ini[log_level]", "--log-level", "APP_DB_HOST"
+
+@dataclass(frozen=True)
+class Unmatched:
+    spelling: str               # what the source saw
+    location: str
+
 class ConfigSource(Protocol):
     @property
     def precedence(self) -> int: ...
-    def load(self, part_type: type[ConfigPart]) -> dict[str, Any]: ...
+    @property
+    def dialect(self) -> Literal["string", "typed"]: ...
+    def load(self, index: SpellingIndex) -> Iterable[Reading | Unmatched]: ...
 ```
 
-`load()` returns a nested dict shaped like the ConfigPart, containing only what
-this source supplies. Absence is expressed by omitting the key, never by
-`None`. That is what lets [the merge](merging.md#deep-merge) distinguish
-"unset" from "set to nothing". **[built]**
+A source reads its input, asks [the index](names.md#the-spelling-index) what
+each spelling it finds means, and yields one `Reading` per value it can place
+and one `Unmatched` per spelling it cannot. It supplies only what it has:
+absence is expressed by yielding nothing for a path, never by a `None` reading.
+That is what lets [the store](merging.md#the-layered-store) distinguish "unset"
+from "set to nothing".
 
-Two optional protocols refine a source:
+Two things follow. A source never needs a part type, because the index knows
+every declared root, so one read of a file serves all of them. And unknown keys
+are judged in one place with everything declared in view, so a root never
+warns about another root's keys
+([names](names.md#unknown-keys-are-judged-across-every-declared-root)).
+Rationale in [D21](decisions.md#d21).
+
+One optional protocol refines a source:
 
 ```python
-class DeclaringSource(Protocol):
-    def declare(self, part_type: type[ConfigPart]) -> None: ...
-
-class OriginAware(Protocol):
-    def describe_origin(self, part_type, path) -> Origin | None: ...
+class BindingSource(ConfigSource, Protocol):
+    def bind(self, specs: Iterable[FieldSpec]) -> None: ...
 ```
 
-A file or environment source reads whatever name it is asked about, so it has
-nothing to declare. A source backed by an argument parser must be told an option
-exists before it can parse it. That asymmetry is why
+A file or environment source reads whatever the index knows about, so it has
+nothing to bind. A source backed by an argument parser must be told an option
+exists before it can parse it, in the parser's own vocabulary. `bind()` is the
+loop over [specs](specs.md) that does that, and it is the whole of what a
+binding knows about the core. That asymmetry is why
 [declaration is a separate phase](lifecycle.md#why-declaration-is-separate).
 
-`describe_origin` is a refinement: a source that says nothing about itself is
-[still attributed](reporting.md#the-manager-records-sources-refine).
-
-Both are tested with `isinstance()` against the runtime-checkable protocol.
-**[change]**: the manager uses `getattr(source, "declare", None)` and
-`getattr(source, "describe_origin", None)`.
+The manager builds the
+[`Origin`](reporting.md#the-manager-records-sources-refine) for each reading
+from the source's kind and precedence and the reading's location. A source
+says where a value came from and nothing else.
 
 ## The precedence ladder
 
@@ -53,20 +73,33 @@ TomlSource(path, precedence=Precedence.ENV + 1)
 
 `DEFAULTS` is negative so that a value nobody configured loses to every real
 source, including one declared at precedence 0. Gaps between the rungs let
-callers slot in without renumbering. **[built]** for the first five rungs.
+callers slot in without renumbering.
 
 This ladder is the whole ordering rule ([I2](invariants.md#i2)). Nothing is
 special-cased above it. That is why
 [injected arguments](lifecycle.md#the-injected-arguments-loop) are a source at
 their own rung rather than a splice into argv.
 
-The `injected` rung is named for the capability, not for the host that
-motivated it. **[change]**: it is `ADDOPTS` today.
+### No two sources share a rung
+
+Adding a source at a precedence another source already holds is a
+[`ConfigDeclarationError`](diagnostics.md#errors) naming both sources. A tie
+would have to be broken by the order the sources were added, and that order is
+the one thing [I3](invariants.md#i3) says may not matter: two plugins whose
+`discover()` hooks each add a file at `FILE` would otherwise produce a
+declaration-order result.
+
+A source may hold several values for one path, and then its own documented
+order decides between them. [Discovery](#config-file-discovery) orders files
+by depth, nearest the invocation directory last; the
+[injected source](lifecycle.md#the-injected-arguments-loop) orders
+contributions by the rung of the source that contributed them. Neither depends
+on insertion. Rationale in [D22](decisions.md#d22).
+
+Tiers such as system, user and local are `FILE`, `FILE + 1`, `FILE + 2`,
+assigned by whoever constructs the sources.
 
 ### The two rungs above the command line
-
-`override(30)` and `runtime(40)` are **[new]**. The ladder stopped at `cli`,
-and both mechanisms reached around it.
 
 `override` is where [`-o`](names.md#the-o-override-key) values land. `-o`
 names a field by its flat key and says "use my value regardless", which is more
@@ -90,79 +123,68 @@ Both rungs sort by integer, merge in order, and carry an
 [origin](reporting.md#the-manager-records-sources-refine) naming their kind.
 Rationale in [D14](decisions.md#d14).
 
-Ties are broken by insertion order: the sort is stable, so among sources at the
-same precedence the one added later wins. That is how the local config file
-beats the one in the parent directory. **[built]**
-
-There is one `Precedence.FILE`. Tiers such as system, user and local are
-expressed as `FILE`, `FILE + 1`, `FILE + 2` by whoever constructs the sources,
-or by insertion order. **[built]**
-
 ## Catalogue
 
-| Source | Reads | Dialect | Declares | Describes origin |
+| Source | Reads | Dialect | Binds | Location |
 |---|---|---|---|---|
 | `TomlSource` | one TOML file, section by `prefix` | typed | – | file + key |
 | `YamlSource` | one YAML file, section by `prefix` | typed | – | file + key |
 | `IniSource` | one INI file, section case-insensitive | string | – | file + key |
-| `CLISource` | argv tokens | string | ✓ | option, `-s/--long` if short exists |
-| `InjectedArgsSource` | tokens from an `injected_args` field | string | ✓ | `injected --long` |
+| `CLISource` | argv tokens, through the native parser | string | ✓ | option, `-s/--long` if short exists |
+| `InjectedArgsSource` | tokens from `injected_args` fields | string | ✓ | `injected --long (contributor)` |
 | `OverrideSource` | `-o key=value` pairs from every argv-parsing source | string | – | `-o key` |
 | `EnvSource` | `os.environ` or an injected dict | string | – | variable name |
 | `TomlEnvSource` | the same, values parsed as TOML | typed | – | variable name |
-| `ConfigFileDiscoverySource` | finds a file, delegates | delegates | – | delegates |
+| `RuntimeSource` | [`manager.set()`](lifecycle.md#the-runtime-layer) writes | typed | – | `runtime:writer` |
+| `ConfigFileDiscoverySource` | finds files, delegates | delegates | – | delegates |
 | a host binding's source | whatever the host already parsed | host's | ✓ | host-specific |
 
-**[built]** except `YamlSource`, `OverrideSource` and `TomlEnvSource`, which are
-**[new]**.
-
 Which names each of these looks for comes from
-[the qualified path](names.md#the-qualified-path).
+[the qualified path](names.md#the-qualified-path), through the index.
 
 ### Dialect is a property of the source
 
 The dialect column decides whether a source's values are
-[coerced or checked](types.md#values-from-typed-sources). A string-dialect
-source hands over text and the library interprets it. A typed-dialect source
-hands over values that already have types, and the library verifies them
-against the annotation.
+[converted or checked](types.md#two-dialects). A string-dialect source hands
+over text and the library interprets it. A typed-dialect source hands over
+values that already have types, and the library verifies them against the
+annotation.
 
 Because it is a property of the source, a format that can be read either way
 becomes two sources rather than one source with a flag. See
-[the environment](#the-environment). A host whose file formats span both
-dialects splits them the same way, in its own [binding](binding-contract.md).
+[the environment](#two-sources-two-dialects). A host whose file formats span
+both dialects splits them the same way, in its own
+[binding](binding-contract.md).
 
 ## CLI parsing
 
-The parser exists because options must be registrable after parsing has already
-happened. A config file read during resolution can contribute
+The native parser exists because options must be registrable after parsing has
+already happened. A config file read during resolution can contribute
 [injected arguments](lifecycle.md#the-injected-arguments-loop) that must be
-parsed against options a later plugin declared. argparse cannot re-open a parsed
-namespace; this parser re-parses from scratch on every `load()`, which makes
-registration order irrelevant. **[built]**
+parsed against options a later plugin declared. argparse cannot re-open a
+parsed namespace; this parser re-parses from scratch on every `load()`, which
+makes registration order irrelevant.
+
+`CLISource.bind()` is the first [binder](specs.md#why-it-is-a-layer): it
+registers each spec's [CLI forms](specs.md#cli-forms) with the native parser
+exactly as the pytest binding registers them with argparse.
 
 Rules:
 
 - `--opt value`, `--opt=value`, `-s value`, `-s`, `--flag`, `-vx` (combined
-  boolean shorts) **[built]**
+  boolean shorts)
 - an option that takes a value consumes the next token unconditionally, unless
   that token is itself a registered option spelling or the tokens are
-  exhausted, in which case it is an error naming the option **[change]**
-- booleans get both `--flag` and `--no-flag` **[new]**
+  exhausted, in which case it is a [`ConfigUsageError`](diagnostics.md#errors)
+  naming the option
+- every boolean has both `--flag` and `--no-flag`
 - unknown tokens are collected for host passthrough, not treated as errors
-  **[built]**
 
-The two **[change]/[new]** items are one hole seen from two sides. With files
-below the CLI on the ladder, a value set in a file must be overridable from the
-command line. Today it is not:
-
-```
-[app] verbose = true   +   --no-verbose    ->    True   (--no-verbose is "unknown")
---offset -5                                ->    0      (both tokens dropped)
-```
-
-Both failures are silent ([I8](invariants.md#i8)). Rationale in
-[D2](decisions.md#d2).
+With files below the CLI on the ladder, a value set in a file must be
+overridable from the command line. The `--no-` form and unconditional
+consumption are what make that true: without them a file's `verbose = true`
+and a `--offset -5` are both unreachable, silently ([I8](invariants.md#i8)).
+Rationale in [D2](decisions.md#d2).
 
 `-o` is reserved by the parser for
 [generic overrides](names.md#the-o-override-key), and `-h` for help.
@@ -173,8 +195,7 @@ Both failures are silent ([I8](invariants.md#i8)). Rationale in
 
 A field gets an environment variable only when it says so. The `from_env`
 marker creates the spelling; a field without it is not readable from the
-environment by any `EnvSource`. **[change]**: `EnvSource` reads every field
-today.
+environment by any `EnvSource`.
 
 ```python
 class DatabaseConfig(ConfigPart, prefix="app"):
@@ -188,12 +209,22 @@ Implicit exposure means every field a part ever adds becomes settable by any
 variable that happens to match. Opt-in puts the decision next to the field, in
 the diff that introduced it. Rationale in [D13](decisions.md#d13).
 
+`from_env` on a nested field opts in its whole subtree: every leaf below it
+gets a spelling, and the nested path itself gets one, which is what
+[`TomlEnvSource`](#two-sources-two-dialects) reads a table from. A root that
+wants every field readable says `from_env=True` as a class keyword, which is
+the same marker on the one field that has no parent. The bulk case is one
+line, and it is still a line someone wrote next to the thing it exposes.
+Rationale in [D27](decisions.md#d27).
+
 It is a per-field marker rather than a source-level policy because
 [markers work at every depth](invariants.md#i7) and a source-level switch
 cannot distinguish `database.password` from `database.host`.
 
-`EnvSource`'s own prefix and the part's `prefix` still
-[compose](names.md#prefix-versus-name_prefix) for the fields that opt in.
+`EnvSource`'s own prefix and the root's `prefix` still
+[compose](names.md#prefix-versus-name_prefix) for the fields that opt in,
+except for a field carrying [`env_named`](names.md#per-field-overrides), whose
+spelling is absolute ([D26](decisions.md#d26)).
 
 ### Two sources, two dialects
 
@@ -201,7 +232,7 @@ A variable's value is a string, but a string is sometimes a serialised
 structure. Those are different sources, not a flag:
 
 ```python
-EnvSource("APP")        # string dialect: values are coerced
+EnvSource("APP")        # string dialect: values are converted
 TomlEnvSource("APP")    # typed dialect: each value is parsed as TOML
 ```
 
@@ -212,10 +243,10 @@ APP_DATABASE='host = "db.internal"
 port = 5432'
 ```
 
-`TomlEnvSource` is a [typed-dialect source](#dialect-is-a-property-of-the-source),
-so its values are checked. **[change]**: today it is
-`EnvSource(parse_toml=True)`, and its values are neither coerced nor checked.
-Rationale in [D15](decisions.md#d15).
+The variable exists because `database` carries `from_env`, so every key inside
+the table is a field that opted in. `TomlEnvSource` is a
+[typed-dialect source](#dialect-is-a-property-of-the-source), so its values
+are checked. Rationale in [D15](decisions.md#d15).
 
 ## Config file discovery
 
@@ -236,36 +267,30 @@ source type:
 | `.ini`, `.cfg` | `IniSource` | string |
 
 An unknown suffix is a [`ConfigUsageError`](diagnostics.md#errors) naming the
-path and the field. **[change]**: the decision is made twice today.
-`ConfigFileDiscoverySource._create_source` handles `.ini`, while the
-`config_source` path is `if value.suffix in (".toml",)`, so a `config_source`
-field pointing at an `.ini` file has its existence checked and then nothing
-happens ([I8](invariants.md#i8)).
+path and the field. That one function is the whole of what a new file format
+costs: a row in the table plus a loader. [Names](names.md#the-qualified-path)
+and [merging](merging.md) are format-blind.
 
-That one function is the whole of what a new file format costs: a row in the
-table plus a loader. [Names](names.md#the-qualified-path) and
-[merging](merging.md) are format-blind.
-
-`ConfigFileDiscoverySource` reads the explicit-config-file field through a
-field reference, not a hardcoded `"config_file"` string
-([names](names.md#names-are-never-constructed-by-hand)), and through the
-source's public API rather than `env_source._environ`. **[change]**
+`ConfigFileDiscoverySource` is one source. It yields the readings of every file
+it found, ordered by depth with the file nearest the invocation directory
+last, so the nearest file wins without any two files needing a rung of their
+own. It reads the explicit-config-file field through
+[the index](names.md#the-spelling-index), never a hardcoded name.
 
 A relative path resolves against `CLISource.invocation_dir`, or the process cwd
 if there is no CLI source. A file named explicitly but absent is a
 [`ConfigUsageError`](diagnostics.md#errors) naming the path and the field or
 option that named it; a file merely discovered to be absent is not an error.
-**[change]**: the first is a bare `FileNotFoundError` today.
 
 When a discovered file becomes a source is covered by
-[the passes](lifecycle.md#the-passes).
+[the iteration](lifecycle.md#resolution-is-an-iteration).
 
 ## YAML
 
 YAML is a config file format on the same footing as TOML and INI: a
 [typed-dialect](#dialect-is-a-property-of-the-source) source, addressed by
 [the qualified path](names.md#the-qualified-path), sitting at `FILE` on the
-ladder. **[new]**
+ladder.
 
 ```yaml
 pytest:
@@ -276,7 +301,7 @@ pytest:
 ```
 
 The flat spelling (`log_cli_level: DEBUG` under `pytest:`) works as it does in
-TOML, because [both spellings](names.md#both-spellings-in-files) are a property
+TOML, because [both spellings](names.md#two-spellings-in-files) are a property
 of the name model rather than of the file format.
 
 It is underspecified on purpose. pytest does not read YAML, so the
@@ -291,7 +316,7 @@ are open, and a first implementation should not settle them by accident:
   then need a position, because they are the format's own composition
   mechanism, competing with [the ladder](#the-precedence-ladder).
 - **Multi-document streams.** Ignore all but the first, treat them as
-  successive sources, or reject them.
+  successive readings, or reject them.
 - **Duplicate keys and type surprises.** YAML 1.1 readers turn `no` into
   `False` and `1.0` into a float; duplicate keys are silently last-wins in most
   parsers. Both are [I8](invariants.md#i8) questions.

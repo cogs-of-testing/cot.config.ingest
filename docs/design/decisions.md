@@ -1,13 +1,13 @@
 # Decisions
 
-Findings from the design review, resolved. Each records the decision, why, and
+Findings from the design reviews, resolved. Each records the decision, why, and
 what it costs.
 
-A decision is what turns a **[change]** marker elsewhere into a commitment.
-Disagreeing with one means amending the record here, not quietly leaving the
-code as it is. Rules marked **[change]** or **[new]** that appear in no decision
-are corrections with no design content; they are listed in the
-[gap list](index.md#gap-list).
+A decision is what turns a rule elsewhere into a commitment. Disagreeing with
+one means amending the record here, not quietly building something else.
+D1 to D19 came out of two reviews of the first implementation; D20 to D30 out
+of reading the resulting design as if there were no implementation at all,
+which is what [D20](#d20) then made true.
 
 ## D1
 
@@ -15,21 +15,18 @@ are corrections with no design content; they are listed in the
 ([names](names.md#the-o-override-key),
 [reporting](reporting.md#overrides-report-as-overrides))
 
-The `-o` key is currently the structural path, a namespace that appears in no
-help text, no ini file and no error message. Of the three spellings a user
-might try, the two they have seen elsewhere silently do nothing, and the one
-that works is attributed to a CLI option the user never typed.
+The structural path is a namespace that appears in no help text, no ini file
+and no error message. Of the three spellings a user might try, the two they
+have seen elsewhere would silently do nothing, and the one that worked would be
+attributed to a CLI option the user never typed.
 
 Reusing the flat name means `-o` is spelled exactly like the ini key, and
-`flat_index()` already provides the lookup. The dotted path is not kept as an
-alias.
+[the index](names.md#the-spelling-index) already provides the lookup. The
+dotted path is not an alias.
 
-*Cost:* breaking. `-o cli.level=X` stops working. The library is pre-1.0 and
-this is noted in the changelog rather than deprecated.
-
-Scope is a [binding](binding-contract.md) matter: a host may narrow which
-fields `-o` reaches, and the pytest binding does. The addressing settled here
-is not negotiable.
+*Cost:* none beyond the rule. Scope is a [binding](binding-contract.md)
+matter: a host may narrow which fields `-o` reaches, and the pytest binding
+does. The addressing settled here is not negotiable.
 
 ## D2
 
@@ -38,131 +35,117 @@ next token unconditionally.** ([sources](sources.md#cli-parsing))
 
 These are one structural hole. The ladder puts files below the CLI so that a
 command-line argument can override a file. With `store_true` as the only
-boolean form, a file-set `true` is unreachable from the command line. With
-`not args[i+1].startswith("-")` guarding value consumption, every negative
-number is unreachable. Both failures are silent.
+boolean form, a file-set `true` is unreachable from the command line. With a
+`startswith("-")` guard on value consumption, every negative number is
+unreachable. Both failures are silent.
 
 Unconditional consumption needs a companion error: an option whose value is
 missing must raise naming the option, rather than being dropped as unknown.
 
-*Cost:* a token that looks like an option but is not registered is now consumed
-as a value where it used to land in `unknown_args`. Hosts relying on
-passthrough of unregistered options positioned directly after a value-taking
-option are affected. pytest's usage is not.
+*Cost:* a token that looks like an option but is not registered is consumed
+as a value where a host might have expected passthrough. pytest's usage is not
+affected.
 
 ## D3
 
 **Unions are resolved by trying members left to right.**
 ([types](types.md#unions))
 
-`bool | int | None` from `"4"` is currently `True`, because the first non-`None`
-member wins unconditionally. `log_auto_indent` accepts `true|on`, `false|off`
-or an integer, and the acceptance test had to declare it `str | None` to get
-around it.
+`log_auto_indent` accepts `true|on`, `false|off` or an integer, and is
+declared `bool | int | None`. Taking the first non-`None` member
+unconditionally would turn `"4"` into `True`. Trying members in order and
+taking the first that converts gives the obvious answer for every case in the
+yardstick, because `bool` only accepts its known literals.
 
-Trying members in order and taking the first that parses gives the obvious
-answer for every case in the yardstick, because `bool` only accepts its known
-literals.
-
-*Cost:* a union whose members overlap resolves differently. `str | int` from
+*Cost:* a union whose members overlap resolves by order. `str | int` from
 `"4"` becomes `"4"`, which is why `str` should be last in a union.
 
 ## D4
 
-**Values from typed sources are checked against the annotation at construction.**
-([types](types.md#values-from-typed-sources))
+**Values are checked against the annotation at construction, as well as
+converted on entry to the store.** ([types](types.md#construction-checks))
 
-"Type-safe configuration" is the first line of the README, and a `str` field
-currently accepts `5` from a TOML file. Coercion covers only string-bearing
-sources; TOML and the host adapter deliver already-typed values that nothing
-inspects.
+"Type-safe configuration" is the first line of the README, and a hand-built
+`LoggingConfig(level=5)` has to fail the same way a config file does. The
+check goes in `__init__`, which already walks every field, so it covers direct
+construction. For values from the store it is a second, cheap pass over
+already-converted values.
 
-The check goes in `_FrozenFromKwargsMixin.__init__`, which already walks every
-field. That placement covers direct construction too, so a hand-built
-`LoggingConfig(level=5)` fails the same way a config file does.
-
-*Cost:* configurations that currently work with wrong types start failing. The
-error must name the field, the declared type and the value.
+*Cost:* one walk per construction.
 
 ## D5
 
-**`resolve()` iterates its passes to a fixpoint.**
-([lifecycle](lifecycle.md#the-passes-iterate-to-a-fixpoint))
+**`resolve()` iterates to a fixpoint over both roots and derived sources.**
+([lifecycle](lifecycle.md#resolution-is-an-iteration))
 
-Plugin discovery is the reason the multi-pass design exists, and the current
-flat pass sequence cannot support it: a type declared during pass 3 or later
-never receives `discover()` and never contributes a config file.
+Plugin discovery is the reason resolution is multi-pass: a config file names a
+plugin, the plugin declares a root, and that root must receive every pass. A
+flat pass sequence cannot support that, because a root declared during a late
+pass never receives the early ones.
 
-Repeating passes 2 to 5 until the declared set stops growing makes the
-guarantee explicit and makes `Discoverable` implementable. It also makes
-[I3](invariants.md#i3) hold for types the host never saw.
+Repeating until neither the declared set nor the derived source set grows
+makes the guarantee explicit, makes `Discoverable` implementable, and makes
+[I3](invariants.md#i3) hold for roots the host never saw. How each iteration
+starts is [D23](#d23).
 
-*Cost:* resolution can loop. A declaration cycle needs a bound and an error
-naming the types involved.
+*Cost:* resolution can loop. The iteration needs a bound and an error naming
+what kept growing.
 
 ## D6
 
 **One conformance suite, parameterised over backends.**
 ([the binding contract](binding-contract.md#conformance))
 
-The native ladder and the pytest binding already disagree about
-[collisions](names.md#collisions), and each test file only asks its own backend
-what it does. Nothing tests the claim that one declaration behaves the same
-everywhere.
+A single implementation is how host policy quietly becomes library design,
+and two acceptance test files that each only ask their own backend what it
+does make divergence invisible by construction.
 
 The suite is the executable form of [names](names.md), [types](types.md),
 [merging](merging.md) and [reporting](reporting.md). When pytest uses the
-library directly, it is what says whether the replacement is faithful.
+library directly, it is what says whether the replacement is faithful. The
+native parser is the first backend, so the suite has two before a second host
+exists.
 
-*Cost:* the two acceptance test files partly merge, and the pytest backend will
-fail cases the native one passes until it is brought into line.
+*Cost:* the acceptance tests are written once, against the suite's
+parameterisation, rather than once per backend.
 
 ## D7
 
 **Markers are honoured at every depth; names are never built by hand.**
-([names](names.md#names-are-never-constructed-by-hand),
+([names](names.md#the-spelling-index),
 [sources](sources.md#config-file-discovery),
 [lifecycle](lifecycle.md#the-injected-arguments-loop))
 
-`config_source`, `addopts_field` and `bootstrap_only` are scanned with
-`recurse=False`, so they vanish inside a `SubConfig`. `bootstrap_only`'s
-enforcement compares munged token strings against bare field names and never
-fires when a `name_prefix` exists. `config_source` handles `.toml` and silently
-ignores every other suffix.
+Every confirmed defect in the first review traced to a component reaching
+around `_names.py` and `_fields.py`: markers scanned without recursion,
+`bootstrap_only` comparing munged token strings against bare field names, a
+discovery source holding a hardcoded field name. That is why
+[I1](invariants.md#i1) and [I7](invariants.md#i7) are invariants rather than
+style notes, and why [the index](names.md#the-spelling-index) is the only
+place a spelling is recognised ([D21](#d21)).
 
-These are three symptoms of one cause: components reaching around `_names.py`
-and `_fields.py` ([I1](invariants.md#i1), [I7](invariants.md#i7)). Every
-confirmed defect in the review traces here, which is why it is an invariant
-rather than a style note.
-
-*Cost:* none behaviourally, beyond markers starting to work where they
-previously did nothing.
+*Cost:* none.
 
 ## D8
 
-**`name_prefix` is a path segment, not a string prefix; unknown keys are judged
-across all declared parts.** ([names](names.md#the-qualified-path),
-[names](names.md#both-spellings-in-files),
-[names](names.md#unknown-keys-are-judged-across-the-section))
+**`name_prefix` is a path segment, not a string prefix.**
+([names](names.md#the-qualified-path),
+[names](names.md#two-spellings-in-files))
 
-`name_prefix` appears in the flat, CLI and env spellings and is dropped from
-the nested one. `prefix` is shared by design, so `name_prefix` is the only
-thing giving a ConfigPart identity inside its section, and the nested spelling
-throws it away. Two plugins differing only in `name_prefix`, each with a `cli`
-sub-config, silently read each other's values from `[pytest.cli] level`.
+`prefix` is shared by design, so `name_prefix` is the only thing giving a
+root identity inside its section. A nested spelling that dropped it would let
+two plugins differing only in `name_prefix`, each with a `cli` nested part,
+silently read each other's `[pytest.cli] level`.
 
 Treating `name_prefix` as a segment of a qualified path makes all four
-spellings one path rendered four ways, so the flat name split on `_` is the
-nested table path.
+spellings one path rendered four ways. The unknown-key half of the earlier
+form of this decision is now [D21](#d21): with one index over every root, a
+key can only be judged across all of them.
 
-The unknown-key half is the same root cause seen from the merge side. Judging
-keys per part makes correct configuration warn. The manager knows every
-declared type and is the only place the judgement can be made correctly.
-
-*Cost:* breaking, and the most user-visible change in this design. Nested TOML
-written against the current behaviour (`[pytest.cli]`) must gain the segment
-(`[pytest.log.cli]`). Parts with no `name_prefix` are unaffected. `named()` is
-unaffected: it overrides the flat name only.
+*Cost:* nested TOML for a root with a `name_prefix` carries an extra table
+level, `[pytest.log.cli]` rather than `[pytest.cli]`. Roots with no
+`name_prefix` are unaffected. `named()` is unaffected: it overrides the flat
+name only.
 
 *Alternative rejected:* making the section itself `[pytest.log]` when a
 `name_prefix` exists. pytest's keys really do live directly in the `[pytest]`
@@ -174,45 +157,41 @@ fix the nested one.
 **Options are specified as data; hosts bind that data.**
 ([specs](specs.md))
 
-The mapping from a ConfigPart to `parser.addoption` and `parser.addini` lives
-inside `PytestOptionSource.declare`, entangled with the source that reads
-values back. The derivation can only be tested by standing up a real `Parser`
-and inspecting its private dicts, a second host would duplicate it, and
-`format_help()` derives the same facts separately.
+A mapping from a root to `parser.addoption` and `parser.addini` calls that
+lives inside the source reading values back can only be tested by standing up
+a real parser and inspecting its private state, a second host would duplicate
+it, and help would derive the same facts separately.
 
-Splitting it into [`field_specs(T)`](specs.md), pure and host-free, plus a
-binder that loops over the result makes the derivation a value a test can
-compare against a table. It also gives exactly one place, inside the binding,
-where the library's vocabulary is translated into the host's parser words. It
-is what makes [D6](#d6)'s conformance suite mechanical: two backends conform
-when they bind the same specs. The native CLI parser is the first binder, so
-the suite has two backends before a second host exists.
+[`field_specs(T)`](specs.md), pure and host-free, plus a `bind()` that loops
+over the result, makes the derivation a value a test compares against a table.
+It gives exactly one place, inside the binding, where the library's vocabulary
+is translated into the host's parser words. It is what makes [D6](#d6)'s
+conformance suite mechanical: two backends conform when they bind the same
+specs. The native parser is the first binder.
 
-*Cost:* one more layer and a dataclass, plus a per-host translation function to
-keep in step with that host's option vocabulary.
+*Cost:* one more layer and three dataclasses, plus a per-host translation
+function to keep in step with that host's option vocabulary.
 
 ## D10
 
-**The store retains every source's value, not just the winner.**
-([merging](merging.md#the-layered-store))
+**The store retains every source's value, not just the winner, converted on
+entry.** ([merging](merging.md#the-layered-store))
 
 `getoption` and `getini` are per-layer accessors, and a fragment holds the
 merged value. Serving the legacy API over fragments needs all three answers
-from one declaration, and the current manager can only give the third. It
-overwrites both the value and the
-[origin](reporting.md#the-manager-records-sources-refine) as it merges.
+from one declaration. A manager that overwrites value and origin as it merges
+can only give the third.
 
-Retaining a `LayeredValue` per source per path makes provenance a projection of
-the store, which also removes the ordering bug where origins are recorded
-before unknown keys are pruned. `explain()` gains the ability to show what
-lost.
+Retaining a `LayeredValue` per source per path makes provenance a projection
+of the store, lets `explain()` show what lost, and, because each reading is
+converted as it enters with its origin in hand, is what
+[D19](#d19) and [D28](#d28) stand on.
 
 pytest is converging on the same shape: `_pytest.config.findpaths.ConfigValue`
 records `value`, `origin` and `mode`, and `Config._getini` resolves a two-rung
 ladder over it.
 
-*Cost:* memory is O(sources × paths) rather than O(paths), and `_origins` folds
-into the store.
+*Cost:* memory is O(sources × paths) rather than O(paths).
 
 ## D11
 
@@ -225,12 +204,12 @@ after resolution. A write lands in a runtime source at the top of the ladder,
 the affected fragment is rebuilt, and a warning names the fragment and the
 writer.
 
-The warning is load-bearing because a fragment implies an instance. A
-ConfigPart exposes a context manager that creates the object it configures and
-destroys it, so mutating a fragment after that object exists means tearing it
-down and building a new one. A constructor would have been enough to build an
-instance. A context manager is what makes invalidation well defined, and it
-gives configuration-scoped objects a teardown hook.
+The warning is load-bearing because a fragment implies an instance. A root
+exposes a context manager that creates the object it configures and destroys
+it, so mutating a fragment after that object exists means tearing it down and
+building a new one. A constructor would have been enough to build an instance.
+A context manager is what makes invalidation well defined, and it gives
+configuration-scoped objects a teardown hook.
 
 *Cost:* a mechanism that warns on every use is a mechanism that wants to be
 deleted; whether it outlives the migration that motivated it is open. Entering
@@ -243,8 +222,8 @@ contexts eagerly also means a fragment that fails to build fails earlier.
 
 Help derived from [`field_specs`](specs.md) can show what a host formatter
 built from registration calls cannot: the closed value set behind a `Literal`,
-the `--no-` form of a boolean, which file key an option corresponds to, and
-grouping that follows the declared structure.
+the `--no-` form of a boolean, every form of an option, which file key an
+option corresponds to, and grouping that follows the declared structure.
 
 The library renders and returns text; it never prints and never exits
 ([I4](invariants.md#i4)). Whether a host adopts the output is that host's
@@ -259,21 +238,20 @@ decisions.
 **The environment is never implied: a field is environment-readable only when
 it says so.** ([sources](sources.md#exposure-is-opt-in))
 
-`EnvSource` reads every field today, which makes exposure a property of having
-been declared rather than of anyone deciding. An earlier version of this
-decision made it a source-level policy with all-fields as the default. That
-picked the wrong end twice over: a switch on the source cannot distinguish
-`database.password` from `database.host`, and defaulting to open means every
-field a part ever adds joins the surface silently.
+Reading every field would make exposure a property of having been declared
+rather than of anyone deciding. An earlier form of this decision made it a
+source-level policy with all-fields as the default. That picked the wrong end
+twice over: a switch on the source cannot distinguish `database.password` from
+`database.host`, and defaulting to open means every field a part ever adds
+joins the surface silently.
 
 Requiring `from_env` puts the decision next to the field, in the diff that
 introduced it. It also makes [`FieldSpec`](specs.md) a pure function of a
-ConfigPart, because `env_key` is answerable from the class alone.
+root, because the spelling is answerable from the class alone. The bulk case
+is [D27](#d27).
 
-*Cost:* breaking, and it removes a capability. A twelve-factor application that
-wants every field environment-readable now marks every field. A future
-`from_env` on a class would restore the bulk case without restoring the
-implicit default.
+*Cost:* a twelve-factor application marks its root rather than getting
+exposure for free.
 
 ## D14
 
@@ -281,11 +259,10 @@ implicit default.
 above the command line.**
 ([sources](sources.md#the-two-rungs-above-the-command-line))
 
-[I2](invariants.md#i2) says precedence is a total order with no exceptions, and
-two mechanisms were exempt from it. `-o` was applied as a post-merge fixup, so
-`--log-level=A -o log_level=B` had no documented answer. The
-[runtime layer](lifecycle.md#the-runtime-layer) said "the top of the ladder"
-without a rung to point at.
+[I2](invariants.md#i2) says precedence is a total order with no exceptions,
+and two mechanisms would otherwise be exempt from it. `-o` applied as a
+post-merge fixup gives `--log-level=A -o log_level=B` no documented answer.
+The [runtime layer](lifecycle.md#the-runtime-layer) needs a rung to point at.
 
 `override(30)` sits above `cli(25)` because `-o` names a field and supplies a
 value regardless of what else addressed it. `runtime(40)` is the top and stays
@@ -296,53 +273,45 @@ Every `-o` lands at `override`, whichever argv source carried it. One inside
 injected arguments outranks a typed option, as it did when injected arguments
 were spliced into argv.
 
-*Cost:* two constants, and `-o` becomes a source rather than a fixup, which is
-what lets it carry
-[its own origin kind](reporting.md#overrides-report-as-overrides). Any
-application that relied on `-o` losing to an explicit CLI option was relying on
-undefined behaviour.
+*Cost:* two constants, and `-o` is a source, which is what lets it carry
+[its own origin kind](reporting.md#overrides-report-as-overrides).
 
 ## D15
 
 **A source's dialect is a property of the source, so the TOML-aware environment
 reader is its own class.** ([sources](sources.md#two-sources-two-dialects))
 
-`EnvSource(parse_toml=True)` makes one source deliver strings or native values
-depending on a constructor argument, and [D4](#d4) then cannot say whether its
-values are coerced or checked.
+A source that delivers strings or native values depending on a constructor
+argument leaves [D4](#d4) unable to say whether its values are converted or
+checked.
 
-`EnvSource` (string dialect, coerced) and `TomlEnvSource` (typed dialect,
+`EnvSource` (string dialect, converted) and `TomlEnvSource` (typed dialect,
 checked) are two sources. The dialect is visible where the source is
-constructed, and `describe_origin` can say which one supplied a value. The same
-rule applies to any format readable both ways, and a host splitting its own
-file dialects follows it.
+constructed, and the origin can say which one supplied a value. The same rule
+applies to any format readable both ways, and a host splitting its own file
+dialects follows it.
 
-*Cost:* one more class, and `parse_toml=` goes.
+*Cost:* one more class.
 
 ## D16
 
 **Warnings and errors are a designed set with a shared base and one rule for
 choosing between them.** ([diagnostics](diagnostics.md))
 
-[I8](invariants.md#i8) was stated as an invariant and then left for each
-component to satisfy in its own vocabulary. The result is three silent drops, a
-warning that fires on correct configuration, a `RuntimeError` subclass doing
-duty as both "you called `declare()` too late" and "these two parts collide",
-an unexported `CLIConflictError` that is the same collision under a second
-name, and a bare `TypeError` for missing required fields.
-
-Programmer error at `declare()` gets `ConfigDeclarationError`, with collisions
-beneath it, so the rule's third row has a type to name.
+[I8](invariants.md#i8) stated as an invariant and then left for each component
+to satisfy in its own vocabulary produced silent drops, a warning that fired on
+correct configuration, one exception type doing duty for two unrelated
+failures, and bare `TypeError`s. Programmer error at `declare()` gets
+`ConfigDeclarationError`, with collisions beneath it, so the rule's third row
+has a type to name.
 
 A taxonomy means a host can filter or promote the whole set at once, an
 application can tell "this library rejected the configuration" from any other
 exception, and a new diagnostic has a place to go and a rule that says whether
 it warns or raises.
 
-*Cost:* breaking in the exception hierarchy. `ConfigLifecycleError` is rebased
-from `RuntimeError` onto `ConfigError`, and collisions raise a different type.
-Aggregation per `resolve()` means a diagnostic cannot be emitted the moment it
-is discovered.
+*Cost:* aggregation per `resolve()` means a diagnostic cannot be emitted the
+moment it is discovered.
 
 ## D17
 
@@ -351,7 +320,7 @@ underspecified.** ([sources](sources.md#yaml))
 
 Every question YAML raises is a source question: which suffix maps to which
 loader, and whether that loader hands over strings or typed values. The
-[name model](names.md#the-qualified-path), the ladder and the merge are
+[name model](names.md#the-qualified-path), the ladder and the store are
 format-blind, so admitting YAML costs a row in the suffix table and a loader.
 
 Leaving it out would not have kept it out. It is the third format anyone asks
@@ -371,22 +340,21 @@ first person who needs it; naming them is the mitigation.
 ## D18
 
 **Conversion is a registry keyed on the annotation; `Literal` and `Enum` are
-closed value sets in it.** ([types](types.md#literal),
-[types](types.md#the-conversion-registry), [types](types.md#enum))
+closed value sets in it.** ([types](types.md#literal-and-enum),
+[types](types.md#the-conversion-registry))
 
-Coercion answered "what does this string mean for this annotation" for a fixed
-set: the scalars, `list[T]`, and now `Literal`. Real configuration has domain
-types in it. With no registry, each of those is converted by hand after the
-fragment is built, so the fragment briefly holds a value that does not match
-its declaration ([I6](invariants.md#i6)), and every source converts it
-separately or not at all.
+Real configuration has domain types in it: a compiled pattern, an enum, a
+class resolved from an entry point, a version. With a fixed coercible set,
+each of those is converted by hand after the fragment is built, so the fragment
+briefly holds a value that does not match its declaration
+([I6](invariants.md#i6)), and every source converts it separately or not at
+all.
 
 `Literal` is the first closed set. The annotation carries both the type and
 the permitted values, so no marker is needed, a value outside the set fails
 like any other conversion, and the values reach help and bindings as
 `FieldSpec.values`. `Enum` is a closed value set whose members have names, so
-it is [`Literal`](types.md#literal) with a type attached and reaches help and
-bindings through the same `FieldSpec.values`.
+it is `Literal` with a type attached.
 
 An unregistered annotation is an error at declaration time rather than a value
 left as a string at merge time. A field the library cannot convert is a
@@ -395,17 +363,18 @@ programmer error.
 
 *Cost:* a registry is global state, with the usual hazards of registration
 order and two libraries registering the same type. Scoping it to the manager
-was rejected: a conversion is a property of the type, and making it per-manager
-means the same annotation means different things in two parts of one program.
+was rejected: a conversion is a property of the type, and making it
+per-manager means the same annotation means different things in two parts of
+one program.
 
-*Sequencing:* `Literal` is in [the order of work](index.md#order-of-work). The
-registry, `Enum` and [D19](#d19) are [deferred](deferred.md#deferred) until a
-binding needs them; [vcs-versioning](vcs-versioning/index.md) is the candidate.
+*Sequencing:* the registry is the conversion mechanism, not an addition to
+one, so it is built with the core rather than deferred. Its first non-scalar
+consumer is still [vcs-versioning](vcs-versioning/index.md).
 
 ## D19
 
 **Conversion receives the origin of the value it converts.**
-([types](types.md#coercion-sees-the-origin))
+([types](types.md#conversion-sees-the-origin))
 
 A relative path means different things depending on which source supplied it.
 A converter with the signature `(raw, annotation) -> value` cannot get all
@@ -413,13 +382,208 @@ three cases right, so `Path` fields are either wrong for one of them or fixed
 up by the caller after construction, the same [I6](invariants.md#i6) violation
 the conversion registry exists to remove.
 
-The [`Origin`](reporting.md#the-manager-records-sources-refine) already records
-the file or variable, so nothing new has to be discovered. It only has to be
-threaded to the place that needs it.
+The [`Origin`](reporting.md#the-manager-records-sources-refine) is built
+before the reading enters the store ([D10](#d10)), so it only has to be handed
+along.
 
-*Cost:* every converter's signature gains a parameter, and sources have to
-supply their origin before the merge attributes it rather than after. That
-ordering constraint points the same way as the
-[layered store](merging.md#the-layered-store).
+*Cost:* every converter's signature carries the parameter.
 
-*Sequencing:* deferred with [D18](#d18).
+## D20
+
+**The code is rebuilt to the design.**
+
+Nothing has been published. The first implementation, reviewed twice, left a
+gap list of forty rows and a sixteen-step order of work whose tenth and
+eleventh steps replace the source protocol and the store, which is the whole
+of the manager and every source. Most of steps one to nine would have been
+rewritten again at step ten.
+
+Reading the design without the code in view ([D21](#d21) to [D30](#d30))
+found that the source protocol, the tie-breaking rule, the fixpoint and the
+spec record each described the old shape rather than the design's own
+consequences. A rebuild under the same public API, with the existing tests as
+its acceptance criteria, is cheaper than the sequence and ends with code that
+matches these documents rather than approaching them.
+
+*Cost:* until the rebuild lands, the code and the documents disagree
+everywhere, and the status markers that tracked drift are suspended. A change
+to behaviour during that window is a change to these documents, and the code
+follows.
+
+## D21
+
+**Sources yield readings resolved through one spelling index; nothing else
+recognises a name.** ([sources](sources.md#the-protocol),
+[names](names.md#the-spelling-index))
+
+A `load(part_type) -> dict` protocol makes every source assemble a nested
+structure for one root at a time. It then has to decide which of a shared
+section's keys belong to that root, which is exactly the judgement
+[D8](#d8) says only something holding every root can make, and the manager
+has to deep-merge the dicts it gets back.
+
+With the index built at `declare()` over every root, a source reads its input
+once, asks the index what each spelling means, and yields a reading per path.
+Unknown keys are whatever the index did not resolve, judged once. There is no
+dict merge, because readings are already per path. And a source never
+constructs, splits or compares a name, which is [I1](invariants.md#i1) as a
+protocol rather than a rule.
+
+*Cost:* every source is written against the index rather than against a
+class, and a source cannot be used without a manager to build one.
+
+## D22
+
+**No two sources share a rung; a source with several values for one path
+orders them by a rule it documents.**
+([sources](sources.md#no-two-sources-share-a-rung))
+
+Breaking ties by insertion order makes the result depend on the order sources
+were added, and `discover()` hooks add sources in declaration order. Two
+plugins each contributing a file at `FILE` would then violate
+[I3](invariants.md#i3) exactly where the fixpoint exists to uphold it.
+
+Refusing the second source at an occupied rung makes the ladder a total order
+in fact and not only in intent ([I2](invariants.md#i2)). The cases that
+wanted ties, a chain of discovered files and a set of injected contributions,
+are one source each with an order that does not depend on insertion: depth
+for files, the contributor's rung for injected tokens.
+
+*Cost:* an application with two config files at the same tier gives them
+distinct precedences. Discovery assigns them.
+
+## D23
+
+**Every iteration starts from the base sources and the declared set; derived
+sources and the store are recomputed.**
+([lifecycle](lifecycle.md#resolution-is-an-iteration))
+
+A parse is not monotone in the option set: a token that was a value in one
+iteration can be an option in the next. Carrying derived sources across
+iterations would keep a file that a stale parse named, and diagnostics from an
+iteration that saw fewer options would be reported for a run that no longer
+had those problems.
+
+Recomputing from the same base each time makes an iteration a function of the
+declared set alone, so the fixpoint is over declarations and derived sources
+together and the last iteration is the only one that describes the run. The
+bound and the error are [D5](#d5)'s.
+
+*Cost:* every iteration re-reads every source. Iterations are few, because
+each must grow a set, and files are small.
+
+## D24
+
+**A file has exactly two spellings for a field: fully flat in the section, or
+fully nested with the bare name as key.**
+([names](names.md#two-spellings-in-files))
+
+The flat name is not the nested path joined on underscores. Field names contain
+underscores, so `log_file_date_format` has no unique split, and `named()`
+replaces a leaf's flat name with one that need not correspond to any path at
+all. Deriving one spelling from the other by string manipulation is therefore
+wrong in both directions, and admitting intermediate depths makes
+`[pytest.log] file` mean both a table and a renamed leaf.
+
+Two spellings, each looked up in the index as what it is, has no ambiguity and
+no string manipulation.
+
+*Cost:* `[pytest.log] cli_level` is an unknown key. A user who writes it gets
+a warning naming it, which is what [I8](invariants.md#i8) asks for.
+
+## D25
+
+**A field has one spec and any number of CLI forms.**
+([specs](specs.md#cli-forms))
+
+pytest's `-x` is `maxfail=1`: a second option string for a path that also
+takes `--maxfail N`. A single `accumulates_to` on the spec cannot express that
+without making the value-taking form impossible. `flag` and a constant are
+properties of a form; `counts`, `repeatable` and `values` are properties of
+the field.
+
+*Cost:* the spec record is one dataclass deeper, and a binder loops over forms
+inside its loop over specs.
+
+## D26
+
+**The environment spelling in a spec stops short of the source prefix, and
+says whether it is absolute.** ([specs](specs.md#the-record),
+[names](names.md#the-qualified-path))
+
+A spec is a pure function of the class, and the source prefix is a property of
+a source, so the two cannot meet in one string. `env_named()` pins a name that
+no prefix may touch. `EnvSpelling(name, absolute)` gives the source the two
+facts it needs and nothing about the manager.
+
+*Cost:* an `EnvSource` composes the name itself rather than reading it off the
+spec.
+
+## D27
+
+**`from_env` on a nested field opts in its subtree; a root opts in with a class
+keyword.** ([sources](sources.md#exposure-is-opt-in))
+
+`TomlEnvSource` reads a whole table from one variable, so the variable must
+name a nested path, and every leaf under it is thereby readable. Under a
+per-leaf rule that would either be forbidden or would expose leaves that never
+opted in, which is what [D13](#d13) exists to prevent. Making the marker on a
+nested field mean its subtree gives the table variable a definition and
+answers the bulk case: a root is a nested part with no parent, and
+`from_env=True` on the class is that marker on it.
+
+*Cost:* one marker on a nested field exposes everything beneath it, including
+fields added later. That is the same trade as marking a root, made at a
+smaller scope, and it is still one visible line.
+
+## D28
+
+**Every reading is converted on entry; a shadowed failure warns, a winning one
+raises, and strict mode raises both.**
+([types](types.md#when-conversion-fails),
+[diagnostics](diagnostics.md#strict-mode))
+
+Converting only the winner leaves losing layers raw, so `explain()` would show
+unconverted text beside converted values and a broken file would go unnoticed
+until nothing overrode it. Converting everything and raising on any failure
+would stop a run over a value that did not apply.
+
+The rule in [diagnostics](diagnostics.md#the-rule) decides: the run can
+continue, so a shadowed failure warns, naming what shadowed it. The
+application that wants to know now sets `strict=True`, which also promotes the
+other input warnings, because an application that treats one kind of user
+error as fatal has no reason to tolerate the rest.
+
+*Cost:* every layer is converted, not only the winner. `RuntimeMutationWarning`
+is exempt from strict mode, because it reports the host and not the user.
+
+## D29
+
+**A runtime write re-projects the store and never re-runs the iteration; a
+write to a feedback field is an error.**
+([lifecycle](lifecycle.md#the-runtime-layer))
+
+The runtime layer exists for a host deriving one setting from another with the
+whole configuration in view. A write to a `config_source` or `injected_args`
+field asks for a source to be added after resolution, which is either a second
+resolution or a silent no-op. Neither is what a late write means, so the write
+is refused, naming the field.
+
+*Cost:* a host that wants to change which files are read after resolution
+builds a new manager.
+
+## D30
+
+**There is one class; `declare()` decides which instances are roots.**
+([config-parts](config-parts.md#one-class-two-roles))
+
+`ConfigPart` and `SubConfig` shared every behaviour and differed only so that
+nesting could be detected. A field's identity is its path within the root
+([I1](invariants.md#i1)), and a class has no position until it is declared or
+nested, so the same class can be a root in one manager and a section in
+another. The distinction that mattered, whether root keywords are meaningful,
+is a property of the role, and a nested part carrying one is a declaration
+error.
+
+*Cost:* a reader cannot tell from a class definition whether it is meant to be
+declared or nested. The class keywords are the tell when they are present.

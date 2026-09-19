@@ -1,10 +1,7 @@
 # Names
 
 One declaration, four spellings. This document is the mapping between a field's
-structural identity and every name a user can type for it.
-
-It carries the most outstanding **[change]** rules, because
-[I1](invariants.md#i1) is the invariant the code has drifted furthest from.
+structural identity and every name a user can type for it, in both directions.
 
 Every rule here is general. pytest appears as the stress case, because its
 option naming is the most demanding example available. Nothing here is pytest
@@ -13,8 +10,8 @@ policy. A host may suppress a spelling, never rename one
 
 ## The qualified path
 
-A field's qualified path is its structural path with the ConfigPart's
-`name_prefix` prepended as a segment:
+A field's qualified path is its structural path with the root's `name_prefix`
+prepended as a segment:
 
 ```
 path            ("cli", "level")
@@ -28,7 +25,7 @@ Every spelling is that one path rendered with a different separator:
 |---|---|---|
 | flat (ini, flat TOML) | `"_".join(qualified)` | `log_cli_level` |
 | CLI | `"-".join(qualified)` | `--log-cli-level` |
-| env | `"_".join([source prefix, prefix, *qualified])`, upper | `PYTEST_LOG_CLI_LEVEL` |
+| env | `"_".join([prefix, *qualified])`, upper; the source puts its own prefix in front | `PYTEST_LOG_CLI_LEVEL` |
 | `-o` | the flat name | `-o log_cli_level=…` |
 | nested file | `[section, *qualified[:-1]]` + leaf | `[pytest.log.cli] level` |
 
@@ -40,7 +37,7 @@ prefix is the `EnvSource`'s own; an empty one contributes no segment, so
 `PYTEST_PYTEST_LOG_CLI_LEVEL`. An ordinary application:
 
 ```python
-class PoolConfig(SubConfig):
+class PoolConfig(ConfigPart):
     size: int = 5
 
 class DatabaseConfig(ConfigPart, prefix="app", name_prefix="db"):
@@ -66,47 +63,38 @@ does not match its structure:
 \* via `named("log_file")`, which replaces the flat name only. See
 [per-field overrides](#per-field-overrides).
 
-The flat name split on `_` is the nested table path. The two spellings are
-derivable from each other.
-
-**[change]**: the nested spelling currently omits `name_prefix`
-(`[pytest.cli] level`), which is the one place a part's identity is dropped. See
-[both spellings](#both-spellings-in-files) and [D8](decisions.md#d8).
-
-`FieldNames` is the record; `names_of()` produces it; `flat_index()` inverts it.
-**[built]**
+`FieldNames` is the record; `names_of()` produces it. The reverse direction is
+[the spelling index](#the-spelling-index).
 
 ## prefix versus name_prefix
 
-`prefix=` names the section a ConfigPart occupies in a config file, and the
-default environment-variable prefix. It is not part of any option name.
+`prefix=` names the section a root occupies in a config file, and the default
+environment-variable prefix. It is not part of any option name.
 
 `name_prefix=` leads every field name, in every source. It is part of the
 option name.
 
 pytest needs both at once: its logging options live in the `[pytest]` section
-and are individually called `log_cli_level`. **[built]**
+and are individually called `log_cli_level`.
 
 `prefix` is shared: every pytest plugin's options live in `[pytest]`, so it
-cannot distinguish one ConfigPart from another. `name_prefix` is the
-ConfigPart's identity inside that shared section, and the only thing that keeps
-`log_cli_level` and `cache_cli_level` apart. Any spelling that drops
-`name_prefix` drops the part's identity.
+cannot distinguish one root from another. `name_prefix` is the root's identity
+inside that shared section, and the only thing that keeps `log_cli_level` and
+`cache_cli_level` apart. Any spelling that drops `name_prefix` drops the
+root's identity.
 
-An `EnvSource`'s own prefix and the part's `prefix` compose: `EnvSource("APP")`
-reading a part with `prefix="log"` looks at `APP_LOG_*`. **[built]**
+An `EnvSource`'s own prefix and the root's `prefix` compose: `EnvSource("APP")`
+reading a root with `prefix="log"` looks at `APP_LOG_*`.
 
 ### When there is no prefix
 
-A part with no `prefix=` has no section of its own: its keys sit at the top
-level of the file, and its variables under the source's prefix alone. Nesting is
-opt-in, so an application with a single ConfigPart writes a flat config file.
-**[change]**: today the file side names the section after the class
-(`[LoggingConfig]`, undowncased) while the environment drops the segment. A
-section named after a Python class exposes an implementation detail, and
-renaming the class silently moves the section.
+A root with no `prefix=` has no section of its own: its keys sit at the top
+level of the file, and its variables under the source's prefix alone. Nesting
+is opt-in, so an application with a single root writes a flat config file. A
+class name is never a section: it is an implementation detail, and renaming
+the class would silently move the section.
 
-## Both spellings in files
+## Two spellings in files
 
 A nested table and a flat key reach the same field:
 
@@ -118,48 +106,34 @@ level = "DEBUG"
 log_cli_level = "DEBUG"
 ```
 
-`expand_flat_keys()` rewrites recognised flat keys into their structural paths;
-keys that are already structural pass through. A key that matches neither is
-kept, so the manager can report it as unknown ([I8](invariants.md#i8)).
-**[built]** as a mechanism, **[change]** in what counts as the structural
-spelling.
-
-Without the `log` segment the nested spelling cannot say which ConfigPart it
-means, and two plugins sharing the `[pytest]` section receive each other's
-values:
-
-```toml
-[pytest.cli]
-level = "NESTED"
-```
-```
-Logging.cli.level = NESTED      Cache.cli.level = NESTED    # both, silently
-```
-
-Both parts declare `prefix="pytest"`, differ only in `name_prefix`, and each
-has a `cli` sub-config. The flat spelling keeps them apart
-(`log_cli_level` versus `cache_cli_level`); today the nested spelling cannot.
-With `name_prefix` as a path segment, `[pytest.log.cli]` and
-`[pytest.cache.cli]` are distinct tables.
-
-## Unknown keys are judged across the section
-
-A shared section means a ConfigPart sees keys that belong to other parts.
-Unknown-key detection therefore belongs to the manager, which knows every
-declared type. A key is unknown only when no declared ConfigPart claims it.
-
-**[change]**: detection is per part today, so parts sharing a section warn
-about each other:
-
-```
-UnknownConfigKeyWarning: Unknown config option(s) for Logging: cache_cli_level
-UnknownConfigKeyWarning: Unknown config option(s) for Cache: log_cli_level
-```
-
-The warning fires on correct configuration, which
-[I8](invariants.md#i8) forbids. See [D8](decisions.md#d8), and
-[merging](merging.md#unknown-keys) for what happens to a key once it is judged
+These are the only two. The flat spelling is a key directly in the section.
+The nested spelling is the full structural path as tables, with the bare field
+name as the key. A key at an intermediate depth, `[pytest.log] cli_level`, is
 unknown.
+
+Anything in between would be ambiguous. `("file", "path")` is
+`[pytest.log.file] path` nested and `[pytest] log_file` flat, via `named()`.
+Allow `[pytest.log] file` and it means both the `file` table and the renamed
+leaf. Field names may also contain underscores, so `log_file_date_format` has
+no unique split. The two spellings are therefore not derived from each other
+by splitting or joining; each is looked up in
+[the index](#the-spelling-index) as what it is. Rationale in
+[D24](decisions.md#d24).
+
+The nested spelling carries `name_prefix` as a segment. Without it two roots
+sharing the `[pytest]` section, differing only in `name_prefix` and each with a
+`cli` nested part, would both read `[pytest.cli] level`. `[pytest.log.cli]`
+and `[pytest.cache.cli]` are distinct tables. Rationale in
+[D8](decisions.md#d8).
+
+## Unknown keys are judged across every declared root
+
+A shared section means a source sees keys that belong to several roots. A key
+is unknown only when [the index](#the-spelling-index), which holds every
+declared root, resolves it to nothing. No root judges, so no root warns about
+another root's keys, and the warning never fires on correct configuration
+([I8](invariants.md#i8)). What happens to an unknown key is
+[merging](merging.md#unknown-keys).
 
 ## Per-field overrides
 
@@ -167,38 +141,36 @@ unknown.
 spellings are re-derived from the override, so all three stay consistent. It
 exists for fields whose structural path and conventional name diverge:
 `file.path` would derive `log_file_path`, but pytest calls it `log_file`.
-**[built]**
 
 `named()` does not affect the nested spelling. `("file", "path")` stays
 `[pytest.log.file] path` nested and `[pytest] log_file` flat.
 
-`no_cli` suppresses the CLI option only. The field keeps its ini key and
+`no_cli` suppresses the CLI option only. The field keeps its file key and
 environment variable. pytest's `log_cli` is an ini-only switch of this kind.
-**[built]**
 
-`short("v")` adds a short option. `-o` and `-h` are reserved. **[built]**
+`no_ini` is the mirror of `no_cli`: it suppresses the file spelling and keeps
+the CLI option and, with `from_env`, the environment variable. A host that
+wants command-line-only options, or that scopes an override flag to file-backed
+fields, needs "has a file spelling" to be able to be false. It is `file_key`
+in [specs](specs.md#the-record).
+
+`short("v")` adds a short option to the field's own CLI form. `-o` and `-h`
+are reserved. Further forms, and forms that supply a constant, are
+[`form()`](specs.md#cli-forms).
 
 `env_named("SOURCE_DATE_EPOCH")` pins an absolute environment variable name: no
-source prefix, no part prefix, no derivation. **[new]**
-
-It exists for cross-tool conventions that every tool must spell identically.
-`named()` cannot serve, because the environment spelling is derived from the
-flat name it replaces. `env_named` sets one spelling and states it literally. A
-field carrying it still needs [`from_env`](sources.md#exposure-is-opt-in) to be
-read at all.
+source prefix, no root prefix, no derivation. It exists for cross-tool
+conventions that every tool must spell identically. `named()` cannot serve,
+because the environment spelling is derived from the flat name it replaces.
+`env_named` sets one spelling and states it literally. A field carrying it
+still needs [`from_env`](sources.md#exposure-is-opt-in) to be read at all.
 
 `formerly("write_to")` declares a legacy flat spelling. The field stays
 reachable under it from every source that has a flat spelling, a value arriving
 that way fires [`DeprecatedNameWarning`](diagnostics.md#warnings), and the
 spelling reaches a binding as [`FieldSpec.aliases`](specs.md#the-record). It is
 the only way an alias comes to exist: `named()` replaces the derived name and
-leaves nothing behind. **[new]**
-
-`no_ini` is the mirror of `no_cli`: it suppresses the file spelling and keeps
-the CLI option and, with `from_env`, the environment variable. A host that
-wants command-line-only options, or that scopes an override flag to file-backed
-fields, needs "has a file spelling" to be able to be false. **[new]**, tracked
-as `file_key` in [specs](specs.md).
+leaves nothing behind.
 
 ## The -o override key
 
@@ -206,65 +178,63 @@ as `file_key` in [specs](specs.md).
 -o log_cli_level=DEBUG      # the ini spelling
 ```
 
-The `-o` key is the flat name, the same string the ini file uses.
-**[change]**: it is currently the structural path, so with a `name_prefix` in
-play the user must write `-o cli.level=DEBUG`, a third namespace that appears
-nowhere else. The two spellings a user has seen, `log_cli_level` and
-`log.cli.level`, both silently do nothing today.
-
-Overrides are collected by a source of their own at
+The `-o` key is the flat name, the same string the ini file uses. Overrides are
+collected by a source of their own at
 [`override(30)`](sources.md#the-two-rungs-above-the-command-line), above the
 command line. `--log-level=A -o log_level=B` is `B`, and so is the same `-o`
 carried by [injected arguments](lifecycle.md#the-injected-arguments-loop).
-**[new]**: `-o` is applied as a post-merge fixup today, so what it outranks is
-undefined.
 
 A `-o` key matching no field is an
 [`UnknownOverrideKeyWarning`](diagnostics.md#warnings) naming the key and the
-ConfigPart ([I8](invariants.md#i8)). **[change]**: currently silent.
+roots that were searched ([I8](invariants.md#i8)).
 
-Rationale in [D1](decisions.md#d1). The dotted-path spelling is not retained as
-an alias. What `-o` reports as its origin is covered in
-[reporting](reporting.md#overrides-report-as-overrides).
+Rationale in [D1](decisions.md#d1). What `-o` reports as its origin is covered
+in [reporting](reporting.md#overrides-report-as-overrides).
 
 Which fields `-o` may reach is a [binding](binding-contract.md) matter. A host
-may narrow it to file-backed fields, and the pytest binding does. The addressing
-above is not negotiable.
+may narrow it to file-backed fields, and the pytest binding does. The
+addressing above is not negotiable.
 
-## Names are never constructed by hand
+## The spelling index
 
-Five places build or match a source-facing name without going through
-`_names.py`, and all five are wrong at the edges ([I1](invariants.md#i1)):
+`_names.py` derives spellings from paths. The manager's `SpellingIndex`, built
+at `declare()` over every declared root, resolves spellings back to paths.
+Those are the only two places a source-facing name is produced or recognised
+([I1](invariants.md#i1)). A source asks the index; it never splits a key,
+strips a prefix or compares token strings.
 
-| Place | Symptom |
-|---|---|
-| the nested file spelling | drops `name_prefix` ([above](#the-qualified-path)); the only user-visible one |
-| `_reject_bootstrap_only` | compares `--app-config-file` to the bare field name `config_file`; never matches when a `name_prefix` exists, so the guard does nothing |
-| `_apply_overrides` | [the `-o` key](#the-o-override-key) |
-| `ConfigFileDiscoverySource(config_file_cli_arg="config_file")` | a raw string that is only correct with no `name_prefix` |
-| the `config_source` / `addopts_field` / `bootstrap_only` scans | `recurse=False`, so the markers vanish inside a `SubConfig` ([I7](invariants.md#i7)) |
+```python
+index.flat("log_cli_level")                        # -> LoggingConfig, ("cli", "level")
+index.nested("pytest", ("log", "cli"), "level")    # -> the same
+index.cli("--log-cli-level")                       # -> the same
+index.env("PYTEST_LOG_CLI_LEVEL")                  # -> the same, for an EnvSource with no prefix
+```
 
-All five route through `flat_index()`, `names_of()` and `leaf_fields()`.
-**[change]** Rationale in [D7](decisions.md#d7); the nested spelling has its own
-decision, [D8](decisions.md#d8).
+Each lookup returns the root and the path, or nothing. The
+[`-o` key](#the-o-override-key) resolves through `flat()`, and
+`bootstrap_only` enforcement through `cli()`.
+
+The flat name, and with it the CLI option and the `-o` key, is one namespace
+across every declared root, whatever their `prefix`. `prefix` places keys in a
+file section and variables under an environment prefix; it does not scope
+option names, because `--log-level` has no section. A binding that scopes `-o`
+scopes which fields it reaches, never which namespace it reads.
 
 ## Collisions
 
-Two ConfigParts declaring the same flat name is one rule for every backend:
+Two roots declaring the same flat name, or one root's alias matching another's
+name, is one rule for every backend:
 
-- identical declared type and identical default: **adoption**. One option, both
-  parts read it. This is the migration case, a plugin and its host declaring the
-  same option during a transition.
+- specs identical in everything but path: **adoption**. One spelling, both
+  roots read it. This is the migration case, a plugin and its host declaring
+  the same option during a transition.
 - anything else: [`ConfigCollisionError`](diagnostics.md#errors) naming both
-  ConfigParts, the field paths and the ways out (`named()`, `no_cli`,
+  roots, the field paths and the ways out (`named()`, `no_cli`,
   `name_prefix`), raised at `declare()` because the declaration is wrong.
 
-**[change]**: the native CLI source silently skips the second registration and
-lets the second part read a value parsed under the first part's type, while the
-pytest binding raises a `ConfigLifecycleError`. Two bindings disagreeing about a
-core rule is what [conformance](binding-contract.md#conformance) exists to
-catch. A third spelling, an unexported `CLIConflictError` in the CLI parser, is
-why the error gets a [named type](diagnostics.md#errors).
+Adoption compares the whole [spec](specs.md), so the index holds one spec and
+it does not matter which root supplied it ([I3](invariants.md#i3)).
 
 A file key the host already declares is always adopted, never clobbered: the
-existing help and type survive and the value is read. **[built]**
+existing help and type survive and the value is read. Which host keys exist is
+a [binding](binding-contract.md) matter.

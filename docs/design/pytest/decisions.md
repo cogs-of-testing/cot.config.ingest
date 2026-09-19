@@ -18,7 +18,7 @@ them differently. What it may not do is violate an
 
 ## P1
 
-**The monkeypatch is removed.** ([binding](index.md#activation))
+**There is no monkeypatch.** ([binding](index.md#division-of-labour))
 
 `Parser.add_config`, `Config.get_config` and `Config.explain_config` are
 patched on at import time, through an entry point, into every environment the
@@ -104,7 +104,7 @@ Teaching the core name model about that split would put host compatibility
 policy into [names](../names.md). Making each dialect its own source keeps the
 core with one name model and puts the compatibility surface here, where it can
 be deleted when the legacy namespace is. It also settles which values get
-[coerced and which get checked](../types.md#values-from-typed-sources).
+[converted and which get checked](../types.md#two-dialects).
 
 *Cost:* two more source classes, and their relative ladder positions have to
 be decided.

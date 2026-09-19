@@ -11,60 +11,54 @@ elsewhere disagree, the rule wins.
 `("cli", "level")` is what a field is. Every name a user can type for it is
 derived from that path by `_names.py` and by nothing else: the CLI option, the
 ini key, the environment variable, the TOML table, the `-o` key and the
-`bootstrap_only` rejection message. No component may build a source-facing name
-by string manipulation.
-
-**[change]**: five places do
-([names](names.md#names-are-never-constructed-by-hand)).
+`bootstrap_only` rejection message. Every name a user did type is matched by
+[the spelling index](names.md#the-spelling-index) and by nothing else. No
+component builds, splits or compares a source-facing name.
 
 ## I2
 
 **Precedence is a total order with no exceptions.**
 
 Sources are sorted by their `precedence` integer and merged in that order.
-Nothing is special-cased above the ladder. `addopts` is not spliced into argv,
-defaults are not privileged, and the CLI is not hardcoded as final.
-
-**[built]**: see [the ladder](sources.md#the-precedence-ladder).
+Nothing is special-cased above the ladder. Injected arguments are not spliced
+into argv, defaults are not privileged, `-o` is not a fixup, and the CLI is not
+hardcoded as final. Two sources never share a rung, so the order is total
+([the ladder](sources.md#the-precedence-ladder)).
 
 ## I3
 
-**Declaration order does not affect the result.**
+**Neither declaration order nor the order sources were added affects the
+result.**
 
 A host collects declarations from independent plugins in an order nobody
-controls. Every resolution pass runs for all declared types before the next pass
-begins.
-
-**[built]**, pinned by `testing/test_lifecycle.py`. See
-[the passes](lifecycle.md#the-passes).
+controls, and their `discover()` hooks add sources in that same order. Every
+resolution step runs for all declared roots before the next begins, and a tie
+between sources is impossible rather than broken by insertion
+([lifecycle](lifecycle.md#resolution-is-an-iteration)).
 
 ## I4
 
 **The library never prints and never exits.**
 
 It renders help and reports that help was requested. The application owns the
-process.
-
-**[built]**: see [help](reporting.md#help).
+process ([help](reporting.md#help)).
 
 ## I5
 
 **Every value that reaches an instance has an origin.**
 
-That includes class defaults and values that arrived through the `from_parent`
-cascade. A value that cannot be attributed means the merge is wrong.
-
-**[built]**, except `-o`
-([reporting](reporting.md#overrides-report-as-overrides)).
+That includes class defaults, values that arrived through the `from_parent`
+cascade, and values carried by injected arguments, which name the source that
+contributed the tokens. A value that cannot be attributed means the merge is
+wrong.
 
 ## I6
 
 **Every value that reaches an instance matches its declared type.**
 
-A `str` field never holds `5`.
-
-**[change]**: only string-bearing sources are coerced today, and TOML values
-pass through unchecked ([types](types.md#values-from-typed-sources)).
+A `str` field never holds `5`. Conversion happens once, when a value enters
+[the store](merging.md#the-layered-store), so nothing downstream of the store
+sees a raw value ([types](types.md)).
 
 ## I7
 
@@ -73,25 +67,15 @@ pass through unchecked ([types](types.md#values-from-typed-sources)).
 A marker on a field three levels down behaves exactly as it does at the top
 level.
 
-**[change]**: `config_source`, `addopts_field` and `bootstrap_only` are honoured
-only on top-level fields
-([names](names.md#names-are-never-constructed-by-hand)).
-
 ## I8
 
 **User error is reported; it is never silently dropped.**
 
-A misspelled key, an option with no value and an `-o` key that addresses nothing
-each produce a warning or an error naming the thing that went wrong. Programmer
-error raises at `declare()`. Which of the three an input gets, and what the
-message must contain, is [diagnostics](diagnostics.md).
-
-**[change]**: three silent drops remain, the
-[`-o` key](names.md#the-o-override-key), a
-[CLI value beginning with `-`](sources.md#cli-parsing) and a
-[`config_source` file that is not TOML](sources.md#config-file-discovery).
+A misspelled key, an option with no value, an `-o` key that addresses nothing
+and a value that failed conversion each produce a warning or an error naming the
+thing that went wrong. Programmer error raises at `declare()`. Which of the
+three an input gets, and what the message must contain, is
+[diagnostics](diagnostics.md).
 
 A warning that fires on correct configuration violates this rule as much as a
-silent drop does, because it trains the user to stop reading warnings. See
-[unknown keys](names.md#unknown-keys-are-judged-across-the-section) for the case
-that does this today.
+silent drop does, because it trains the user to stop reading warnings.

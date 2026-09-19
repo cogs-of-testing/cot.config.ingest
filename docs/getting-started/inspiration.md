@@ -211,8 +211,8 @@ What the sketch got right and what it got wrong, both worth recording:
 
 Two of the sketch's types are still ahead of the code. `mode` wants
 `Literal["w", "a"]` and `auto_indent` wants `bool | int | None`; both are
-[specified](../design/types.md#literal) and neither is
-[built yet](../design/index.md#gap-list), which is why the declaration above
+[specified](../design/types.md#literal-and-enum) and neither is
+built yet ([the build order](../design/index.md#build-order)), which is why the declaration above
 softens them to `str` and `str | None`.
 
 ## The open questions, since answered
@@ -220,7 +220,7 @@ softens them to `str` and `str | None`.
 | Question | Where it landed |
 |---|---|
 | mapping of prefixes/underscores and sub-objects | [the qualified path](../design/names.md#the-qualified-path) — one path, rendered per source |
-| mapping of ini options | [both spellings in files](../design/names.md#both-spellings-in-files) — flat keys and nested tables reach the same field |
+| mapping of ini options | [both spellings in files](../design/names.md#two-spellings-in-files) — flat keys and nested tables reach the same field |
 | ingestion of backward compatibility fields | [ingest](../design/pytest/evolution.md#binding-the-specs) — host options become specs and join the store |
 | toml behaviours | a [typed-dialect source](../design/sources.md#dialect-is-a-property-of-the-source): values are checked, not coerced |
 | yaml behaviours | [admitted as a format](../design/sources.md#yaml), and deliberately still open |

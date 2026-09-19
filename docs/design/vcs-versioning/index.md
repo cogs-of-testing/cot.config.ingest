@@ -37,7 +37,7 @@ silently outranks a `setup.py` argument too.
 
 | vcs-versioning | core rule |
 |---|---|
-| `TagConfiguration` / `ScmConfiguration` / `GitConfiguration` and their three `from_data` classmethods | [`SubConfig`](../config-parts.md#configpart-and-subconfig) and the [assembly pass](../merging.md#building-sub-configs) |
+| `TagConfiguration` / `ScmConfiguration` / `GitConfiguration` and their three `from_data` classmethods | [nested parts](../config-parts.md#one-class-two-roles) and [assembly](../merging.md#building-nested-parts) |
 | `SETUPTOOLS_SCM_OVERRIDES_FOR_<DIST>`, a TOML document in a variable | [`TomlEnvSource`](../sources.md#two-sources-two-dialects) at the [`override` rung](../sources.md#the-two-rungs-above-the-command-line) |
 | `write_to` to `version_file`, `tag_regex` to `tag.regex`, `git_describe_command` to `scm.git.describe_command` | [`FieldSpec.aliases`](../specs.md#the-record) |
 | `ConfigOverridesDict`, `ALLOWED_OVERRIDE_KEYS`, `read_toml(schema=)` | the [field model](../config-parts.md#fields); three hand-maintained restatements of one class's shape |
@@ -85,12 +85,14 @@ spelling in the design derives statically from
 It is expressible without weakening I1: read the configuration, learn
 `dist_name`, then add an `EnvSource` whose prefix embeds it. Only the source's
 prefix is computed. But that is a source added during resolution on the basis
-of a value read during resolution, which needs
-[the fixpoint](../lifecycle.md#the-passes-iterate-to-a-fixpoint)
-([D5](../decisions.md#d5)), and it is the first use case for
-[`discover()`](../lifecycle.md#discover) that is not plugin loading.
+of a value read during resolution, which is what
+[the iteration](../lifecycle.md#resolution-is-an-iteration)
+([D5](../decisions.md#d5), [D23](../decisions.md#d23)) exists for, and it is
+the first use case for [`discover()`](../lifecycle.md#discover) that is not
+plugin loading.
 
-No new core rule. It moves D5 ahead of any port.
+No new core rule. It is the reason the iteration is built with the core rather
+than after it.
 
 ### Conversion for domain types
 
@@ -109,7 +111,7 @@ strings and are converted by hand in `from_data`, `_check_tag_regex` and
 written in a pyproject section. Coercion was `(raw, annotation) -> value`,
 with no access to where the value came from, while the
 [`Origin`](../reporting.md#the-manager-records-sources-refine) already knew the
-file. Now [coercion sees the origin](../types.md#coercion-sees-the-origin),
+file. Now [coercion sees the origin](../types.md#conversion-sees-the-origin),
 [D19](../decisions.md#d19).
 
 ### Deprecation was missing from the warning set
@@ -125,11 +127,10 @@ name was not expressible. Now `env_named()`.
 
 ## What a port would need first
 
-1. **Steps 1 to 8** of [the core order of work](../index.md#order-of-work).
-2. **Step 9, the fixpoint**, required by `_FOR_<DIST_NAME>`.
-3. **D18's registry and D19**, [deferred](../deferred.md#deferred) until this
-   port because they have no other consumer.
-4. Then the port, as a second binding.
+1. **Steps 1 to 8** of [the build order](../index.md#build-order). The
+   iteration, the registry and origin-aware conversion are all in it.
+2. Then the port, as a second binding, and its entry in
+   [conformance](../binding-contract.md#conformance).
 
 ## Why it is worth doing at all
 

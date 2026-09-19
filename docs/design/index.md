@@ -1,7 +1,7 @@
 # Design
 
 The normative design of `cot.config.ingest`: what the library is meant to be,
-why, and where the code has yet to catch up.
+why, and how it is built.
 
 ## The problem
 
@@ -53,52 +53,76 @@ provenance and the help output.
 
 **A change that makes that file harder to write is going the wrong way.** Its
 declaration must be able to use the real types pytest uses: `Literal["w", "a"]`
-for `log_file_mode` ([types](types.md#literal)) and `bool | int | None` for
-`log_auto_indent` ([types](types.md#unions)).
+for `log_file_mode` ([types](types.md#literal-and-enum)) and
+`bool | int | None` for `log_auto_indent` ([types](types.md#unions)).
 
 ## Non-goals
 
 - **Not a serialisation library.** Configuration is read, never written back.
 - **Not a schema language.** The type annotations are the schema.
 - **Not a runtime store.** Configuration freezes at `resolve()`
-  ([lifecycle](lifecycle.md#the-passes-iterate-to-a-fixpoint)). Change
+  ([lifecycle](lifecycle.md#resolution-is-an-iteration)). Change
   notification and hot reload are [deferred](deferred.md).
 - **Not an argparse replacement.** The CLI parser exists because options must
   be registrable after parsing has already happened once
   ([sources](sources.md#cli-parsing)). Anything beyond that belongs to the
   host.
 
-## Status markers
+## Where the code stands
 
-Every rule in these documents carries one:
+Nothing has been published. The first implementation was reviewed twice, and
+reading the resulting design without the code in view showed that the design's
+own consequences were not what the code was approaching. The code is therefore
+being rebuilt to these documents ([D20](decisions.md#d20)), in
+[the build order](#build-order), with the existing tests as the acceptance
+criteria.
 
-| Marker | Meaning |
-|---|---|
-| **[built]** | The code does this today. |
-| **[change]** | The code does something else. The code is wrong, not this document. |
-| **[new]** | Not in the code at all. |
+Until the rebuild lands, these documents describe the target and carry no
+status markers. The code in `src/` is the pre-rebuild shape and is not evidence
+of what the design says. When the new core is in place, every rule here is
+built by construction, and the marker discipline resumes for whatever drifts
+after that.
 
-A **[change]** or **[new]** rule is a commitment. If one turns out to be a bad
-idea, the rule changes here first and the reasoning is recorded in
-[Decisions](decisions.md).
+## The pipeline
+
+Everything below is one pipeline, and each document owns one stage of it:
+
+1. **Field model.** Classes become `FieldInfo` records; a field's identity is
+   its path ([ConfigParts](config-parts.md)).
+2. **Specs.** Each field becomes a `FieldSpec`, a pure function of its root:
+   every spelling, every CLI form, the closed value set ([Specs](specs.md)).
+3. **The index.** At `declare()` the manager builds one `SpellingIndex` over
+   every declared root and judges collisions ([Names](names.md)).
+4. **Sources.** Each reads its input, resolves spellings through the index and
+   yields readings per path, or unmatched spellings ([Sources](sources.md)).
+5. **The store.** Readings are converted on entry, with their origin, and kept
+   per path in ladder order ([Types](types.md), [Merging](merging.md)).
+6. **Projection.** Winner per path, the `from_parent` cascade, assembly and
+   construction ([Merging](merging.md)).
+7. **Resolution.** Steps 3 to 5 repeat from the same base until neither the
+   declared set nor the derived sources grow; then step 6 runs once
+   ([Lifecycle](lifecycle.md)).
+
+[Reporting](reporting.md) and [Diagnostics](diagnostics.md) read the store.
+[The binding contract](binding-contract.md) says what a host may put at step 4.
 
 ## The documents
 
 | Document | What it settles |
 |---|---|
 | [Invariants](invariants.md) | The eight rules everything else follows from |
-| [ConfigParts](config-parts.md) | Classes, fields, the field model, frozen semantics |
-| [Names](names.md) | The qualified path, `prefix`/`name_prefix`, `named()`, `-o`, collisions |
-| [Types](types.md) | Coercion, unions, `Literal`, where type checking happens |
-| [Sources](sources.md) | The source protocol, the precedence ladder, dialects, CLI parsing, file discovery |
-| [Lifecycle](lifecycle.md) | declare, resolve, get; the feedback passes; injected arguments |
-| [Merging](merging.md) | Deep merge, unknown keys, sub-config assembly, `from_parent` |
+| [ConfigParts](config-parts.md) | The class, the field model, roots and nested parts |
+| [Names](names.md) | The qualified path, `prefix`/`name_prefix`, the two file spellings, the index, `-o`, collisions |
+| [Types](types.md) | The registry, dialects, unions, `Literal`, what a failed conversion does |
+| [Sources](sources.md) | The reading protocol, the precedence ladder, dialects, CLI parsing, file discovery |
+| [Lifecycle](lifecycle.md) | declare, resolve, get; the iteration; injected arguments; the runtime layer |
+| [Merging](merging.md) | The layered store, unknown keys, assembly, `from_parent` |
 | [Specs](specs.md) | What an option is, as data, in the library's vocabulary |
 | [Reporting](reporting.md) | Provenance and help |
-| [Diagnostics](diagnostics.md) | The warning and error set, and which one an input gets |
+| [Diagnostics](diagnostics.md) | The warning and error set, strict mode, and which one an input gets |
 | [Binding contract](binding-contract.md) | The core/host boundary, and conformance |
-| [Decisions](decisions.md) | D1 to D19, core, with rationale and cost |
-| [Deferred](deferred.md) | Absent from the code, plus the open questions |
+| [Decisions](decisions.md) | D1 to D30, core, with rationale and cost |
+| [Deferred](deferred.md) | Not in scope, plus the open questions |
 
 Everything above is core: it holds for every host and for an application with
 no host at all. Host policy lives separately and may not be cited by a core
@@ -106,7 +130,7 @@ document:
 
 | Binding | |
 |---|---|
-| [pytest](pytest/index.md) | the binding as it is today |
+| [pytest](pytest/index.md) | the binding |
 | [pytest: Evolution](pytest/evolution.md) | the staged plan to replace pytest's config layer |
 | [pytest: Decisions](pytest/decisions.md) | P1 to P8, pytest policy |
 | [vcs-versioning](vcs-versioning/index.md) | a candidate binding, evaluated; no argument parser at all |
@@ -120,109 +144,36 @@ are self-contained. Read [the binding contract](binding-contract.md) before
 anything under [pytest/](pytest/index.md).
 
 If you are here to change behaviour, read [Decisions](decisions.md) first: a
-**[change]** rule already has a rationale and a recorded cost, and disagreeing
-with it means amending that record rather than the code.
+rule already has a rationale and a recorded cost, and disagreeing with it means
+amending that record before the code.
 
-## Gap list
+## Build order
 
-Every rule the code does not yet satisfy. **Break** marks a row that changes
-behaviour someone may be relying on. **Step** is where it lands in
-[the order of work](#order-of-work).
-
-| Gap | Status | Break | Where | Decision | Step |
-|---|---|---|---|---|---|
-| `name_prefix` missing from the nested file spelling | change | ✓ | [names](names.md#the-qualified-path) | [D8](decisions.md#d8) | [5](#order-of-work) |
-| Unknown keys judged per-part, not across the section | change |  | [names](names.md#unknown-keys-are-judged-across-the-section) | [D8](decisions.md#d8) | [5](#order-of-work) |
-| A part with no `prefix=` takes its class name as a file section | change | ✓ | [names](names.md#when-there-is-no-prefix) | — | [5](#order-of-work) |
-| `-o` addresses the structural path, not the flat name | change | ✓ | [names](names.md#the-o-override-key) | [D1](decisions.md#d1) | [5](#order-of-work) |
-| `-o` values report as CLI options | change |  | [reporting](reporting.md#overrides-report-as-overrides) | [D1](decisions.md#d1) | [4](#order-of-work) |
-| An unrecognised `-o` key is silent | change |  | [names](names.md#the-o-override-key) | [D1](decisions.md#d1) | [5](#order-of-work) |
-| `-o` is a post-merge fixup with no rung | new |  | [sources](sources.md#the-two-rungs-above-the-command-line) | [D14](decisions.md#d14) | [4](#order-of-work) |
-| Booleans have no `--no-` form | new |  | [sources](sources.md#cli-parsing) | [D2](decisions.md#d2) | [6](#order-of-work) |
-| A value beginning with `-` is dropped | change | ✓ | [sources](sources.md#cli-parsing) | [D2](decisions.md#d2) | [6](#order-of-work) |
-| Unions take the first member unconditionally | change | ✓ | [types](types.md#unions) | [D3](decisions.md#d3) | [7](#order-of-work) |
-| `Literal` is unsupported | new |  | [types](types.md#literal) | [D18](decisions.md#d18) | [7](#order-of-work) |
-| `Enum` is unsupported | new |  | [types](types.md#enum) | [D18](decisions.md#d18) | [deferred](deferred.md#deferred) |
-| No conversion for domain types; the coercible set is fixed | new |  | [types](types.md#the-conversion-registry) | [D18](decisions.md#d18) | [deferred](deferred.md#deferred) |
-| Conversion cannot see where a value came from | change |  | [types](types.md#coercion-sees-the-origin) | [D19](decisions.md#d19) | [deferred](deferred.md#deferred) |
-| Typed sources are neither coerced nor checked | change | ✓ | [types](types.md#values-from-typed-sources) | [D4](decisions.md#d4) | [7](#order-of-work) |
-| `EnvSource(parse_toml=)` conflates two dialects in one source | change | ✓ | [sources](sources.md#two-sources-two-dialects) | [D15](decisions.md#d15) | [7](#order-of-work) |
-| Every field is environment-readable without opting in | change | ✓ | [sources](sources.md#exposure-is-opt-in) | [D13](decisions.md#d13) | [8](#order-of-work) |
-| YAML is not a supported file format | new |  | [sources](sources.md#yaml) | [D17](decisions.md#d17) | [16](#order-of-work) |
-| `resolve()` does not reach a fixpoint | change |  | [lifecycle](lifecycle.md#the-passes-iterate-to-a-fixpoint) | [D5](decisions.md#d5) | [9](#order-of-work) |
-| Backends disagree on option collisions | change | ✓ | [names](names.md#collisions) | [D6](decisions.md#d6) | [3](#order-of-work) |
-| No cross-backend conformance suite | new |  | [the binding contract](binding-contract.md#conformance) | [D6](decisions.md#d6) | [14](#order-of-work) |
-| `config_source` / `addopts_field` / `bootstrap_only` ignored below the top level | change |  | [names](names.md#names-are-never-constructed-by-hand) | [D7](decisions.md#d7) | [1](#order-of-work) |
-| `bootstrap_only` compares munged token strings | change |  | [lifecycle](lifecycle.md#the-injected-arguments-loop) | [D7](decisions.md#d7) | [1](#order-of-work) |
-| A config file named explicitly but absent raises a bare `FileNotFoundError` | change |  | [sources](sources.md#config-file-discovery) | [D16](decisions.md#d16) | [3](#order-of-work) |
-| `config_source` silently ignores non-`.toml` files | change |  | [sources](sources.md#config-file-discovery) | [D7](decisions.md#d7) | [2](#order-of-work) |
-| `ConfigFileDiscoverySource` uses a raw name and private access | change |  | [sources](sources.md#config-file-discovery) | [D7](decisions.md#d7) | [1](#order-of-work) |
-| `DeclaringSource` / `OriginAware` tested with `getattr` | change |  | [sources](sources.md#the-protocol) | — | [2](#order-of-work) |
-| Origins recorded before unknown keys are pruned | change |  | [merging](merging.md#unknown-keys) | — | [2](#order-of-work) |
-| `from_parent` with no matching parent field is a silent no-op | change |  | [merging](merging.md#the-from_parent-cascade) | — | [3](#order-of-work) |
-| Mutable defaults copied shallowly | change |  | [config parts](config-parts.md#configpart-and-subconfig) | — | [2](#order-of-work) |
-| A `ConfigPart` nested in a `ConfigPart` fails obscurely | new |  | [config parts](config-parts.md#configpart-and-subconfig) | — | [2](#order-of-work) |
-| Warnings and errors are ad hoc; no shared base, three silent drops | change | ✓ | [diagnostics](diagnostics.md) | [D16](decisions.md#d16) | [3](#order-of-work) |
-| No way to declare a legacy spelling, and using one warns nowhere | new |  | [names](names.md#per-field-overrides) | — | [10](#order-of-work) |
-| No way to pin an absolute environment variable name | new |  | [names](names.md#per-field-overrides) | — | [8](#order-of-work) |
-| Missing required fields raise a bare `TypeError` | change | ✓ | [config parts](config-parts.md#required-and-optional) | [D16](decisions.md#d16) | [3](#order-of-work) |
-| There is no spec layer; the derivation is entangled with the source | new |  | [specs](specs.md) | [D9](decisions.md#d9) | [10](#order-of-work) |
-| The store keeps only the winning value | change |  | [merging](merging.md#the-layered-store) | [D10](decisions.md#d10) | [11](#order-of-work) |
-| No runtime layer or rung; a late write cannot reach a fragment | new |  | [lifecycle](lifecycle.md#the-runtime-layer) | [D11](decisions.md#d11), [D14](decisions.md#d14) | [12](#order-of-work) |
-| Fragments imply no instance and have no lifetime | new |  | [lifecycle](lifecycle.md#plugin-instances-and-lifetime) | [D11](decisions.md#d11) | [15](#order-of-work) |
-| Help is not rendered from specs | new |  | [reporting](reporting.md#help) | [D12](decisions.md#d12) | [13](#order-of-work) |
-| The injected-arguments rung is named for pytest | change | ✓ | [sources](sources.md#the-precedence-ladder) | — | [2](#order-of-work) |
-| No way to suppress a field's file spelling | new |  | [names](names.md#per-field-overrides) | — | [5](#order-of-work) |
-
-Host policy is tracked separately, in
-[the pytest gap list](pytest/index.md#what-the-binding-predates) and
-[P1 to P8](pytest/decisions.md).
-
-The rows without a decision are corrections with no design content. The rest
-carry a cost that was argued.
-
-## Order of work
-
-The gap list says what; this says in what order. A step's **needs** are the
-steps whose absence would make it wrong, not merely inconvenient.
+The order the new core is built in. A step's **needs** are the steps whose
+absence would make it wrong, not merely inconvenient. Each step is tested
+against a table before the next begins, because the whole point of the pipeline
+is that every stage is a value.
 
 | # | Step | Delivers | Needs |
 |---|---|---|---|
-| 1 | **Hand-built names** ([D7](decisions.md#d7)) | the five name-construction sites route through `_names.py`; markers work at every depth | — |
-| 2 | **Small corrections** | deep-copied defaults, `isinstance` protocol checks, the nested-`ConfigPart` error, one suffix-to-source map, the `injected` rename | — |
-| 3 | **Diagnostics** ([D16](decisions.md#d16)) | `ConfigError` / `ConfigWarning` and the set beneath them; `ConfigDeclarationError` for the `from_parent` and nesting checks; collisions raise `ConfigCollisionError` in both backends | 1, because every message names a field |
-| 4 | **The ladder** ([D14](decisions.md#d14)) | `override(30)` and `runtime(40)`; `-o` becomes a source | — |
-| 5 | **Names** ([D8](decisions.md#d8), [D1](decisions.md#d1)) | the qualified path, unknown keys judged across the section, `-o` by flat name and warning when unmatched, no class-name sections, `no_ini` | 1, 3, 4 |
-| 6 | **CLI parsing** ([D2](decisions.md#d2)) | `--no-` forms; unconditional value consumption | 3 |
-| 7 | **Types** ([D3](decisions.md#d3), [D4](decisions.md#d4), [D15](decisions.md#d15), [D18](decisions.md#d18) for `Literal`) | left-to-right unions, checked typed values, split env dialects, `Literal` | 3 |
-| 8 | **Environment opt-in** ([D13](decisions.md#d13)) | `from_env` and `env_named`; no implicit exposure | 7, because the dialect split moves the same constructors |
-| 9 | **Fixpoint resolve** ([D5](decisions.md#d5)) | passes 2 to 5 iterate; `discover()` becomes implementable | 3 |
-| 10 | **Specs** ([D9](decisions.md#d9)) | `field_specs(T)`, host-free, bound by the native parser first; `formerly()`, `aliases` and `DeprecatedNameWarning` | 5, 7, 8, because a spec is spellings and every spelling has to be settled first |
-| 11 | **Layered store** ([D10](decisions.md#d10)) | every source's value per path; provenance as a projection | 4, and the origins/pruning fix from step 2 |
-| 12 | **Runtime layer** ([D11](decisions.md#d11)) | `manager.set()`; late writes land at `runtime`, fragments rebuild | 4, 11 |
-| 13 | **Help from specs** ([D12](decisions.md#d12)) | one renderer, showing what registration calls cannot | 10 |
-| 14 | **Conformance suite** ([D6](decisions.md#d6)) | one suite, parameterised over bindings | 10, and everything it compares |
-| 15 | **Fragment lifetime** ([D11](decisions.md#d11)) | context-managed instances | 12 |
-| 16 | **YAML** ([D17](decisions.md#d17)) | a third file format | 2 for the suffix map; otherwise blocked on [its open questions](deferred.md#open-questions) |
+| 1 | **Field model and names** | `fields_of()`, `names_of()`; one class, nested detection, the root keywords | – |
+| 2 | **Specs and the index** | `field_specs()`, `CliForm`, `EnvSpelling`; `SpellingIndex` with collision and adoption; every marker | 1 |
+| 3 | **Diagnostics** | `ConfigError` / `ConfigWarning` and the set beneath them; aggregation; strict mode | – |
+| 4 | **Conversion** | the registry with its built-in entries; unions; `Literal` and `Enum`; origin-aware converters | 3 |
+| 5 | **The store and projection** | readings in, `LayeredValue` out; shadowed failures; the cascade; assembly; construction checks | 2, 3, 4 |
+| 6 | **Sources** | `TomlSource`, `IniSource`, `EnvSource`, `TomlEnvSource`, the native parser and `CLISource.bind()`, `OverrideSource`, `InjectedArgsSource`, discovery; distinct rungs | 2, 5 |
+| 7 | **The manager** | `declare()`, the iteration, `get()`, `partial()`, `origin_of()`, `explain()`, `format_help()` | 5, 6 |
+| 8 | **The runtime layer and fragment lifetime** | `set()`, `RuntimeSource`, `instance()` contexts | 7 |
+| 9 | **The pytest binding** | `add_config()`, `get_config()`, the forward binder, the host source; the example plugin | 7 |
+| 10 | **Conformance** | one suite over the native parser and the pytest binding; the yardstick runs through it | 6, 9 |
+| 11 | **YAML** | a third file format, once [its questions](deferred.md#open-questions) are answered | 6 |
 
-Three things this ordering makes visible:
+The existing tests under `testing/` are the acceptance criteria for steps 1 to
+9, renamed where the public API changed: `SubConfig` is `ConfigPart`,
+`AddoptsSource` is `InjectedArgsSource`, `Precedence.ADDOPTS` is
+`Precedence.INJECTED`, `addopts_field` is `injected_args`, and
+`EnvSource(parse_toml=True)` is `TomlEnvSource`. A test that pinned old
+behaviour a decision rejects is rewritten to the decision, citing it.
 
-- **Steps 1 to 4 are the whole foundation**, and only the `injected` rename is
-  breaking.
-- **The breaking set lands between steps 5 and 8**: names, types and the
-  environment. Grouping them into one release keeps the number of releases
-  anyone has to read the changelog for down to one.
-- **Step 10 is the hinge.** Specs need every spelling settled, and help,
-  conformance and any second binding need specs. It is also
-  [the pytest binding's stage 1](pytest/evolution.md#stages).
-
-The binding's [staged plan](pytest/evolution.md#stages) consumes steps 10, 11,
-12 and 15 as its stages 1, 3 and 7.
-
-A second binding, [vcs-versioning](vcs-versioning/index.md), evaluated and not
-committed to, needs steps 1 to 8 and then step 9, because an environment
-variable whose name embeds a value read from the configuration cannot be added
-without [the fixpoint](lifecycle.md#the-passes-iterate-to-a-fixpoint). D18's
-registry and D19 exist because of that evaluation and have no other consumer
-yet, so they are [deferred](deferred.md#deferred) rather than sequenced:
-implemented against its requirements when it is ported, not ahead of them.
+The pytest binding's [staged plan](pytest/evolution.md#stages) starts after
+step 9; its stages 1 and 3 are delivered by the rebuild.

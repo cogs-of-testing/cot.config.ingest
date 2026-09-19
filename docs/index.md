@@ -221,16 +221,14 @@ pytest -p cot.config.example_plugin --timing-report --timing-threshold=0.5
 ## Where the code and the design differ
 
 [**Design**](design/index.md) is the normative specification, split by
-component. Every rule is marked **[built]**, **[change]** or **[new]**, so the
-design and the gap between it and the code are one artifact rather than two
-that drift apart. The [gap list](design/index.md#gap-list) collects every
-outstanding rule in one table, and [order of work](design/index.md#order-of-work)
-sequences them.
+component. The code is being rebuilt to it
+([D20](design/decisions.md#d20)) in [the build order](design/index.md#build-order);
+until that lands, the code is the pre-rebuild shape and the design describes
+the target.
 
-Absent from the code entirely: plugin discovery, list append and reset merge
-semantics, YAML files, the conversion registry, the spec layer, the layered
-store, the runtime layer, and change notification. Those are
-[deferred](design/deferred.md) or sequenced, and never to be assumed.
+Absent from the code either way: plugin discovery, list append and reset merge
+semantics, YAML files, and change notification. Those are
+[deferred](design/deferred.md) and never to be assumed.
 
 ## The documents
 

@@ -14,9 +14,8 @@ which one an input gets. This document implements [I8](invariants.md#i8).
 Two corollaries:
 
 - **A warning must never fire on correct configuration.** A warning the user
-  learns to ignore is worth less than no warning at all. This is what makes
-  [unknown keys judged per part](names.md#unknown-keys-are-judged-across-the-section)
-  a defect.
+  learns to ignore is worth less than no warning at all. This is why
+  [unknown keys are judged across every root](names.md#unknown-keys-are-judged-across-every-declared-root).
 - **Programmer error never waits for `resolve()`.** A collision or a malformed
   declaration is known the moment `declare()` sees the class, and reporting it
   then puts the traceback at the call site that caused it.
@@ -25,22 +24,22 @@ Two corollaries:
 
 ```
 ConfigWarning(UserWarning)
-├── UnknownConfigKeyWarning       a key no declared ConfigPart claims          [built]
-├── UnknownOverrideKeyWarning     an -o key addressing no field                [new]
-├── DeprecatedNameWarning         a field reached by a deprecated alias        [new]
-└── RuntimeMutationWarning        a fragment rebuilt after resolve             [new]
+├── UnknownConfigKeyWarning       a spelling no declared root claims
+├── UnknownOverrideKeyWarning     an -o key addressing no field
+├── DeprecatedNameWarning         a field reached by a deprecated alias
+├── ShadowedValueWarning          a losing value that failed conversion
+└── RuntimeMutationWarning        a fragment rebuilt after resolve
 ```
 
 A shared base lets a host filter the whole set with one `filterwarnings` entry,
 and lets an application promote them to errors wholesale.
-`UnknownConfigKeyWarning` is a `UserWarning` today with no base of its own.
-**[change]**
 
 | Warning | Fires when | Names |
 |---|---|---|
-| `UnknownConfigKeyWarning` | a source supplied a key that no declared part claims, at any depth ([merging](merging.md#unknown-keys)) | every offending dotted path, and the source it came from |
-| `UnknownOverrideKeyWarning` | an [`-o` key](names.md#the-o-override-key) matches no field's flat name | the key, and the parts that were searched |
+| `UnknownConfigKeyWarning` | a source yielded an [`Unmatched`](sources.md#the-protocol) spelling ([merging](merging.md#unknown-keys)) | every offending spelling, and the source it came from |
+| `UnknownOverrideKeyWarning` | an [`-o` key](names.md#the-o-override-key) matches no field's flat name | the key, and the roots that were searched |
 | `DeprecatedNameWarning` | a value arrives under one of a field's [aliases](specs.md#the-record) rather than its current name | the alias, the current spelling, and the source that used it |
+| `ShadowedValueWarning` | a reading [failed conversion](types.md#when-conversion-fails) and a higher layer won its path | the field, the declared type, the value, its origin, and the origin that shadowed it |
 | `RuntimeMutationWarning` | a [runtime write](lifecycle.md#the-runtime-layer) rebuilds a fragment | the fragment, the field, and the writer |
 
 `DeprecatedNameWarning` is a `ConfigWarning` rather than a `DeprecationWarning`
@@ -50,47 +49,50 @@ person running the interpreter. A host that prefers the standard category
 filters this one and re-emits.
 
 An alias is a declared fact ([`FieldSpec.aliases`](specs.md#the-record)), so
-noticing that one was used is the merge's job, not the field's.
+noticing that one was used is the store's job, not the field's.
 
 ## Errors
 
 ```
 ConfigError(Exception)
-├── ConfigLifecycleError        declaring after resolve; a declaration cycle     [built]
-├── ConfigDeclarationError      a class the library cannot honour                [new]
-│   └── ConfigCollisionError    two parts claim one name, incompatibly           [new]
-├── ConfigUsageError            input that cannot be honoured as written         [new]
-├── ConfigValueError            a value cannot be the field's declared type      [new]
-└── MissingConfigError          required fields nobody supplied                  [new]
+├── ConfigLifecycleError        declaring after resolve; an iteration that never settles
+├── ConfigDeclarationError      a class or a source set the library cannot honour
+│   └── ConfigCollisionError    two roots claim one name, incompatibly
+├── ConfigUsageError            input that cannot be honoured as written
+├── ConfigValueError            a value cannot be the field's declared type
+└── MissingConfigError          required fields nobody supplied
 ```
 
 | Error | Raised when | Names |
 |---|---|---|
-| `ConfigLifecycleError` | `declare()` after `resolve()`; the [fixpoint](lifecycle.md#the-passes-iterate-to-a-fixpoint) fails to converge | the type, and the phase that had closed |
-| `ConfigDeclarationError` | `declare()` finds a [`ConfigPart` nested as a field](config-parts.md#configpart-and-subconfig), an [annotation with no conversion](types.md#the-conversion-registry), a [`from_parent` field whose parent has no such field](merging.md#the-from_parent-cascade), or a `short()` that is `-o` or `-h` | the class, the field path, and what was expected |
-| `ConfigCollisionError` | two parts declare one flat name with differing type or default ([collisions](names.md#collisions)) | both parts, both field paths, and `named()` / `no_cli` / `name_prefix` |
-| `ConfigUsageError` | an option's value is missing; a [`config_source`](sources.md#config-file-discovery) names an unreadable suffix or a file that does not exist; `-o` addresses a field with no file spelling under a host that scopes it | the option or path, and what was expected |
-| `ConfigValueError` | a value fails [coercion or the type check](types.md#values-from-typed-sources); a value falls outside a [`Literal`](types.md#literal) | the field path, the declared type, the value, and its [origin](reporting.md#the-provenance-api) |
+| `ConfigLifecycleError` | `declare()` after `resolve()`; [the iteration](lifecycle.md#resolution-is-an-iteration) exceeds its bound | the root, and the phase that had closed, or the set that kept growing |
+| `ConfigDeclarationError` | `declare()` finds a [nested part with a root keyword](config-parts.md#one-class-two-roles), an [annotation with no conversion](types.md#the-conversion-registry), a [`from_parent` field whose parent has no such field](merging.md#the-from_parent-cascade), or a `short()` that is `-o` or `-h`; a source is added at [a rung already held](sources.md#no-two-sources-share-a-rung) | the class, the field path, and what was expected; or both sources |
+| `ConfigCollisionError` | two roots declare one flat name with differing specs ([collisions](names.md#collisions)) | both roots, both field paths, and `named()` / `no_cli` / `name_prefix` |
+| `ConfigUsageError` | an option's value is missing; a [`config_source`](sources.md#config-file-discovery) names an unreadable suffix or a file that does not exist; a [`bootstrap_only`](lifecycle.md#the-injected-arguments-loop) field is set from injected arguments; a [runtime write](lifecycle.md#the-runtime-layer) targets a feedback field; `-o` addresses a field with no file spelling under a host that scopes it | the option or path, and what was expected |
+| `ConfigValueError` | a winning value [fails conversion or the check](types.md#when-conversion-fails); a value falls outside a [`Literal`](types.md#literal-and-enum); [direct construction](types.md#construction-checks) is passed the wrong type | the field path, the declared type, the value, and its [origin](reporting.md#the-provenance-api) |
 | `MissingConfigError` | construction finds required fields no source supplied | every missing field at once, and the origins that were found |
 
 `ConfigError` is the base every one of them shares, so an application can
 distinguish "this library rejected the configuration" from any other exception
-in one `except`. **[new]**
+in one `except`.
 
-Four consolidations are folded into that table:
+## Strict mode
 
-- `ConfigLifecycleError` currently derives from `RuntimeError` and is also what
-  a collision raises. Collisions get their own type, and the base becomes
-  `ConfigError`. **[change]**
-- `CLIConflictError` exists in `_cli_parser.py`, is not exported, and appears
-  in no document. It is `ConfigCollisionError` under a second name; it goes.
-  **[change]**
-- A config file named explicitly but absent raises a bare `FileNotFoundError`
-  ([sources](sources.md#config-file-discovery)). It is input that cannot be
-  honoured, so `ConfigUsageError`. **[change]**
-- Required fields raise a bare `TypeError`
-  ([config parts](config-parts.md#required-and-optional)). `MissingConfigError`
-  carries the ConfigPart and the origins that were found. **[change]**
+`ConfigManager(strict=True)` raises where the table above warns, for the
+warnings that report input:
+
+| warning | raised as |
+|---|---|
+| `UnknownConfigKeyWarning` | `ConfigUsageError` |
+| `UnknownOverrideKeyWarning` | `ConfigUsageError` |
+| `DeprecatedNameWarning` | `ConfigUsageError` |
+| `ShadowedValueWarning` | `ConfigValueError` |
+
+`RuntimeMutationWarning` is exempt: it reports what the host did, not what the
+user wrote, and promoting it would make [`manager.set()`](lifecycle.md#the-runtime-layer)
+unusable. Strict mode is the application's choice, so a host that wants the
+default to be strict makes it so in its binding. Rationale in
+[D28](decisions.md#d28).
 
 ## What every diagnostic says
 
@@ -113,12 +115,12 @@ the same string.
 
 Diagnostics are collected per `resolve()` and raised or warned once, naming
 every instance. A config file with six typos produces one warning listing six
-keys. **[built]** for unknown keys and required fields, **[new]** as a general
-rule.
+keys. Only [the final iteration](lifecycle.md#resolution-is-an-iteration)
+reports; an earlier one saw fewer options and its complaints may be stale.
 
-The reason is [I3](invariants.md#i3): the order declared types are visited is
-not something the user controls, so a per-type diagnostic stream would come out
-in an order nobody can predict or diff.
+The reason is [I3](invariants.md#i3): the order declared roots are visited is
+not something the user controls, so a per-root diagnostic stream would come
+out in an order nobody can predict or diff.
 
 ## The library still does not print
 

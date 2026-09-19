@@ -19,13 +19,8 @@ run them, and which mistakes this codebase has already made.
 | when does what happen? | `docs/design/lifecycle.md` |
 | which source wins? | `docs/design/sources.md` |
 | does this warn or raise? | `docs/design/diagnostics.md` |
-| why is it like that? | `docs/design/decisions.md` — D1 to D19, each with a cost |
-| what is still wrong with the code? | `docs/design/index.md#gap-list`, sequenced by `#order-of-work` |
-
-Every rule carries **[built]**, **[change]** (the code does something else and
-the *code* is wrong) or **[new]**. A **[change]** rule is a commitment, not a
-suggestion: implement it, or amend the decision that records it. Do not "fix" the
-code to match a **[change]** description of today's behaviour.
+| why is it like that? | `docs/design/decisions.md` — D1 to D30, each with a cost |
+| in what order is the core built? | `docs/design/index.md#build-order` |
 
 **Core and host policy are separate.** Everything directly under `docs/design/`
 is core — true for every host and for an application with none.
@@ -33,21 +28,30 @@ is core — true for every host and for an application with none.
 boundary. Core code must never import, name or accommodate a host, and a core
 document may never cite a `pytest/` one.
 
-### Keeping the design and the code in step
+### Where the code stands
 
-The markers are the whole value of these documents, and they only stay true if
-they are maintained with the code. When you change behaviour:
+Nothing is published, and the code is being rebuilt to the design
+(`docs/design/decisions.md#d20`). Until the rebuild lands:
 
-1. flip the rule's marker in the component document (**[change]**/**[new]** →
-   **[built]**),
-2. delete its row from the gap list in `docs/design/index.md`,
-3. if you did something the design did not call for, add the rule *first* — and
-   a decision if it has a cost worth arguing.
+- the design describes the target and carries no status markers;
+- the code under `src/` is the pre-rebuild shape and is **not evidence** of
+  what the design says. Do not port its behaviour into the documents, and do
+  not "fix" the documents to match it;
+- a behaviour change is a change to the design first, with a decision if it
+  has a cost worth arguing, and the code follows;
+- the tests under `testing/` are the acceptance criteria for the rebuild,
+  renamed where the public API changed (`docs/design/index.md#build-order`
+  lists the renames).
 
-A change that leaves a **[change]** rule describing code that no longer does that
-is worse than no documentation, because the next reader trusts it.
+When the new core is in place, every rule is built by construction and the
+marker discipline (**[built]** / **[change]** / **[new]**, maintained with the
+code) resumes for whatever drifts after that.
 
 ## Layout
+
+The pre-rebuild layout. The rebuild keeps the module split where it matches
+the pipeline in `docs/design/index.md#the-pipeline` and renames where it does
+not; update this block as modules land.
 
 ```
 src/cot/config/     the library; every _-prefixed module is internal
@@ -76,12 +80,11 @@ docs/design/        normative design
 4. **Read field metadata through `_fields`**, never by re-implementing a
    `get_origin(x) is Annotated` loop. That duplication, in eight places, is what
    the field model replaced.
-5. **Derive names through `_names.py`**, never by string manipulation. Five sites
-   currently do it by hand and all five are wrong at the edges — that is
-   invariant I1 and decision D7.
+5. **Derive names through `_names.py` and resolve them through the index**,
+   never by string manipulation. That is invariant I1 and decisions D7 and D21.
 6. `cot` is a **PEP 420 namespace package** — do not add `src/cot/__init__.py`.
    The PEP 561 marker lives at `src/cot/config/py.typed`.
-7. Keep inheritance simple. Sub-configs pick up fields via `__mro__`; elaborate
+7. Keep inheritance simple. Parts pick up fields via `__mro__`; elaborate
    multiple inheritance causes field resolution nobody can follow.
 
 ## The acceptance test
@@ -101,11 +104,10 @@ yet buildable.
 
 ## Things that will surprise you
 
-- **Installing the package patches pytest.** `pytest_plugin.py` monkeypatches
-  `Parser` and `Config` through a `pytest11` entry point, at import time. It is
-  additive only, `-p no:cot_config` disables it, and P1 removes it. A type
-  checker cannot see the patched methods; `manager_for_config(config).get(T)` is
-  the typed equivalent.
+- **Installing the pre-rebuild package patches pytest.** `pytest_plugin.py`
+  monkeypatches `Parser` and `Config` through a `pytest11` entry point, at
+  import time. It is additive only and `-p no:cot_config` disables it. The
+  rebuilt binding has no patch and no entry point (P1).
 - **`resolve()` is multi-pass on purpose**, because you cannot know every source
   until you have read some configuration. Each pass runs for *every* declared
   type before the next begins — that is invariant I3, and
@@ -115,10 +117,10 @@ yet buildable.
 
 ## Absent from the code entirely
 
-Do not assume these exist: plugin discovery (the `Discoverable` protocol has no
-implementors), list append/reset merge semantics, YAML files, the spec layer,
-the layered store, the runtime layer, change notification and hot reload, and
-validation hooks beyond required-field and unknown-kwarg checks.
+Do not assume these exist in either the old code or the rebuild: plugin
+discovery (the `Discoverable` protocol has no implementors), list append/reset
+merge semantics, YAML files, change notification and hot reload, and validation
+hooks beyond required-field, unknown-kwarg and type checks.
 
 Injected arguments (`addopts`) *do* accumulate: every contribution is appended to
 the one source, later ones winning.
