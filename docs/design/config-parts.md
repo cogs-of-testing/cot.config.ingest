@@ -15,42 +15,39 @@ class LoggingConfig(ConfigPart, prefix="pytest", name_prefix="log"):
     cli: LogCliConfig
 ```
 
-`ConfigPart` is a top-level unit — the thing a plugin declares and a host
+`ConfigPart` is a top-level unit, the thing a plugin declares and a host
 retrieves. `SubConfig` is a nested section inside one. They share all
-construction behaviour; the distinction is structural, and it is what
+construction behaviour. The distinction is structural, and it is what
 `FieldInfo.is_sub_config` reports.
 
-A `ConfigPart` used as a nested field is an error, raised at declaration time and
-naming the field and both classes. **[new]** — today it produces
-`TypeError: Outer missing required field(s): inner` at build time, which points
-nowhere useful.
+A `ConfigPart` used as a nested field is an error raised at declaration time,
+naming the field and both classes. **[new]**: today it produces
+`TypeError: Outer missing required field(s): inner` at build time.
 
 Both are:
 
-- **keyword-only** — there is no positional construction **[built]**
-- **frozen** — `__setattr__` and `__delattr__` raise **[built]**
-- **materialised** — defaults are written into the instance `__dict__`, so
+- **keyword-only**, with no positional construction **[built]**
+- **frozen**: `__setattr__` and `__delattr__` raise **[built]**
+- **materialised**: defaults are written into the instance `__dict__`, so
   equality, `repr` and [`explain()`](reporting.md#the-provenance-api) do not
-  depend on whether a value was passed or inherited from the class body
-  **[built]**
-- **hashable** — list/dict/set values are frozen structurally for `__hash__`,
-  rather than making every config object unhashable because one field might hold
-  a list **[built]**
+  depend on whether a value was passed or inherited **[built]**
+- **hashable**: list, dict and set values are frozen structurally for
+  `__hash__` **[built]**
 
 A mutable class-level default is copied per instance. The copy is deep, so a
-`list[list[str]]` default is not shared through its inner lists. **[change]** —
-the copy is currently shallow.
+`list[list[str]]` default is not shared through its inner lists. **[change]**:
+the copy is shallow today.
 
 `@dataclass_transform(eq_default=True, kw_only_default=True, frozen_default=True)`
 gives type checkers the right synthesised `__init__`. **[built]**
 
-Construction is also where type checking belongs — see
+Construction is also where type checking belongs. See
 [types](types.md#values-from-typed-sources).
 
 ## Fields
 
-Type annotations are **required**. There is no inference: a class attribute
-without an annotation is not a field. **[built]**
+Type annotations are required. A class attribute without an annotation is not a
+field. **[built]**
 
 The field model in `_fields.py` is the single source of truth about a class's
 shape. `fields_of(cls)` walks the MRO, resolves annotations with
@@ -58,8 +55,8 @@ shape. `fields_of(cls)` walks the MRO, resolves annotations with
 
 | Attribute | Meaning |
 |---|---|
-| `path` | `("cli", "level")` — the identity ([I1](invariants.md#i1)) |
-| `name` | `"level"` — the bare attribute |
+| `path` | `("cli", "level")`, the identity ([I1](invariants.md#i1)) |
+| `name` | `"level"`, the bare attribute |
 | `annotation` | as written, `Annotated[...]` preserved |
 | `type` | `Annotated` and `Optional` stripped |
 | `default` | the class-level default, or `MISSING` |
@@ -68,16 +65,14 @@ shape. `fields_of(cls)` walks the MRO, resolves annotations with
 | `is_sub_config` | whether `type` is a `SubConfig` subclass |
 
 No other module may re-derive this. A `get_origin(x) is Annotated` loop outside
-`_fields.py` is a bug — that duplication, in eight places, is what the field
-model replaced. **[built]**
+`_fields.py` is a bug. **[built]**
 
-Results are cached per `(cls, recurse)` in a `WeakKeyDictionary`, so inspecting
-classes defined inside test functions does not leak them. **[built]**
+Results are cached per `(cls, recurse)` in a `WeakKeyDictionary`, so classes
+defined inside test functions do not leak. **[built]**
 
 Inheritance stays simple: sub-configs pick up fields via `__mro__`, base classes
-first. Elaborate multiple inheritance produces field resolution nobody can
-follow, and is not supported beyond what the acceptance test needs
-(`LogCliConfig(LogOutputConfig)`, `LoggingConfig(LogOutputConfig, ConfigPart)`).
+first. Nothing beyond what the acceptance test needs is supported, which is
+`LogCliConfig(LogOutputConfig)` and `LoggingConfig(LogOutputConfig, ConfigPart)`.
 **[built]**
 
 ## Markers
@@ -106,7 +101,7 @@ level: str @ from_parent @ help("log level") = "WARNING"      # _MarkerMixin.__r
 | `contributes(v)` | presence contributes a fixed value | [specs](specs.md#derivation-over-declaration) |
 
 Every one of them works at any depth ([I7](invariants.md#i7)). `config_source`,
-`injected_args` and `bootstrap_only` currently do not — see
+`injected_args` and `bootstrap_only` currently do not; see
 [names](names.md#names-are-never-constructed-by-hand). `env_named`, `no_ini`,
 `from_env`, `counted` and `contributes` are **[new]**.
 
@@ -116,9 +111,9 @@ because they describe the ConfigPart, not a field. See
 
 ## Required and optional
 
-A field with no default and no `SubConfig` type is **required**: if no source
+A field with no default and no `SubConfig` type is required. If no source
 supplies it, construction raises
 [`MissingConfigError`](diagnostics.md#errors) naming every missing field at once,
-along with the origins that *were* found. A `SubConfig` field never needs a
-default — the manager builds it from its own defaults. **[built]**, except that
+along with the origins that were found. A `SubConfig` field never needs a
+default; the manager builds it from its own defaults. **[built]**, except that
 the error is a bare `TypeError` today **[change]**.

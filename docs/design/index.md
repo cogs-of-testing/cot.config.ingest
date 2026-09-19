@@ -1,14 +1,14 @@
 # Design
 
-This is the normative design of `cot.config.ingest`: what the library is meant
-to be, why, and where the code has yet to catch up.
+The normative design of `cot.config.ingest`: what the library is meant to be,
+why, and where the code has yet to catch up.
 
 ## The problem
 
 An application that reads configuration from more than one place ends up
 declaring each option more than once. pytest is the worked example: every
-logging option exists as a CLI option *and* as an ini key, declared by two
-different calls, reconciled by hand at read time:
+logging option exists as a CLI option and as an ini key, declared by two
+different calls and reconciled by hand at read time:
 
 ```python
 add_option_ini("--log-cli-level", dest="log_cli_level", default=None, ...)
@@ -17,18 +17,17 @@ level = get_option_ini(config, "log_cli_level", "log_level")   # by hand, per op
 ```
 
 Ninety lines of `pytest_addoption` and a local helper produce thirteen ini keys
-and thirteen options — twelve of them paired, plus one of each that stands alone
-— with the fallback chains open-coded at each use site. Adding `pyproject.toml`
-means a third mechanism.
+and thirteen options, with the fallback chains open-coded at each use site.
+Adding `pyproject.toml` means a third mechanism.
 
-The duplication is not accidental. Each source needs different things: a parser
-must be told an option exists before it can parse it; a file needs a section and
-a key; an environment variable needs a name. What is *missing* is a single
-declaration those three can all be derived from.
+Each source needs different things: a parser must be told an option exists
+before it can parse it, a file needs a section and a key, an environment
+variable needs a name. What is missing is a single declaration those three can
+all be derived from.
 
 ## What this library is
 
-A declaration of configuration **structure** — nested, typed, annotated — from
+A declaration of configuration structure, nested, typed and annotated, from
 which every source-facing name is derived, and into which every source's values
 are merged by a single precedence rule, with provenance recorded throughout.
 
@@ -46,29 +45,28 @@ is marked `from_parent`.
 
 ## The yardstick
 
-`testing/test_pytest_logging.py` declares pytest's entire logging plugin — the
+`testing/test_pytest_logging.py` declares pytest's entire logging plugin, the
 thirteen ini options in `docs/pytest-logging-options.txt` plus the CLI-only
-`log_disable` — as one nested structure, and checks each is reachable by its
-real pytest name from ini, TOML, env and CLI, with the fallback chains, the
+`log_disable`, as one nested structure. It checks each is reachable by its real
+pytest name from ini, TOML, env and CLI, with the fallback chains, the
 provenance and the help output.
 
-**A change that makes that file harder to write is going the wrong way.** It is
-the acceptance criterion for the design, and its declaration must be able to use
-the *real* types pytest uses: `Literal["w", "a"]` for `log_file_mode`
-([types](types.md#literal)), `bool | int | None` for `log_auto_indent`
-([types](types.md#unions)).
+**A change that makes that file harder to write is going the wrong way.** Its
+declaration must be able to use the real types pytest uses: `Literal["w", "a"]`
+for `log_file_mode` ([types](types.md#literal)) and `bool | int | None` for
+`log_auto_indent` ([types](types.md#unions)).
 
 ## Non-goals
 
 - **Not a serialisation library.** Configuration is read, never written back.
-- **Not a schema language.** The type annotations are the schema; there is no
-  parallel declaration format.
+- **Not a schema language.** The type annotations are the schema.
 - **Not a runtime store.** Configuration freezes at `resolve()`
   ([lifecycle](lifecycle.md#the-passes-iterate-to-a-fixpoint)). Change
   notification and hot reload are [deferred](deferred.md).
-- **Not an argparse replacement.** The CLI parser exists because options must be
-  registrable after parsing has already happened once
-  ([sources](sources.md#cli-parsing)). Anything beyond that belongs to the host.
+- **Not an argparse replacement.** The CLI parser exists because options must
+  be registrable after parsing has already happened once
+  ([sources](sources.md#cli-parsing)). Anything beyond that belongs to the
+  host.
 
 ## Status markers
 
@@ -80,8 +78,8 @@ Every rule in these documents carries one:
 | **[change]** | The code does something else. The code is wrong, not this document. |
 | **[new]** | Not in the code at all. |
 
-A **[change]** or **[new]** rule is a commitment, not a wish. If one turns out to
-be a bad idea, the rule changes here first and the reasoning is recorded in
+A **[change]** or **[new]** rule is a commitment. If one turns out to be a bad
+idea, the rule changes here first and the reasoning is recorded in
 [Decisions](decisions.md).
 
 ## The documents
@@ -93,36 +91,33 @@ be a bad idea, the rule changes here first and the reasoning is recorded in
 | [Names](names.md) | The qualified path, `prefix`/`name_prefix`, `named()`, `-o`, collisions |
 | [Types](types.md) | Coercion, unions, `Literal`, where type checking happens |
 | [Sources](sources.md) | The source protocol, the precedence ladder, dialects, CLI parsing, file discovery |
-| [Lifecycle](lifecycle.md) | declare → resolve → get, the feedback passes, injected arguments |
+| [Lifecycle](lifecycle.md) | declare, resolve, get; the feedback passes; injected arguments |
 | [Merging](merging.md) | Deep merge, unknown keys, sub-config assembly, `from_parent` |
 | [Specs](specs.md) | What an option is, as data, in the library's vocabulary |
-| [Reporting](reporting.md) | Provenance and help — what the library tells the user |
+| [Reporting](reporting.md) | Provenance and help |
 | [Diagnostics](diagnostics.md) | The warning and error set, and which one an input gets |
 | [Binding contract](binding-contract.md) | The core/host boundary, and conformance |
-| [Decisions](decisions.md) | D1–D19, core, with rationale and cost |
+| [Decisions](decisions.md) | D1 to D19, core, with rationale and cost |
 | [Deferred](deferred.md) | Absent from the code, plus the open questions |
 
-Everything above is **core**: it holds for every host and for an application with
+Everything above is core: it holds for every host and for an application with
 no host at all. Host policy lives separately and may not be cited by a core
 document:
 
 | Binding | |
 |---|---|
 | [pytest](pytest/index.md) | the binding as it is today |
-| [pytest → Evolution](pytest/evolution.md) | the staged plan to replace pytest's config layer |
-| [pytest → Decisions](pytest/decisions.md) | P1–P8, pytest policy |
-| [vcs-versioning](vcs-versioning/index.md) | a candidate binding, evaluated — no argument parser at all |
+| [pytest: Evolution](pytest/evolution.md) | the staged plan to replace pytest's config layer |
+| [pytest: Decisions](pytest/decisions.md) | P1 to P8, pytest policy |
+| [vcs-versioning](vcs-versioning/index.md) | a candidate binding, evaluated; no argument parser at all |
 
-**Reading order.** [Invariants](invariants.md) first — they are short and
-everything else refers back to them. Then [ConfigParts](config-parts.md) and
-[Names](names.md), which are what a user of the library actually touches. Then
-[Sources](sources.md), [Lifecycle](lifecycle.md) and [Merging](merging.md),
-which are how a value gets from a file to a field. [Reporting](reporting.md),
-[Diagnostics](diagnostics.md) and [Specs](specs.md) are self-contained.
-
-Read [the binding contract](binding-contract.md) before anything under
-[pytest/](pytest/index.md) — it is what says which of the two you are looking
-at.
+**Reading order.** [Invariants](invariants.md) first. Then
+[ConfigParts](config-parts.md) and [Names](names.md), which are what a user of
+the library touches. Then [Sources](sources.md), [Lifecycle](lifecycle.md) and
+[Merging](merging.md), which are how a value gets from a file to a field.
+[Reporting](reporting.md), [Diagnostics](diagnostics.md) and [Specs](specs.md)
+are self-contained. Read [the binding contract](binding-contract.md) before
+anything under [pytest/](pytest/index.md).
 
 If you are here to change behaviour, read [Decisions](decisions.md) first: a
 **[change]** rule already has a rationale and a recorded cost, and disagreeing
@@ -130,9 +125,8 @@ with it means amending that record rather than the code.
 
 ## Gap list
 
-Every rule the code does not yet satisfy, in one place. This is the difference
-between the design and `main`. **Break** marks a row that changes behaviour
-someone may be relying on; the rest are additive or corrective.
+Every rule the code does not yet satisfy. **Break** marks a row that changes
+behaviour someone may be relying on.
 
 | Gap | Status | Break | Where | Decision |
 |---|---|---|---|---|
@@ -179,29 +173,28 @@ someone may be relying on; the rest are additive or corrective.
 
 Host policy is tracked separately, in
 [the pytest gap list](pytest/index.md#what-the-binding-predates) and
-[P1–P8](pytest/decisions.md).
+[P1 to P8](pytest/decisions.md).
 
-The rows without a decision are corrections with no design content — there is
-nothing to weigh, only work to do. The rest carry a cost that was argued.
+The rows without a decision are corrections with no design content. The rest
+carry a cost that was argued.
 
 ## Order of work
 
-The gap list says *what*; this says *in what order*, and why some rows cannot
-move. A step's **needs** are the steps whose absence would make it wrong, not
-merely inconvenient.
+The gap list says what; this says in what order. A step's **needs** are the
+steps whose absence would make it wrong, not merely inconvenient.
 
 | # | Step | Delivers | Needs |
 |---|---|---|---|
 | 1 | **Hand-built names** ([D7](decisions.md#d7)) | the five name-construction sites route through `_names.py`; markers work at every depth | — |
-| 2 | **Small corrections** | deep-copied defaults, `isinstance` protocol checks, the nested-`ConfigPart` error, one suffix→source map, the `injected` rename | — |
-| 3 | **Diagnostics** ([D16](decisions.md#d16)) | `ConfigError` / `ConfigWarning` and the set beneath them | 1 — every message names a field, and step 1 is what makes the name right |
+| 2 | **Small corrections** | deep-copied defaults, `isinstance` protocol checks, the nested-`ConfigPart` error, one suffix-to-source map, the `injected` rename | — |
+| 3 | **Diagnostics** ([D16](decisions.md#d16)) | `ConfigError` / `ConfigWarning` and the set beneath them | 1, because every message names a field |
 | 4 | **The ladder** ([D14](decisions.md#d14)) | `override(30)` and `runtime(40)`; `-o` becomes a source | — |
 | 5 | **Names** ([D8](decisions.md#d8), [D1](decisions.md#d1)) | the qualified path, unknown keys judged across the section, `-o` by flat name | 1, 3, 4 |
 | 6 | **CLI parsing** ([D2](decisions.md#d2)) | `--no-` forms; unconditional value consumption | 3 |
 | 7 | **Types** ([D3](decisions.md#d3), [D4](decisions.md#d4), [D15](decisions.md#d15), [D18](decisions.md#d18), [D19](decisions.md#d19), `Literal`) | left-to-right unions, checked typed values, split env dialects, the conversion registry, origin-aware paths | 3 |
-| 8 | **Environment opt-in** ([D13](decisions.md#d13)) | `from_env`; no implicit exposure | 7 — the dialect split moves the same constructors |
-| 9 | **Fixpoint resolve** ([D5](decisions.md#d5)) | passes 2–5 iterate; `discover()` becomes implementable | 3 |
-| 10 | **Specs** ([D9](decisions.md#d9)) | `field_specs(T)`, host-free | 5, 7, 8 — a spec is spellings, and every spelling has to be settled first |
+| 8 | **Environment opt-in** ([D13](decisions.md#d13)) | `from_env`; no implicit exposure | 7, because the dialect split moves the same constructors |
+| 9 | **Fixpoint resolve** ([D5](decisions.md#d5)) | passes 2 to 5 iterate; `discover()` becomes implementable | 3 |
+| 10 | **Specs** ([D9](decisions.md#d9)) | `field_specs(T)`, host-free | 5, 7, 8, because a spec is spellings and every spelling has to be settled first |
 | 11 | **Layered store** ([D10](decisions.md#d10)) | every source's value per path; provenance as a projection | 4, and the origins/pruning fix from step 2 |
 | 12 | **Runtime layer** ([D11](decisions.md#d11)) | late writes land at `runtime`, fragments rebuild | 4, 11 |
 | 13 | **Help from specs** ([D12](decisions.md#d12)) | one renderer, showing what registration calls cannot | 10 |
@@ -211,23 +204,22 @@ merely inconvenient.
 
 Three things this ordering makes visible:
 
-- **Steps 1–4 are the whole foundation**, and only one of them (the `injected`
-  rename) is breaking. Everything downstream either names a field, reports a
-  problem, or sorts a source.
-- **The breaking set lands between steps 5 and 8** — names, types and the
-  environment. Grouping them into one release is what keeps the number of
-  releases anyone has to read the changelog for down to one.
+- **Steps 1 to 4 are the whole foundation**, and only the `injected` rename is
+  breaking.
+- **The breaking set lands between steps 5 and 8**: names, types and the
+  environment. Grouping them into one release keeps the number of releases
+  anyone has to read the changelog for down to one.
 - **Step 10 is the hinge.** Specs need every spelling settled, and help,
   conformance and any second binding need specs. It is also
-  [the pytest binding's stage 1](pytest/evolution.md#stages), which is why it
-  cannot be reached by skipping the name work.
+  [the pytest binding's stage 1](pytest/evolution.md#stages).
 
 The binding's [staged plan](pytest/evolution.md#stages) consumes steps 10, 11,
-12 and 15 as its stages 1, 3 and 7. Nothing else here is visible to a host.
+12 and 15 as its stages 1, 3 and 7.
 
-A second binding — [vcs-versioning](vcs-versioning/index.md), evaluated and not
-committed to — needs steps 1–8 and then step 9, because an environment variable
-whose name embeds a value read from the configuration cannot be added without
-[the fixpoint](lifecycle.md#the-passes-iterate-to-a-fixpoint). D18 and D19 exist
-because of that evaluation and have no other consumer yet, which is an argument
-for implementing them against its requirements rather than ahead of them.
+A second binding, [vcs-versioning](vcs-versioning/index.md), evaluated and not
+committed to, needs steps 1 to 8 and then step 9, because an environment
+variable whose name embeds a value read from the configuration cannot be added
+without [the fixpoint](lifecycle.md#the-passes-iterate-to-a-fixpoint). D18 and
+D19 exist because of that evaluation and have no other consumer yet, which is
+an argument for implementing them against its requirements rather than ahead
+of them.
