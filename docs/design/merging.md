@@ -84,6 +84,11 @@ instead of open-coded per option. pytest hand-rolls the same fallback for
 Matching is by field name, not by [`named()`](names.md#per-field-overrides)
 override. The child's own value always wins. **[built]**
 
+A `from_parent` field whose parent declares no field of that name is a
+[`ConfigDeclarationError`](diagnostics.md#errors) at `declare()`. **[change]**:
+it is silently a no-op today, so a misplaced marker looks like a cascade that
+never fires.
+
 A cascaded value is attributed to wherever the parent got it, not to the child's
 default ([I5](invariants.md#i5)): `--log-level DEBUG` reports `cli.level` as
 `inherited from level (--log-level)`. **[built]**

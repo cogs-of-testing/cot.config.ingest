@@ -20,7 +20,7 @@ class FieldSpec:
     path: tuple[str, ...]       # ("cli", "level"), the identity (I1)
     flat: str                   # "log_cli_level"
     long: str | None            # "--log-cli-level", None when no_cli
-    negative: str | None        # "--no-log-cli", booleans only
+    negative: str | None        # "--no-verbose", booleans with a CLI option
     short: str | None           # "-v"
     file_key: str | None        # None when the field has no file spelling
     env_key: str | None         # None unless the field carries from_env
@@ -34,7 +34,7 @@ class FieldSpec:
     accumulates_to: Any | None  # the value presence contributes, if fixed
     counts: bool                # occurrences are summed
 
-    aliases: tuple[str, ...]    # legacy spellings
+    aliases: tuple[str, ...]    # from formerly()
     help: str
     group: str
 ```
@@ -49,6 +49,11 @@ may re-derive what an option looks like.
 - **It is the boundary.** Everything downstream of a spec is host-shaped and
   everything upstream is the field model
   ([the contract](binding-contract.md#vocabulary-stops-at-the-boundary)).
+- **The native parser is the first binder.** `CLISource` binds specs to the
+  library's own parser the way the pytest binding binds them to argparse. The
+  parser's private registration record, `_cli_parser.FieldSpec` today, is what
+  `field_specs()` replaces, and [conformance](binding-contract.md#conformance)
+  has two backends before a second host exists.
 
 ## The vocabulary is the library's
 
@@ -77,7 +82,7 @@ nothing can be inferred.
 | `long` / `short` / `flat` | the [qualified path](names.md#the-qualified-path), `named()`, `short()` | – |
 | `file_key` | the flat name, unless suppressed | `no_ini` |
 | `env_key` | the flat name, only when the field opts in | `from_env`, required |
-| `aliases` | `named()` plus declared legacy spellings | – |
+| `aliases` | nothing; a legacy name is not in the type | `formerly()`, required |
 | `counts` | nothing; `-j 4` and `-v -v` are both `int` with a short option | required |
 | `accumulates_to` | nothing; the constant is not in the type | required |
 

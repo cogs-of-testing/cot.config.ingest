@@ -19,7 +19,7 @@ run them, and which mistakes this codebase has already made.
 | when does what happen? | `docs/design/lifecycle.md` |
 | which source wins? | `docs/design/sources.md` |
 | does this warn or raise? | `docs/design/diagnostics.md` |
-| why is it like that? | `docs/design/decisions.md` — D1–D17, each with a cost |
+| why is it like that? | `docs/design/decisions.md` — D1 to D19, each with a cost |
 | what is still wrong with the code? | `docs/design/index.md#gap-list`, sequenced by `#order-of-work` |
 
 Every rule carries **[built]**, **[change]** (the code does something else and

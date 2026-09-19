@@ -17,6 +17,11 @@ Present in the design as intent, absent from the code, and not to be assumed:
   observer raises. Everything about this is open, starting with whether a
   frozen configuration that can be replaced wholesale is a better answer than a
   mutable one that can be updated in place.
+- **The conversion registry and origin-aware conversion.**
+  [D18](decisions.md#d18) and [D19](decisions.md#d19) are decided, not
+  sequenced. Their one prospective consumer is
+  [vcs-versioning](vcs-versioning/index.md), and they are implemented against
+  its requirements when it is ported. `Literal` is not deferred with them.
 - **Environment templating.** `host = "${DB_HOST}"` substitution.
 - **Custom name transformers.** User-supplied path-to-name functions.
 
@@ -47,21 +52,13 @@ Undecided. Unlike a **[change]** rule, these have no committed answer.
    fall back to `Path.cwd()` ([sources](sources.md#config-file-discovery)).
    Should a manager with no `CLISource` be required to state its own base
    directory instead?
-6. **`Literal` has no decision record.** It is the one substantive
-   [**[new]** rule](types.md#literal) with design content that is not argued
-   anywhere. Write it up as a decision, or leave it?
-7. **How much of a fragment's lifetime is the library's?**
+6. **How much of a fragment's lifetime is the library's?**
    [D11](decisions.md#d11) gives a ConfigPart a context manager and the manager
    enters it "when the host asks". A host with no obvious configure/teardown
    pair has nowhere natural to put that. Does the library offer a default
    scope, or is entering always the host's call?
-8. **Bulk environment opt-in.** [D13](decisions.md#d13) makes `from_env`
+7. **Bulk environment opt-in.** [D13](decisions.md#d13) makes `from_env`
    per-field, which is verbose for a twelve-factor application where every
    field is meant to be readable. A class keyword would restore the bulk case
    without restoring the implicit default, but a whole-class opt-in is one edit
    away from being the thing D13 removed.
-
-*Settled since this list was written:* whether missing required fields deserve
-their own exception type. They get
-[`MissingConfigError`](diagnostics.md#errors), carrying the ConfigPart and the
-origins that were found.

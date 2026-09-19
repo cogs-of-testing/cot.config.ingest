@@ -74,6 +74,11 @@ specific than the option it competes with. `--log-level=A -o log_level=B` is
 `B`. As a source at a rung,
 [its origin can say so](reporting.md#overrides-report-as-overrides).
 
+The pairs come from every argv-parsing source, typed or
+[injected](lifecycle.md#the-injected-arguments-loop). An `-o` carried by
+injected arguments lands at the same rung and outranks a typed option, which is
+what splicing injected arguments into argv gave pytest.
+
 `runtime` is the top of the ladder and stays the top. A
 [runtime write](lifecycle.md#the-runtime-layer) happens after everything else
 has been merged, with the whole configuration in view, so it must win or the
@@ -102,7 +107,7 @@ or by insertion order. **[built]**
 | `IniSource` | one INI file, section case-insensitive | string | – | file + key |
 | `CLISource` | argv tokens | string | ✓ | option, `-s/--long` if short exists |
 | `InjectedArgsSource` | tokens from an `injected_args` field | string | ✓ | `injected --long` |
-| `OverrideSource` | `-o key=value` pairs | string | – | `-o key` |
+| `OverrideSource` | `-o key=value` pairs from every argv-parsing source | string | – | `-o key` |
 | `EnvSource` | `os.environ` or an injected dict | string | – | variable name |
 | `TomlEnvSource` | the same, values parsed as TOML | typed | – | variable name |
 | `ConfigFileDiscoverySource` | finds a file, delegates | delegates | – | delegates |
@@ -247,9 +252,10 @@ field reference, not a hardcoded `"config_file"` string
 source's public API rather than `env_source._environ`. **[change]**
 
 A relative path resolves against `CLISource.invocation_dir`, or the process cwd
-if there is no CLI source. A file named explicitly but absent is
-`FileNotFoundError`; a file merely discovered to be absent is not an error.
-**[built]**
+if there is no CLI source. A file named explicitly but absent is a
+[`ConfigUsageError`](diagnostics.md#errors) naming the path and the field or
+option that named it; a file merely discovered to be absent is not an error.
+**[change]**: the first is a bare `FileNotFoundError` today.
 
 When a discovered file becomes a source is covered by
 [the passes](lifecycle.md#the-passes).

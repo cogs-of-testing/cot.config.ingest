@@ -55,7 +55,6 @@ repeatable=True       ->  action="append"
 counts=True           ->  action="count"
 values=(...)          ->  choices=(...)
 accumulates_to=X      ->  action="store_const", const=X
-optional=True         ->  nargs="?"
 file_key + annotation ->  addini(type="string"|"bool"|"int"|"float"|"linelist"|"paths")
 aliases               ->  addini(aliases=...)
 ```

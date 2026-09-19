@@ -128,12 +128,15 @@ The affected fragment is rebuilt, and a
 writer. **[new]**
 
 ```
-app.option.setup_show = True
-  RuntimeMutationWarning: SetupConfig mutated after resolve;
+manager.set(OutputConfig, "color", False, writer="pager")
+  RuntimeMutationWarning: OutputConfig.color set by pager after resolve;
   rebuilt, and any instance derived from it recreated
 
-manager.origin_of(SetupConfig, "setup_show")   ->  runtime:setupplan
+manager.origin_of(OutputConfig, "color")   ->  runtime:pager
 ```
+
+`manager.set(T, path, value, writer=)` is the write. `writer` names whoever
+made it and appears in the warning and in the origin.
 
 The warning is there because a fragment implies an object, so mutating it late
 means destroying and rebuilding that object. Rationale in

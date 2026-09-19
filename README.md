@@ -103,91 +103,24 @@ config.file.path       # the --log-file / log_file value
 
 ## Using it
 
+The usage walkthrough, names, precedence, provenance and help live in
+[the documentation](docs/index.md); it
+is executed by `testing/test_docs_index.py` the same way this README is by
+`testing/test_readme.py`. In short:
+
 ```python
 import sys
-from pathlib import Path
 
-from cot.config import CLISource, ConfigManager, EnvSource, TomlSource
+from cot.config import CLISource, ConfigManager, EnvSource
 
-manager = ConfigManager(sources=[
-    TomlSource(Path("pyproject.toml")),
-    EnvSource("PYTEST"),
-    CLISource(sys.argv[1:]),
-])
+manager = ConfigManager(sources=[EnvSource(), CLISource(sys.argv[1:])])
 manager.declare(LoggingConfig)
-
 config = manager.get(LoggingConfig)
 ```
 
-Three phases: `declare()` registers a type and its options, `resolve()` runs the
-bootstrap once for everything declared, `get()` returns the built instance.
-`get()` resolves implicitly; calling `resolve()` yourself is how you pin the
-moment configuration freezes. Declaring after that raises
-`ConfigLifecycleError`.
-
-The split exists because a host collects declarations from independent plugins
-before any of them can be resolved — in pytest, every plugin's
-`pytest_addoption` runs before a single argument is parsed.
-
-### Names
-
-One structural path, a different spelling per source. For
-`LoggingConfig(prefix="pytest", name_prefix="log")`:
-
-| path | CLI | INI / flat | env | TOML nested |
-|---|---|---|---|---|
-| `("level",)` | `--log-level` | `log_level` | `PYTEST_LOG_LEVEL` | `[pytest] level` |
-| `("cli","level")` | `--log-cli-level` | `log_cli_level` | `PYTEST_LOG_CLI_LEVEL` | `[pytest.cli] level` |
-
-File sources accept both spellings, so a nested table and a flat prefixed key
-reach the same field. `prefix=` names the config-file section and namespaces the
-environment; `name_prefix=` prefixes the option names. They are separate because
-pytest's logging options live in `[pytest]` but are individually called
-`log_cli_level`.
-
-> Every field currently gets an environment variable. The design
-> [makes that opt-in](docs/design/sources.md#exposure-is-opt-in) — a field will
-> need a `from_env` marker to be readable from the environment at all.
-
-### Precedence
-
-```
-defaults(-1) < file(15) < addopts(18) < env(20) < cli(25)
-```
-
-These are defaults, not an enum — every source takes `precedence=`, and that
-number is the only thing that decides a winner:
-
-```python
-from cot.config import Precedence, TomlSource
-
-TomlSource(path, precedence=Precedence.CLI + 1)   # outranks a typed argument
-```
-
-### Where did this value come from?
-
-Merging several sources means the winner is not obvious from any one of them:
-
-```python
-manager.origin_of(LoggingConfig, "cli.level")
-# Origin(kind="env", location="PYTEST_LOG_CLI_LEVEL", precedence=20)
-
-print(manager.explain(LoggingConfig))
-# field           value       origin
-# --------------------------------------------------
-# level           'WARNING'   default:level default
-# cli.level       'DEBUG'     env:PYTEST_LOG_CLI_LEVEL
-# file.path       None        default:file.path default
-```
-
-An option injected through an `addopts` field reports as
-`addopts --log-cli-level` rather than looking like something you typed.
-
-### Help
-
-`manager.format_help()` returns the rendered option help and
-`manager.help_requested()` reports whether `-h`/`--help` was passed. Neither
-prints nor exits — this is a library, the application owns the process.
+`declare()` registers a type, `get()` resolves every declared type once and
+returns the built instance, and `manager.explain(LoggingConfig)` says where each
+value came from.
 
 ## pytest integration (a hack, on purpose)
 
@@ -236,16 +169,6 @@ def pytest_configure(config):
 The intended end state is the reverse of this: pytest using the library
 directly, with no patching at all.
 
-### Example plugin
-
-`cot.config.example_plugin` is a worked example — a slow-test reporter with a
-nested structure, the `from_parent` cascade, `named()`, `no_cli`, help text, ini
-and CLI. It is **not** auto-enabled:
-
-```bash
-pytest -p cot.config.example_plugin --timing-report --timing-threshold=0.5
-```
-
 ## Installing
 
 ```bash
@@ -255,40 +178,14 @@ pip install cot-config
 Requires Python 3.10+. Read the pytest section above first — installing is
 activating.
 
-## Not implemented yet
+## Where the code and the design differ
 
-Present in `docs/design/` as intent, absent from the code:
-
-- plugin discovery — the `Discoverable` protocol has no implementors
-- list merge semantics (append / reset)
-- YAML config files — [in the design](docs/design/sources.md#yaml), deliberately
-  underspecified
-- change notification, hot reload, dependency graphs
-- type coercion as a validation hook (construction checks required fields and
-  rejects unknown kwargs; coercion itself lives in `_coerce.py`, driven by the
-  sources)
-
-The [gap list](docs/design/index.md#gap-list) is the full account of where the
-code and the design differ, and [order of work](docs/design/index.md#order-of-work)
-is the sequence for closing it.
-
-## Open questions
-
-- [x] mapping of prefixes/underscores and sub-objects — `prefix=` names the file
-      section, `name_prefix=` prefixes the option names, and a field's dotted
-      path flattens into each source's spelling. See
-      [names](docs/design/names.md).
-- [x] mapping of ini options — INI has no nesting, so flat keys are resolved
-      against the same mapping; `log_cli_level` reaches `cli.level`.
-- [x] ingestion of backward compatibility fields — hand-written host options
-      become specs and join the store; see
-      [evolution](docs/design/pytest/evolution.md#binding-the-specs).
-- [x] toml behaviours — TOML accepts both nested tables and flat keys, and is a
-      [typed-dialect source](docs/design/sources.md#dialect-is-a-property-of-the-source):
-      its values are type-checked rather than coerced.
-- [ ] yaml behaviours — [admitted as a format](docs/design/sources.md#yaml),
-      with the parser dependency, safe-loading, multi-document streams and YAML
-      1.1's type surprises all still open.
+`docs/design/` is normative and every rule in it is marked **[built]**,
+**[change]** or **[new]**. The [gap list](docs/design/index.md#gap-list) is the
+full account of what the code does not do yet, and
+[order of work](docs/design/index.md#order-of-work) is the sequence for closing
+it. Plugin discovery, list merge semantics, YAML, the conversion registry and
+hot reload are all design intent with no code behind them.
 
 ## Development
 

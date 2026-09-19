@@ -127,9 +127,8 @@ name was not expressible. Now `env_named()`.
 
 1. **Steps 1 to 8** of [the core order of work](../index.md#order-of-work).
 2. **Step 9, the fixpoint**, required by `_FOR_<DIST_NAME>`.
-3. **D18 and D19**, which exist because of this evaluation and have no other
-   consumer yet. They should be implemented against these requirements rather
-   than from imagination.
+3. **D18's registry and D19**, [deferred](../deferred.md#deferred) until this
+   port because they have no other consumer.
 4. Then the port, as a second binding.
 
 ## Why it is worth doing at all

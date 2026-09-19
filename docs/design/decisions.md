@@ -185,7 +185,8 @@ binder that loops over the result makes the derivation a value a test can
 compare against a table. It also gives exactly one place, inside the binding,
 where the library's vocabulary is translated into the host's parser words. It
 is what makes [D6](#d6)'s conformance suite mechanical: two backends conform
-when they bind the same specs.
+when they bind the same specs. The native CLI parser is the first binder, so
+the suite has two backends before a second host exists.
 
 *Cost:* one more layer and a dataclass, plus a per-host translation function to
 keep in step with that host's option vocabulary.
@@ -291,6 +292,10 @@ value regardless of what else addressed it. `runtime(40)` is the top and stays
 the top, because a runtime write is made after the merge with the whole
 configuration in view. Nothing may be constructed above `runtime`.
 
+Every `-o` lands at `override`, whichever argv source carried it. One inside
+injected arguments outranks a typed option, as it did when injected arguments
+were spliced into argv.
+
 *Cost:* two constants, and `-o` becomes a source rather than a fixup, which is
 what lets it carry
 [its own origin kind](reporting.md#overrides-report-as-overrides). Any
@@ -325,6 +330,9 @@ warning that fires on correct configuration, a `RuntimeError` subclass doing
 duty as both "you called `declare()` too late" and "these two parts collide",
 an unexported `CLIConflictError` that is the same collision under a second
 name, and a bare `TypeError` for missing required fields.
+
+Programmer error at `declare()` gets `ConfigDeclarationError`, with collisions
+beneath it, so the rule's third row has a type to name.
 
 A taxonomy means a host can filter or promote the whole set at once, an
 application can tell "this library rejected the configuration" from any other
@@ -362,8 +370,9 @@ first person who needs it; naming them is the mitigation.
 
 ## D18
 
-**Conversion is a registry keyed on the annotation, and `Enum` joins
-`Literal`.** ([types](types.md#the-conversion-registry), [types](types.md#enum))
+**Conversion is a registry keyed on the annotation; `Literal` and `Enum` are
+closed value sets in it.** ([types](types.md#literal),
+[types](types.md#the-conversion-registry), [types](types.md#enum))
 
 Coercion answered "what does this string mean for this annotation" for a fixed
 set: the scalars, `list[T]`, and now `Literal`. Real configuration has domain
@@ -372,8 +381,11 @@ fragment is built, so the fragment briefly holds a value that does not match
 its declaration ([I6](invariants.md#i6)), and every source converts it
 separately or not at all.
 
-`Enum` is a closed value set whose members have names, so it is
-[`Literal`](types.md#literal) with a type attached and reaches help and
+`Literal` is the first closed set. The annotation carries both the type and
+the permitted values, so no marker is needed, a value outside the set fails
+like any other conversion, and the values reach help and bindings as
+`FieldSpec.values`. `Enum` is a closed value set whose members have names, so
+it is [`Literal`](types.md#literal) with a type attached and reaches help and
 bindings through the same `FieldSpec.values`.
 
 An unregistered annotation is an error at declaration time rather than a value
@@ -385,6 +397,10 @@ programmer error.
 order and two libraries registering the same type. Scoping it to the manager
 was rejected: a conversion is a property of the type, and making it per-manager
 means the same annotation means different things in two parts of one program.
+
+*Sequencing:* `Literal` is in [the order of work](index.md#order-of-work). The
+registry, `Enum` and [D19](#d19) are [deferred](deferred.md#deferred) until a
+binding needs them; [vcs-versioning](vcs-versioning/index.md) is the candidate.
 
 ## D19
 
@@ -405,3 +421,5 @@ threaded to the place that needs it.
 supply their origin before the merge attributes it rather than after. That
 ordering constraint points the same way as the
 [layered store](merging.md#the-layered-store).
+
+*Sequencing:* deferred with [D18](#d18).

@@ -20,8 +20,9 @@ retrieves. `SubConfig` is a nested section inside one. They share all
 construction behaviour. The distinction is structural, and it is what
 `FieldInfo.is_sub_config` reports.
 
-A `ConfigPart` used as a nested field is an error raised at declaration time,
-naming the field and both classes. **[new]**: today it produces
+A `ConfigPart` used as a nested field is a
+[`ConfigDeclarationError`](diagnostics.md#errors) at `declare()`, naming the
+field and both classes. **[new]**: today it produces
 `TypeError: Outer missing required field(s): inner` at build time.
 
 Both are:
@@ -84,10 +85,15 @@ level: Annotated[str, from_parent, help("log level")] = "WARNING"
 level: str @ from_parent @ help("log level") = "WARNING"      # _MarkerMixin.__rmatmul__
 ```
 
+`@` binds tighter than `|`, so `str | None @ from_parent` annotates `None`
+alone and the marker is lost. A union takes `Annotated[...]` or parentheses:
+`(str | None) @ from_parent`.
+
 | Marker | Effect | Documented in |
 |---|---|---|
 | `from_parent` | value cascades from the parent field of the same name | [merging](merging.md#the-from_parent-cascade) |
 | `named("...")` | replaces the derived flat name | [names](names.md#per-field-overrides) |
+| `formerly("...")` | declares a legacy flat spelling; a value arriving under it warns | [names](names.md#per-field-overrides) |
 | `env_named("...")` | pins an absolute environment variable name | [names](names.md#per-field-overrides) |
 | `no_cli` | suppresses the CLI option, keeps ini and env | [names](names.md#per-field-overrides) |
 | `short("v")` | adds a short option | [names](names.md#per-field-overrides) |
@@ -102,8 +108,8 @@ level: str @ from_parent @ help("log level") = "WARNING"      # _MarkerMixin.__r
 
 Every one of them works at any depth ([I7](invariants.md#i7)). `config_source`,
 `injected_args` and `bootstrap_only` currently do not; see
-[names](names.md#names-are-never-constructed-by-hand). `env_named`, `no_ini`,
-`from_env`, `counted` and `contributes` are **[new]**.
+[names](names.md#names-are-never-constructed-by-hand). `formerly`, `env_named`,
+`no_ini`, `from_env`, `counted` and `contributes` are **[new]**.
 
 `prefix=` and `name_prefix=` are class keywords rather than field markers,
 because they describe the ConfigPart, not a field. See

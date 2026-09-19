@@ -9,7 +9,7 @@ which one an input gets. This document implements [I8](invariants.md#i8).
 |---|---|
 | the run can continue, and everything the user got right still holds | **warn**, naming what was ignored |
 | the input cannot be honoured, or honouring it would put a forbidden value in a field | **raise** |
-| the declaration is wrong, not the input | **raise at `declare()`**, never at `resolve()` |
+| the declaration is wrong, not the input | **raise `ConfigDeclarationError` at `declare()`**, never at `resolve()` |
 
 Two corollaries:
 
@@ -56,18 +56,20 @@ noticing that one was used is the merge's job, not the field's.
 
 ```
 ConfigError(Exception)
-├── ConfigLifecycleError    declaring after resolve; a declaration cycle       [built]
-├── ConfigCollisionError    two parts claim one name, incompatibly             [new]
-├── ConfigUsageError        input that cannot be honoured as written           [new]
-├── ConfigValueError        a value cannot be the field's declared type        [new]
-└── MissingConfigError      required fields nobody supplied                    [new]
+├── ConfigLifecycleError        declaring after resolve; a declaration cycle     [built]
+├── ConfigDeclarationError      a class the library cannot honour                [new]
+│   └── ConfigCollisionError    two parts claim one name, incompatibly           [new]
+├── ConfigUsageError            input that cannot be honoured as written         [new]
+├── ConfigValueError            a value cannot be the field's declared type      [new]
+└── MissingConfigError          required fields nobody supplied                  [new]
 ```
 
 | Error | Raised when | Names |
 |---|---|---|
 | `ConfigLifecycleError` | `declare()` after `resolve()`; the [fixpoint](lifecycle.md#the-passes-iterate-to-a-fixpoint) fails to converge | the type, and the phase that had closed |
+| `ConfigDeclarationError` | `declare()` finds a [`ConfigPart` nested as a field](config-parts.md#configpart-and-subconfig), an [annotation with no conversion](types.md#the-conversion-registry), a [`from_parent` field whose parent has no such field](merging.md#the-from_parent-cascade), or a `short()` that is `-o` or `-h` | the class, the field path, and what was expected |
 | `ConfigCollisionError` | two parts declare one flat name with differing type or default ([collisions](names.md#collisions)) | both parts, both field paths, and `named()` / `no_cli` / `name_prefix` |
-| `ConfigUsageError` | an option's value is missing; a [`config_source`](sources.md#config-file-discovery) names an unreadable suffix; `-o` addresses a field with no file spelling under a host that scopes it | the option or path, and what was expected |
+| `ConfigUsageError` | an option's value is missing; a [`config_source`](sources.md#config-file-discovery) names an unreadable suffix or a file that does not exist; `-o` addresses a field with no file spelling under a host that scopes it | the option or path, and what was expected |
 | `ConfigValueError` | a value fails [coercion or the type check](types.md#values-from-typed-sources); a value falls outside a [`Literal`](types.md#literal) | the field path, the declared type, the value, and its [origin](reporting.md#the-provenance-api) |
 | `MissingConfigError` | construction finds required fields no source supplied | every missing field at once, and the origins that were found |
 
@@ -75,7 +77,7 @@ ConfigError(Exception)
 distinguish "this library rejected the configuration" from any other exception
 in one `except`. **[new]**
 
-Three consolidations are folded into that table:
+Four consolidations are folded into that table:
 
 - `ConfigLifecycleError` currently derives from `RuntimeError` and is also what
   a collision raises. Collisions get their own type, and the base becomes
@@ -83,6 +85,9 @@ Three consolidations are folded into that table:
 - `CLIConflictError` exists in `_cli_parser.py`, is not exported, and appears
   in no document. It is `ConfigCollisionError` under a second name; it goes.
   **[change]**
+- A config file named explicitly but absent raises a bare `FileNotFoundError`
+  ([sources](sources.md#config-file-discovery)). It is input that cannot be
+  honoured, so `ConfigUsageError`. **[change]**
 - Required fields raise a bare `TypeError`
   ([config parts](config-parts.md#required-and-optional)). `MissingConfigError`
   carries the ConfigPart and the origins that were found. **[change]**

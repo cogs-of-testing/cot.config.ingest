@@ -28,12 +28,16 @@ Every spelling is that one path rendered with a different separator:
 |---|---|---|
 | flat (ini, flat TOML) | `"_".join(qualified)` | `log_cli_level` |
 | CLI | `"-".join(qualified)` | `--log-cli-level` |
-| env | source prefix + `"_"` + flat, upper | `PYTEST_LOG_CLI_LEVEL` |
+| env | `"_".join([source prefix, prefix, *qualified])`, upper | `PYTEST_LOG_CLI_LEVEL` |
 | `-o` | the flat name | `-o log_cli_level=…` |
 | nested file | `[section, *qualified[:-1]]` + leaf | `[pytest.log.cli] level` |
 
-`section` comes from `prefix=`, which is a separate axis
-([below](#prefix-versus-name_prefix)). An ordinary application:
+`section`, and the `prefix` segment of the env spelling, come from `prefix=`,
+which is a separate axis ([below](#prefix-versus-name_prefix)). The source
+prefix is the `EnvSource`'s own; an empty one contributes no segment, so
+`EnvSource()` is what reads `PYTEST_LOG_CLI_LEVEL` for a part with
+`prefix="pytest"`, and `EnvSource("PYTEST")` would read
+`PYTEST_PYTEST_LOG_CLI_LEVEL`. An ordinary application:
 
 ```python
 class PoolConfig(SubConfig):
@@ -183,8 +187,16 @@ flat name it replaces. `env_named` sets one spelling and states it literally. A
 field carrying it still needs [`from_env`](sources.md#exposure-is-opt-in) to be
 read at all.
 
-There is no mirror of `no_cli` suppressing the file spelling. A host that wants
-command-line-only options, or that scopes an override flag to file-backed
+`formerly("write_to")` declares a legacy flat spelling. The field stays
+reachable under it from every source that has a flat spelling, a value arriving
+that way fires [`DeprecatedNameWarning`](diagnostics.md#warnings), and the
+spelling reaches a binding as [`FieldSpec.aliases`](specs.md#the-record). It is
+the only way an alias comes to exist: `named()` replaces the derived name and
+leaves nothing behind. **[new]**
+
+`no_ini` is the mirror of `no_cli`: it suppresses the file spelling and keeps
+the CLI option and, with `from_env`, the environment variable. A host that
+wants command-line-only options, or that scopes an override flag to file-backed
 fields, needs "has a file spelling" to be able to be false. **[new]**, tracked
 as `file_key` in [specs](specs.md).
 
@@ -202,8 +214,10 @@ nowhere else. The two spellings a user has seen, `log_cli_level` and
 
 Overrides are collected by a source of their own at
 [`override(30)`](sources.md#the-two-rungs-above-the-command-line), above the
-command line. `--log-level=A -o log_level=B` is `B`. **[new]**: `-o` is applied
-as a post-merge fixup today, so what it outranks is undefined.
+command line. `--log-level=A -o log_level=B` is `B`, and so is the same `-o`
+carried by [injected arguments](lifecycle.md#the-injected-arguments-loop).
+**[new]**: `-o` is applied as a post-merge fixup today, so what it outranks is
+undefined.
 
 A `-o` key matching no field is an
 [`UnknownOverrideKeyWarning`](diagnostics.md#warnings) naming the key and the

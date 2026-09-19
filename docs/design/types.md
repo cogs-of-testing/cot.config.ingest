@@ -5,8 +5,8 @@ where that question is allowed to be answered.
 
 ## Tokenisation versus interpretation
 
-Every source hands over strings, and every source needs the same question
-answered: what does this string mean for a field declared `list[str]`, or
+Every string-dialect source hands over strings, and every one of them needs
+the same question answered: what does this string mean for a field declared `list[str]`, or
 `Annotated[bool, no_cli]`, or `int | None`? That question is answered once, in
 `_coerce.py`.
 
@@ -47,12 +47,14 @@ and the permitted values. Those values appear in
 `log_file_mode` is `choices=["w", "a"]` in pytest, and the acceptance test
 currently declares it `str`. Until this exists the
 [yardstick](index.md#the-yardstick) is measured against a softened target.
+Rationale in [D18](decisions.md#d18).
 
 ## Enum
 
 `Enum` behaves as [`Literal`](#literal) does: a closed set, matched by value,
 reported by name, reaching [help](reporting.md#help) and a binding as
-[`FieldSpec.values`](specs.md#the-record). **[new]**
+[`FieldSpec.values`](specs.md#the-record). **[new]**, and
+[deferred](deferred.md#deferred) with the registry it is an entry in.
 
 ## The conversion registry
 
@@ -66,8 +68,9 @@ register_conversion(MyVersion, MyVersion.parse)
 
 The built-in entries are the scalars, `list[T]`, `Literal`, `Enum` and `Path`.
 An application registers the rest. A field whose annotation has no entry is a
-[`ConfigValueError`](diagnostics.md#errors) at declaration time, naming the
-field and its type. **[new]**
+[`ConfigDeclarationError`](diagnostics.md#errors) at `declare()`, naming the
+field and its type. **[new]**, and [deferred](deferred.md#deferred) until a
+binding needs it.
 
 Real configuration has domain types in it: a compiled pattern, an enum, a class
 resolved from an entry point, a version. Converting those by hand after
@@ -82,7 +85,8 @@ cannot. Range checks and cross-field constraints remain
 
 Conversion receives the
 [`Origin`](reporting.md#the-manager-records-sources-refine) of the value it is
-converting. **[new]**
+converting. **[new]**, and [deferred](deferred.md#deferred) with
+[the registry](#the-conversion-registry).
 
 A relative path means different things depending on who supplied it. In a
 config file it is relative to that file. On the command line it is relative to
