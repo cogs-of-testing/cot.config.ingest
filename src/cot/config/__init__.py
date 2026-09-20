@@ -19,6 +19,7 @@ from ._annotations import (
     short,
 )
 from ._bases import ConfigPart
+from ._convert import register_conversion
 from ._diagnostics import (
     ConfigCollisionError,
     ConfigDeclarationError,
@@ -75,6 +76,8 @@ __all__ = [
     "DeprecatedNameWarning",
     "ShadowedValueWarning",
     "RuntimeMutationWarning",
+    # Conversion
+    "register_conversion",
     # Specs and the index
     "FieldSpec",
     "CliForm",

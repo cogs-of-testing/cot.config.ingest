@@ -62,7 +62,8 @@ src/cot/config/     the library; every _-prefixed module is internal
   _specs.py         field -> FieldSpec, the one derivation of what an option is
   _index.py         spelling -> field; collisions and adoption
   _diagnostics.py   the warning and error set, aggregation, strict mode
-  _coerce.py        string -> declared type
+  _convert.py       raw value -> declared type; the registry, origin-aware
+  _coerce.py        the pre-rebuild coercion, until sources are rebuilt
   _sources.py       the source implementations
   _manager.py       declare/resolve/get, merging, provenance
   _cli_parser.py    the re-parsing argument parser

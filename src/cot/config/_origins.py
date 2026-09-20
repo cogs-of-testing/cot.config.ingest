@@ -13,11 +13,14 @@ precedence. A source that can be more specific implements `describe_origin`.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal, Protocol, runtime_checkable
 
 from ._precedence import Precedence
 
-OriginKind = Literal["default", "file", "env", "cli", "addopts", "override"]
+OriginKind = Literal[
+    "default", "file", "env", "cli", "addopts", "injected", "override", "runtime"
+]
 
 
 @dataclass(frozen=True)
@@ -32,6 +35,14 @@ class Origin:
 
     precedence: int
     """The precedence that let this value win."""
+
+    base_dir: Path | None = None
+    """What a relative path in this value is relative to, when that is known.
+
+    A config file's values are relative to that file; the command line's are
+    relative to the invocation directory. A source that knows says so, and the
+    ``Path`` conversion is the one thing that reads it.
+    """
 
     def __str__(self) -> str:
         return f"{self.kind}:{self.location}"
