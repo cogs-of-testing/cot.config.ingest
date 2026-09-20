@@ -1,4 +1,4 @@
-"""Tests for ConfigPart/SubConfig construction semantics.
+"""Tests for ConfigPart/ConfigPart construction semantics.
 
 These classes advertise `@dataclass_transform(eq_default=True,
 kw_only_default=True, frozen_default=True)`. These tests pin the behaviour that
@@ -9,10 +9,16 @@ from __future__ import annotations
 
 import pytest
 
-from cot.config import ConfigPart, SubConfig
+from cot.config import ConfigPart
+from cot.config._bases import (
+    declared_root_keywords,
+    part_from_env,
+    part_name_prefix,
+    part_prefix,
+)
 
 
-class Inner(SubConfig):
+class Inner(ConfigPart):
     host: str = "localhost"
     port: int = 5432
 
@@ -137,17 +143,43 @@ class TestRepr:
         )
 
 
-class TestInitSubclass:
-    def test_prefix_recorded_as_marker(self) -> None:
-        from cot.config._annotations import PrefixMarker
+class TestRootKeywords:
+    """`prefix`, `name_prefix` and `from_env` describe a root, and only a root."""
 
-        class Prefixed(ConfigPart, prefix="app"):
+    def test_each_keyword_is_readable_back(self) -> None:
+        class Prefixed(ConfigPart, prefix="app", name_prefix="db", from_env=True):
             value: int = 1
 
-        assert any(
-            isinstance(m, PrefixMarker) and m.prefix == "app"
-            for m in Prefixed._config_markers
-        )
+        assert part_prefix(Prefixed) == "app"
+        assert part_name_prefix(Prefixed) == "db"
+        assert part_from_env(Prefixed) is True
+
+    def test_defaults_are_absent_not_empty(self) -> None:
+        class Plain(ConfigPart):
+            value: int = 1
+
+        assert part_prefix(Plain) is None
+        assert part_name_prefix(Plain) is None
+        assert part_from_env(Plain) is False
+
+    def test_a_field_may_be_called_prefix(self) -> None:
+        class Odd(ConfigPart, prefix="app"):
+            prefix: str = "not the section"
+
+        assert part_prefix(Odd) == "app"
+        assert Odd().prefix == "not the section"
+
+    def test_declared_keywords_exclude_inherited_ones(self) -> None:
+        class Root(ConfigPart, prefix="app", name_prefix="db"):
+            value: int = 1
+
+        class Child(Root):
+            other: int = 2
+
+        assert declared_root_keywords(Root) == ("prefix", "name_prefix")
+        assert declared_root_keywords(Child) == ()
+        # Inherited all the same: the lookup walks the MRO, the record does not.
+        assert part_prefix(Child) == "app"
 
     def test_init_subclass_chain_is_not_swallowed(self) -> None:
         recorded: list[str] = []

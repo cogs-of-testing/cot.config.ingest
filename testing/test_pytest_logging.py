@@ -31,7 +31,6 @@ from cot.config import (
     ConfigPart,
     EnvSource,
     IniSource,
-    SubConfig,
     TomlSource,
     from_parent,
     help,
@@ -48,7 +47,7 @@ DEFAULT_LOG_DATE_FORMAT = "%H:%M:%S"
 # needs ~90 lines and a local add_option_ini helper for the same options.
 
 
-class LogOutputConfig(SubConfig):
+class LogOutputConfig(ConfigPart):
     """Settings shared by every log output.
 
     `from_parent` is what makes `log_cli_level` fall back to `log_level`.

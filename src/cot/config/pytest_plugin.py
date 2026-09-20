@@ -276,7 +276,7 @@ class PytestOptionSource:
 
 def _group_name(part_type: type[ConfigPart]) -> str:
     """The pytest option group a ConfigPart's options are shown under."""
-    from ._names import part_name_prefix, part_prefix
+    from ._bases import part_name_prefix, part_prefix
 
     return part_name_prefix(part_type) or part_prefix(part_type) or part_type.__name__
 

@@ -29,14 +29,14 @@ PLUGIN = '''
     from typing import Annotated
 
     from cot.config import (
-        ConfigPart, SubConfig, from_parent, help, named, no_cli,
+        ConfigPart, ConfigPart, from_parent, help, named, no_cli,
     )
 
     DEFAULT_LOG_FORMAT = "%(levelname)-8s %(name)s:%(filename)s:%(lineno)d %(message)s"
     DEFAULT_LOG_DATE_FORMAT = "%H:%M:%S"
 
 
-    class LogOutputConfig(SubConfig):
+    class LogOutputConfig(ConfigPart):
         """Shared by every log output. `from_parent` is the fallback chain."""
 
         level: Annotated[

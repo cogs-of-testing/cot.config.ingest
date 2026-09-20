@@ -15,6 +15,7 @@ else:
     import tomli as tomllib  # type: ignore[import-not-found,unused-ignore]
 
 from ._annotations import HelpMarker, ShortMarker
+from ._bases import part_prefix
 from ._coerce import coerce, coerce_parsed
 from ._fields import (
     FieldInfo,
@@ -29,7 +30,6 @@ from ._names import (
     cli_visible,
     expand_flat_keys,
     named_leaf_fields,
-    part_prefix,
     section_name,
     set_path,
 )
@@ -198,7 +198,7 @@ class _ArgvSource:
         """
         Register a ConfigPart type's fields with the parser.
 
-        Leaf fields are registered, including those nested inside SubConfigs:
+        Leaf fields are registered, including those inside nested parts:
         `log.cli.level` becomes `--log-cli-level`. Sub-config containers
         themselves get no option -- there is nothing to type on a command line
         for a whole section.
@@ -486,17 +486,15 @@ class EnvSource:
         return self._prefix
 
     def effective_prefix(self, part_type: type[ConfigPart]) -> str:
-        """The variable prefix for one ConfigPart: source prefix, then part prefix.
+        """This source's own prefix, which goes in front of the field's name.
 
-        The two compose rather than one shadowing the other. ``EnvSource("APP")``
-        reading a part declared ``prefix="log"`` looks at ``APP_LOG_*``: an
-        application that namespaces its environment keeps that namespace even
-        for parts that name a config-file section of their own.
+        The two compose rather than one shadowing the other, and the halves are
+        derived in different places: the root's ``prefix`` is part of
+        :attr:`FieldNames.env`, because it is answerable from the class, while
+        the source's is not and is added here. ``EnvSource("APP")`` reading a
+        root declared ``prefix="log"`` looks at ``APP_LOG_*``.
         """
-        segments = [
-            segment for segment in (self._prefix, part_prefix(part_type)) if segment
-        ]
-        return "_".join(segments).upper()
+        return self._prefix.upper()
 
     def load(self, part_type: type[ConfigPart]) -> dict[str, Any]:
         """

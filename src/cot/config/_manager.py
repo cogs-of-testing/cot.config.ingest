@@ -18,9 +18,10 @@ from ._annotations import (
     ConfigSourceMarker,
     FromParentMarker,
 )
-from ._bases import ConfigPart, SubConfig
+from ._bases import ConfigPart
 from ._fields import (
     MISSING,
+    check_declaration,
     field_defaults,
     fields_of,
     has_marker,
@@ -181,6 +182,8 @@ class ConfigManager:
 
         Raises:
             ConfigLifecycleError: If called after resolve().
+            ConfigDeclarationError: If the class is one the library cannot
+                honour as declared.
         """
         if self._resolved:
             raise ConfigLifecycleError(
@@ -189,6 +192,7 @@ class ConfigManager:
             )
         if fragment_type in self._declared:
             return
+        check_declaration(fragment_type)
         self._declared.append(fragment_type)
         self._declare_to_sources(fragment_type)
 
@@ -287,7 +291,7 @@ class ConfigManager:
         defaults = field_defaults(fragment_type)
 
         # This must be a deep merge: CLI and file sources both produce nested
-        # dicts for SubConfigs, and a shallow update would let `--log-file-level`
+        # dicts for nested parts, and a shallow update would let `--log-file-level`
         # from the CLI wipe `log_file` from the config file.
         #
         # Provenance rides along with the merge: whichever source last wrote a
@@ -312,7 +316,7 @@ class ConfigManager:
         # rather than letting the constructor reject the whole load.
         merged = _drop_unknown_keys(fragment_type, merged)
 
-        # Build nested SubConfigs from type hints
+        # Build nested parts from type hints
         inherited: dict[str, str] = {}
         merged = _build_nested_subconfigs(fragment_type, merged, inherited=inherited)
 
@@ -622,7 +626,7 @@ def _drop_unknown_keys(
 
     A typo in a nested table is the same user error as a typo at the top level
     and gets the same treatment. Letting it through instead reached the
-    SubConfig constructor, which -- correctly, for a programming error --
+    nested part's constructor, which -- correctly, for a programming error --
     raised ``TypeError`` and took the whole load down.
     """
     unknown: list[str] = []
@@ -653,27 +657,27 @@ def _prune(
         if field is None:
             unknown.append(".".join((*prefix, key)))
             continue
-        if field.is_sub_config and isinstance(value, dict):
+        if field.is_nested and isinstance(value, dict):
             value = _prune(field.type, value, prefix=(*prefix, key), unknown=unknown)
         result[key] = value
     return result
 
 
 def _build_nested_subconfigs(
-    cls: type[ConfigPart] | type[SubConfig],
+    cls: type[ConfigPart],
     data: dict[str, Any],
     *,
     prefix: tuple[str, ...] = (),
     inherited: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """
-    Recursively convert nested dicts to SubConfig instances.
+    Recursively convert nested dicts to ConfigPart instances.
 
-    For each field annotated as a SubConfig type, if the value is a dict,
-    convert it to the appropriate SubConfig instance.
+    For each field annotated as a nested part, if the value is a dict,
+    convert it to the appropriate instance.
 
     Also handles parent-to-child cascade: if the parent has a field with
-    the same name as a SubConfig field (e.g., parent.level), that value
+    the same name as a nested field (e.g., parent.level), that value
     cascades to children that don't explicitly set it.
 
     Args:
@@ -687,18 +691,18 @@ def _build_nested_subconfigs(
     result = dict(data)
 
     # Collect parent values that could cascade to children.
-    # These are the non-SubConfig fields present in the parent data.
+    # These are the leaf fields present in the parent data.
     cascade_values = {
         field.name: result[field.name]
         for field in own_fields
-        if not field.is_sub_config and field.name in result
+        if not field.is_nested and field.name in result
     }
 
     for field in own_fields:
-        if not field.is_sub_config:
+        if not field.is_nested:
             continue
 
-        sub_type: type[SubConfig] = field.type
+        sub_type: type[ConfigPart] = field.type
         value = result.get(field.name)
         child_prefix = (*prefix, field.name)
 
@@ -725,7 +729,7 @@ def _build_nested_subconfigs(
 
 def _apply_cascade(
     parent_values: dict[str, Any],
-    child_type: type[SubConfig],
+    child_type: type[ConfigPart],
     child_data: dict[str, Any],
 ) -> dict[str, Any]:
     """

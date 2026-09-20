@@ -54,10 +54,10 @@ CLI:
 ```python
 from typing import Annotated
 
-from cot.config import ConfigPart, SubConfig, from_parent, help, named, no_cli
+from cot.config import ConfigPart, from_parent, help, named, no_cli
 
 
-class LogOutputConfig(SubConfig):
+class LogOutputConfig(ConfigPart):
     """Settings shared by every log output.
 
     `from_parent` is what makes `log_cli_level` fall back to `log_level`.

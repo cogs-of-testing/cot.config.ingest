@@ -50,9 +50,9 @@ _M = TypeVar("_M")
 class FieldInfo:
     """Everything known about one configuration field.
 
-    A field is either a *leaf* (a plain value) or a *sub-config* (a nested
-    ``SubConfig`` type).  ``iter_fields`` yields both, and ``path`` is what
-    distinguishes ``cli.level`` from the top-level ``level``.
+    A field is either a *leaf* (a plain value) or *nested* (a ``ConfigPart``
+    typed field, which is a section). ``fields_of`` yields both, and ``path``
+    is what distinguishes ``cli.level`` from the top-level ``level``.
     """
 
     path: tuple[str, ...]
@@ -76,13 +76,13 @@ class FieldInfo:
     owner: type[Any]
     """The class whose body declared this field."""
 
-    is_sub_config: bool
-    """True when :attr:`type` is a ``SubConfig`` subclass."""
+    is_nested: bool
+    """True when :attr:`type` is a ``ConfigPart`` subclass: a section."""
 
     @property
     def required(self) -> bool:
-        """A field with no default that is not a sub-config must be supplied."""
-        return self.default is MISSING and not self.is_sub_config
+        """A field with no default and no nested type must be supplied."""
+        return self.default is MISSING and not self.is_nested
 
     @property
     def dotted(self) -> str:
@@ -90,32 +90,65 @@ class FieldInfo:
         return ".".join(self.path)
 
 
-def is_sub_config(tp: Any) -> bool:
-    """Check whether a type annotation refers to a ``SubConfig`` subclass."""
-    from ._bases import SubConfig
+def is_nested_type(tp: Any) -> bool:
+    """Whether ``tp`` is a ``ConfigPart`` subclass, and so a nested section."""
+    from ._bases import ConfigPart
 
-    return isinstance(tp, type) and issubclass(tp, SubConfig)
+    return isinstance(tp, type) and issubclass(tp, ConfigPart)
 
 
-def unwrap_type(annotation: Any) -> Any:
-    """Strip ``Annotated`` and ``Optional``/union wrappers down to one type.
-
-    ``Annotated[str | None, from_parent]`` becomes ``str``.  For unions with
-    several non-None members the first is returned -- config values come from
-    strings, so the first member is what parsing targets.
-    """
+def strip_annotated(annotation: Any) -> Any:
+    """Return ``annotation`` with any ``Annotated`` wrapper removed."""
     if get_origin(annotation) is Annotated:
         args = get_args(annotation)
         if args:
-            return unwrap_type(args[0])
+            return strip_annotated(args[0])
+    return annotation
 
+
+def union_members(annotation: Any) -> tuple[Any, ...] | None:
+    """The members of ``annotation`` if it is a union, else ``None``."""
     origin = get_origin(annotation)
     if origin is Union or origin is types.UnionType:
-        non_none = [a for a in get_args(annotation) if a is not type(None)]
-        if non_none:
-            return unwrap_type(non_none[0])
+        return get_args(annotation)
+    return None
 
-    return annotation
+
+def declared_type(annotation: Any) -> Any:
+    """The declared type: ``Annotated`` removed, ``Optional`` collapsed.
+
+    ``Annotated[str | None, from_parent]`` is ``str``, because ``None`` says
+    the field may be absent rather than what it holds. A union with more than
+    one real member is returned whole: ``bool | int | None`` is ``bool | int``,
+    and which member a raw value becomes is conversion's question, answered by
+    trying them in order.
+    """
+    annotation = strip_annotated(annotation)
+
+    members = union_members(annotation)
+    if members is None:
+        return annotation
+
+    real = [strip_annotated(m) for m in members if m is not type(None)]
+    if not real:
+        return annotation
+    if len(real) == 1:
+        return real[0]
+    return Union[tuple(real)]  # noqa: UP007  - built from a variable
+
+
+def unwrap_type(annotation: Any) -> Any:
+    """Strip wrappers down to exactly one type, taking a union's first member.
+
+    The callers left are the ones that must name a single type to a host's
+    parser. They go when [sources](../../docs/design/sources.md) is rebuilt
+    against specs, which describe a union without collapsing it.
+    """
+    declared = declared_type(annotation)
+    members = union_members(declared)
+    if members:
+        return members[0]
+    return declared
 
 
 def markers_of(annotation: Any) -> tuple[object, ...]:
@@ -147,7 +180,7 @@ def resolve_hints(cls: type[Any]) -> dict[str, Any]:
         # a partially-defined class still yields something usable. Only
         # NameError is tolerated -- a broader except would swallow a genuinely
         # malformed annotation, and the string that came back in its place
-        # would make a SubConfig field look like a leaf.
+        # would make a nested field look like a leaf.
         return dict(getattr(cls, "__annotations__", {}))
 
 
@@ -193,11 +226,11 @@ _FIELD_CACHE: WeakKeyDictionary[type[Any], dict[bool, tuple[FieldInfo, ...]]] = 
 
 
 def fields_of(cls: type[Any], *, recurse: bool = True) -> tuple[FieldInfo, ...]:
-    """Return the fields of a ``ConfigPart``/``SubConfig`` class.
+    """Return the fields of a ``ConfigPart`` class.
 
     Args:
         cls: The class to inspect.
-        recurse: When True, descend into ``SubConfig``-typed fields and yield
+        recurse: When True, descend into ``ConfigPart``-typed fields and yield
             their fields too, with dotted paths.  The sub-config field itself
             is yielded as well, before its children.
 
@@ -233,47 +266,103 @@ def _walk(
         if annotation is None:
             continue
 
-        unwrapped = unwrap_type(annotation)
-        nested = is_sub_config(unwrapped)
+        declared = declared_type(annotation)
+        nested = is_nested_type(declared)
 
         info = FieldInfo(
             path=(*prefix, name),
             name=name,
             annotation=annotation,
-            type=unwrapped,
+            type=declared,
             default=_default_of(cls, name),
             markers=markers_of(annotation),
             owner=_owner_of(cls, name),
-            is_sub_config=nested,
+            is_nested=nested,
         )
         result.append(info)
 
         if nested and recurse:
-            if unwrapped in seen:
-                # Self-referential sub-config: stop rather than recurse forever.
+            if declared in seen:
+                # Self-referential nested part: stop rather than recurse forever.
                 continue
             result.extend(
                 _walk(
-                    unwrapped,
+                    declared,
                     prefix=info.path,
                     recurse=recurse,
-                    seen=seen | {unwrapped},
+                    seen=seen | {declared},
                 )
             )
 
     return result
 
 
+def misbound_markers(annotation: Any) -> tuple[object, ...]:
+    """Library markers attached to a union member instead of to the field.
+
+    ``str | None @ from_parent`` parses as ``str | Annotated[None, ...]``,
+    because ``@`` binds tighter than ``|``. The marker is then attached to
+    ``None`` and describes nothing.
+    """
+    from ._annotations import Marker
+
+    members = union_members(strip_annotated(annotation))
+    if members is None:
+        return ()
+    return tuple(
+        marker
+        for member in members
+        for marker in markers_of(member)
+        if isinstance(marker, Marker)
+    )
+
+
+def check_declaration(root: type[Any]) -> None:
+    """Raise if ``root``'s shape is something the library cannot honour.
+
+    Called by ``declare()``, because a malformed declaration is known the
+    moment the class is seen and reporting it then puts the traceback at the
+    call site that caused it.
+    """
+    from ._bases import declared_root_keywords
+    from ._errors import ConfigDeclarationError
+
+    for field in fields_of(root):
+        misbound = misbound_markers(field.annotation)
+        if misbound:
+            names = ", ".join(repr(marker) for marker in misbound)
+            raise ConfigDeclarationError(
+                f"{root.__name__}.{field.dotted}: {names} "
+                f"is bound to a member of the union, not to the field, "
+                f"because `@` binds tighter than `|`. "
+                f"Write `({field.annotation}) @ marker`, "
+                f"or Annotated[...] with the marker as an extra."
+            )
+
+        if not field.is_nested:
+            continue
+        keywords = declared_root_keywords(field.type)
+        if keywords:
+            raise ConfigDeclarationError(
+                f"{root.__name__}.{field.dotted} is a nested part, and "
+                f"{field.type.__name__} declares {', '.join(keywords)}=. "
+                f"Those describe a root: the section, the name prefix and the "
+                f"environment exposure of a whole declaration. Nested here, "
+                f"they would have no effect. Remove them, or declare "
+                f"{field.type.__name__} as a root of its own."
+            )
+
+
 def leaf_fields(cls: type[Any]) -> tuple[FieldInfo, ...]:
-    """Every non-sub-config field, including nested ones, with dotted paths."""
-    return tuple(f for f in fields_of(cls) if not f.is_sub_config)
+    """Every leaf field, at every depth, with its dotted path."""
+    return tuple(f for f in fields_of(cls) if not f.is_nested)
 
 
 def field_defaults(cls: type[Any]) -> dict[str, Any]:
     """Top-level field name to default, for fields that have one.
 
-    This is the flat mapping the manager seeds its merge with; nested
-    sub-configs are built separately.
+    This is the flat mapping the manager seeds its merge with; nested parts
+    are built separately.
     """
     return {
         f.name: f.default
@@ -288,11 +377,16 @@ __all__ = [
     "field_defaults",
     "fields_of",
     "has_marker",
-    "is_sub_config",
+    "check_declaration",
+    "declared_type",
+    "is_nested_type",
     "iter_fields",
     "leaf_fields",
     "marker_of",
+    "misbound_markers",
     "markers_of",
     "resolve_hints",
+    "strip_annotated",
+    "union_members",
     "unwrap_type",
 ]

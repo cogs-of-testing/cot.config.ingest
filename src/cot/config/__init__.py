@@ -12,7 +12,8 @@ from ._annotations import (
     no_cli,
     short,
 )
-from ._bases import ConfigPart, SubConfig
+from ._bases import ConfigPart
+from ._errors import ConfigDeclarationError, ConfigError
 from ._manager import (
     ConfigLifecycleError,
     ConfigManager,
@@ -35,7 +36,6 @@ from ._sources import (
 __all__ = [
     # Base classes
     "ConfigPart",
-    "SubConfig",
     # Manager
     "ConfigManager",
     "ConfigSource",
@@ -43,6 +43,9 @@ __all__ = [
     "Discoverable",
     "ConfigLifecycleError",
     "UnknownConfigKeyWarning",
+    # Diagnostics
+    "ConfigError",
+    "ConfigDeclarationError",
     # Provenance
     "Origin",
     "OriginAware",
