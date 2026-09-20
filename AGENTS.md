@@ -65,6 +65,8 @@ src/cot/config/     the library; every _-prefixed module is internal
   _convert.py       raw value -> declared type; the registry, origin-aware
   _store.py         readings in, layers out; conversion on entry
   _projection.py    winners, the from_parent cascade, assembly
+  _parser.py        the re-parsing argument parser, driven by CLI forms
+  _reading.py       the sources, as they read: input in, readings out
   _coerce.py        the pre-rebuild coercion, until sources are rebuilt
   _sources.py       the source implementations
   _manager.py       declare/resolve/get, merging, provenance

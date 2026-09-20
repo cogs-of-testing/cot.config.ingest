@@ -208,3 +208,13 @@ class TestTheRecord:
         spec = spec_for(App, "host")
         assert spec.default == "localhost"
         assert spec.annotation is str
+
+
+class TestCountedFormsTakeNoValue:
+    """`-v -v -v` is three, not a demand for an argument."""
+
+    def test_a_counted_field_is_a_flag(self) -> None:
+        assert spec_for(App, "verbosity").cli[0].flag is True
+
+    def test_an_uncounted_int_still_takes_one(self) -> None:
+        assert spec_for(App, "pool.size").cli[0].flag is False
