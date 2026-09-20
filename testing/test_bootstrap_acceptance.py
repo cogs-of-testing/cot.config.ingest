@@ -22,9 +22,9 @@ from cot.config import (
     ConfigManager,
     ConfigPart,
     EnvSource,
-    addopts_field,
     bootstrap_only,
     config_source,
+    injected_args,
     short,
 )
 
@@ -434,8 +434,8 @@ class PytestConfigWithVerbose(ConfigPart, prefix="pytest"):
 
     # bootstrap_only: can only be set via CLI, not via addopts
     config_file: Annotated[str | None, config_source, bootstrap_only] = None
-    # addopts_field: value is re-parsed as CLI args
-    addopts: Annotated[str, addopts_field] = ""
+    # injected_args: value is re-parsed as CLI args
+    addopts: Annotated[str, injected_args] = ""
     testpaths: str = "tests"
     verbose: bool = False
     tb: str = "auto"

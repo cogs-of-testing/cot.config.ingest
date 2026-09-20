@@ -173,7 +173,7 @@ class _ArgvSource:
     """Shared machinery for sources whose input is a list of CLI tokens.
 
     Two of those exist: the arguments the user typed (:class:`CLISource`) and
-    the arguments an ``addopts_field`` contributed (:class:`AddoptsSource`).
+    the arguments an ``injected_args`` contributed (:class:`AddoptsSource`).
     They differ in where the tokens come from, what precedence they carry and
     how they describe themselves -- not in how a token becomes a field value.
     """
@@ -289,7 +289,7 @@ class CLISource(_ArgvSource):
     3. load() to get values for each fragment type
     4. get_unknown_args() to get unconsumed args
 
-    Arguments contributed by an ``addopts_field`` are *not* handled here: they
+    Arguments contributed by an ``injected_args`` are *not* handled here: they
     are a separate source (:class:`AddoptsSource`) sitting one rung lower on
     the precedence ladder, so a typed argument always beats one a config file
     injected.
@@ -385,14 +385,14 @@ class CLISource(_ArgvSource):
 
 
 class AddoptsSource(_ArgvSource):
-    """Arguments contributed by ``addopts_field`` values, re-parsed as CLI args.
+    """Arguments contributed by ``injected_args`` values, re-parsed as CLI args.
 
     This is a source like any other, which is the whole point: ``addopts`` sits
     at its own rung of the precedence ladder (:data:`Precedence.ADDOPTS`, above
     files and the environment, below typed arguments) instead of being spliced
     into ``argv``. Splicing made an injected option indistinguishable from one
     the user typed, and pinned it to CLI precedence no matter what the
-    ``addopts_field`` marker asked for.
+    ``injected_args`` marker asked for.
 
     Tokens accumulate: several config files, or several ConfigParts, may each
     contribute. Later contributions win, matching the parser's own rule.

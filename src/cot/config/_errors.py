@@ -19,3 +19,7 @@ class ConfigDeclarationError(ConfigError):
     Raised while a declaration is being read, never while values are being
     merged: the input is fine and the program is wrong.
     """
+
+
+class ConfigCollisionError(ConfigDeclarationError):
+    """Two roots claim one spelling, and mean different things by it."""

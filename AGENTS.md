@@ -55,8 +55,13 @@ not; update this block as modules land.
 
 ```
 src/cot/config/     the library; every _-prefixed module is internal
+  _bases.py         ConfigPart: one class, root or nested by declaration
+  _annotations.py   the markers, and the Marker base that identifies them
   _fields.py        the field model — the only place class shape is derived
   _names.py         path -> every source-facing spelling
+  _specs.py         field -> FieldSpec, the one derivation of what an option is
+  _index.py         spelling -> field; collisions and adoption
+  _errors.py        the exception hierarchy (partial until step 3)
   _coerce.py        string -> declared type
   _sources.py       the source implementations
   _manager.py       declare/resolve/get, merging, provenance

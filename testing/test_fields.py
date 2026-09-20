@@ -14,15 +14,15 @@ import pytest
 from cot.config import (
     ConfigDeclarationError,
     ConfigPart,
-    addopts_field,
     from_parent,
     help,
+    injected_args,
     short,
 )
 from cot.config._annotations import (
-    AddoptsMarker,
     FromParentMarker,
     HelpMarker,
+    InjectedArgsMarker,
     ShortMarker,
 )
 from cot.config._fields import (
@@ -189,10 +189,10 @@ class TestMarkers:
 
     def test_addopts_marker_carries_precedence(self) -> None:
         class WithAddopts(ConfigPart):
-            addopts: Annotated[str, addopts_field] = ""
+            addopts: Annotated[str, injected_args] = ""
 
         by_name = {f.name: f for f in fields_of(WithAddopts)}
-        marker = marker_of(by_name["addopts"], AddoptsMarker)
+        marker = marker_of(by_name["addopts"], InjectedArgsMarker)
         assert marker is not None
         assert marker.precedence == 18
 

@@ -23,10 +23,10 @@ from cot.config import (
     Precedence,
     TomlSource,
     UnknownConfigKeyWarning,
-    addopts_field,
     config_source,
+    injected_args,
 )
-from cot.config._annotations import AddoptsMarker
+from cot.config._annotations import InjectedArgsMarker
 
 
 class Simple(ConfigPart, prefix="app"):
@@ -34,7 +34,7 @@ class Simple(ConfigPart, prefix="app"):
 
 
 class WithAddopts(ConfigPart, prefix="app"):
-    addopts: Annotated[str, addopts_field] = ""
+    addopts: Annotated[str, injected_args] = ""
     level: str = "WARNING"
 
 
@@ -63,7 +63,7 @@ class TestLadderDefaults:
         )
 
     def test_addopts_marker_defaults_to_its_rung(self) -> None:
-        assert AddoptsMarker().precedence == Precedence.ADDOPTS
+        assert InjectedArgsMarker().precedence == Precedence.ADDOPTS
 
 
 class TestPrecedenceIsTheOnlyAuthority:
@@ -173,10 +173,10 @@ class TestAddoptsIsASource:
     def test_the_marker_precedence_is_the_sources_precedence(
         self, tmp_path: Path
     ) -> None:
-        """`addopts_field` with a custom precedence actually moves the rung."""
+        """`injected_args` with a custom precedence actually moves the rung."""
 
         class LoudAddopts(ConfigPart, prefix="app"):
-            addopts: Annotated[str, AddoptsMarker(Precedence.CLI + 5)] = ""
+            addopts: Annotated[str, InjectedArgsMarker(Precedence.CLI + 5)] = ""
             level: str = "WARNING"
 
         config_file = _toml(tmp_path, '[app]\naddopts = "--level FROM_ADDOPTS"\n')
@@ -206,7 +206,7 @@ class TestAddoptsIsASource:
         """
 
         class Other(ConfigPart, prefix="other", name_prefix="other"):
-            addopts: Annotated[str, addopts_field] = ""
+            addopts: Annotated[str, injected_args] = ""
             level: str = "WARNING"
 
         config_file = _toml(
