@@ -154,6 +154,40 @@ class SpellingIndex:
                 return self._targets(entry)
         return ()
 
+    def file_key(self, section: str | None, key: str) -> tuple[SpellingTarget, ...]:
+        """Resolve a flat key sitting directly in a file section.
+
+        The flat *namespace* is shared across roots, but a flat *key in a file*
+        is scoped by the section it sits in, because that is what `prefix`
+        places. A root with no prefix is reached with ``section=None``.
+        """
+        from ._bases import part_prefix
+
+        entry = self._flat.get(key)
+        if entry is None:
+            return ()
+        return tuple(
+            target
+            for target in entry.targets
+            if part_prefix(target.root) == section and target.spec.file_key is not None
+        )
+
+    def env_spellings(self) -> tuple[tuple[str, bool, tuple[SpellingTarget, ...]], ...]:
+        """Every variable the index knows, with whether it takes a prefix.
+
+        An environment source asks for these rather than walking the process
+        environment: every process inherits variables it did not choose, and a
+        warning about `PATH` would fire on correct configuration.
+        """
+        return tuple(
+            (
+                spelling,
+                bool(entry.spec.env is not None and entry.spec.env.absolute),
+                tuple(entry.targets),
+            )
+            for spelling, entry in self._env.items()
+        )
+
     def nested(
         self, section: str | None, table: tuple[str, ...], key: str
     ) -> tuple[SpellingTarget, ...]:

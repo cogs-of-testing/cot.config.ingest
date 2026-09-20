@@ -162,11 +162,18 @@ def _env_spelling(
     )
 
 
-def _cli_forms(field: FieldInfo, cli_name: str, *, flag: bool) -> tuple[CliForm, ...]:
-    """The derived form, then one per ``form()`` marker, in declaration order."""
+def _cli_forms(
+    field: FieldInfo, cli_name: str, *, flag: bool, counts: bool
+) -> tuple[CliForm, ...]:
+    """The derived form, then one per ``form()`` marker, in declaration order.
+
+    A counted field's forms take no value: occurrences are what carry the
+    meaning, so ``-v -v -v`` is three rather than a demand for an argument.
+    """
     if has_marker(field, NoCLIMarker):
         return ()
 
+    flag = flag or counts
     short = marker_of(field, ShortMarker)
     long = f"--{cli_name}"
     forms = [
@@ -227,6 +234,7 @@ def field_specs(root: type[ConfigPart]) -> tuple[FieldSpec, ...]:
         names = names_of(root, field)
         declared = field.type
         flag = declared is bool
+        counts = has_marker(field, CountedMarker)
         help_marker = marker_of(field, HelpMarker)
 
         specs.append(
@@ -235,12 +243,12 @@ def field_specs(root: type[ConfigPart]) -> tuple[FieldSpec, ...]:
                 flat=names.flat,
                 file_key=None if has_marker(field, NoIniMarker) else names.flat,
                 env=_env_spelling(root, field, names.flat, exposed=exposed),
-                cli=_cli_forms(field, names.cli, flag=flag),
+                cli=_cli_forms(field, names.cli, flag=flag, counts=counts),
                 annotation=field.annotation,
                 default=field.default,
                 repeatable=_is_repeatable(declared),
                 optional=_is_optional(field.annotation),
-                counts=has_marker(field, CountedMarker),
+                counts=counts,
                 values=_closed_values(declared),
                 aliases=tuple(
                     marker.name
