@@ -21,7 +21,6 @@ from cot.config import (
     ConfigPart,
     EnvSource,
     Precedence,
-    SubConfig,
     TomlSource,
     UnknownConfigKeyWarning,
     addopts_field,
@@ -289,7 +288,7 @@ class TestBooleanCoercion:
 class TestUnknownKeysAtEveryDepth:
     """A typo in a nested table is user error, same as one at the top."""
 
-    class Cli(SubConfig):
+    class Cli(ConfigPart):
         level: str = "WARNING"
 
     class Nested(ConfigPart, prefix="app"):

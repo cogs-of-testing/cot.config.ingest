@@ -7,12 +7,19 @@ from typing import Annotated
 from ._precedence import Precedence
 
 
-class _MarkerMixin:
+class Marker:
+    """Base of every marker this library defines.
+
+    Being one is what makes a marker the library's business: it is how a
+    misplaced marker is told from a third party's ``Annotated`` extra, which is
+    none of our concern.
+    """
+
     def __rmatmul__(self, other: object) -> object:
         return Annotated[other, self]
 
 
-class FromParentMarker(_MarkerMixin):
+class FromParentMarker(Marker):
     """marker to indicate fields to load from a parent configuration"""
 
     pass
@@ -21,45 +28,7 @@ class FromParentMarker(_MarkerMixin):
 from_parent = FromParentMarker()
 
 
-class PrefixMarker(_MarkerMixin):
-    """indicate a prefix that should be used for the fields of a sub-configuration."""
-
-    prefix: str
-
-    def __init__(self, prefix: str) -> None:
-        self.prefix = prefix
-
-    def __repr__(self) -> str:
-        return f"<Prefix {self.prefix!r}>"
-
-
-class NamePrefixMarker(_MarkerMixin):
-    """
-    Indicate a prefix that leads every *field name* of a ConfigPart.
-
-    This is distinct from `PrefixMarker`, which names the *section* a
-    ConfigPart occupies in a config file. A name prefix becomes part of the
-    option name itself, in every source.
-
-    pytest's logging plugin needs both: its options live in the `[pytest]`
-    section (`prefix`) but are individually called `log_cli_level`
-    (`name_prefix`), never `[log] cli_level`.
-
-    Example:
-        class LoggingConfig(ConfigPart, prefix="pytest", name_prefix="log"):
-            level: str = "WARNING"       # --log-level, ini log_level
-    """
-
-    name_prefix: str
-
-    def __init__(self, name_prefix: str) -> None:
-        self.name_prefix = name_prefix
-
-    def __repr__(self) -> str:
-        return f"<NamePrefix {self.name_prefix!r}>"
-
-
-class NameMarker(_MarkerMixin):
+class NameMarker(Marker):
     """
     Override the derived name of a single field in every source.
 
@@ -68,7 +37,7 @@ class NameMarker(_MarkerMixin):
     `file.path`, which would derive `log_file_path`.
 
     Example:
-        class LogFileConfig(SubConfig):
+        class LogFileConfig(ConfigPart):
             path: Annotated[str | None, named("log_file")] = None
     """
 
@@ -86,7 +55,7 @@ def named(name: str) -> NameMarker:
     return NameMarker(name)
 
 
-class NoCLIMarker(_MarkerMixin):
+class NoCLIMarker(Marker):
     """
     Mark a field as unreachable from the command line.
 
@@ -95,7 +64,7 @@ class NoCLIMarker(_MarkerMixin):
     `--log-cli-level` instead.
 
     Example:
-        class LogCliConfig(SubConfig):
+        class LogCliConfig(ConfigPart):
             enabled: Annotated[bool, no_cli] = False
     """
 
@@ -106,7 +75,7 @@ class NoCLIMarker(_MarkerMixin):
 no_cli = NoCLIMarker()
 
 
-class HelpMarker(_MarkerMixin):
+class HelpMarker(Marker):
     """marker to provide help text for configuration fields."""
 
     help: str
@@ -123,7 +92,7 @@ def help(text: str) -> HelpMarker:
     return HelpMarker(text)
 
 
-class ConfigSourceMarker(_MarkerMixin):
+class ConfigSourceMarker(Marker):
     """
     Marker to indicate a field whose value should become a config source.
 
@@ -148,7 +117,7 @@ class ConfigSourceMarker(_MarkerMixin):
 config_source = ConfigSourceMarker()
 
 
-class BootstrapOnlyMarker(_MarkerMixin):
+class BootstrapOnlyMarker(Marker):
     """
     Marker to indicate a field that can only be set during bootstrap.
 
@@ -171,7 +140,7 @@ class BootstrapOnlyMarker(_MarkerMixin):
 bootstrap_only = BootstrapOnlyMarker()
 
 
-class AddoptsMarker(_MarkerMixin):
+class AddoptsMarker(Marker):
     """
     Marker to indicate a field whose value should be re-parsed as CLI args.
 
@@ -199,7 +168,7 @@ class AddoptsMarker(_MarkerMixin):
 addopts_field = AddoptsMarker()
 
 
-class ShortMarker(_MarkerMixin):
+class ShortMarker(Marker):
     """
     Marker to specify a short CLI option for a field.
 
@@ -228,10 +197,9 @@ def short(char: str) -> ShortMarker:
 
 
 __all__ = [
+    "Marker",
     "FromParentMarker",
     "from_parent",
-    "PrefixMarker",
-    "NamePrefixMarker",
     "NameMarker",
     "named",
     "NoCLIMarker",

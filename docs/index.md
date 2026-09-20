@@ -17,16 +17,18 @@ what it shows is what the code does today. Where the
 
 ## Declaring
 
-A `ConfigPart` is the unit an application declares. A `SubConfig` is a nested
-section inside one. Markers on a field say what the annotation cannot:
+A `ConfigPart` is the unit an application declares, and a `ConfigPart` used as
+the type of another one's field is a nested section inside it. There is one
+class, and the declaration decides which role it plays. Markers on a field say
+what the annotation cannot:
 
 ```python
 from typing import Annotated
 
-from cot.config import ConfigPart, SubConfig, from_parent, help
+from cot.config import ConfigPart, from_parent, help
 
 
-class PoolConfig(SubConfig):
+class PoolConfig(ConfigPart):
     size: Annotated[int, help("connections to keep open")] = 5
     timeout: Annotated[float | None, from_parent, help("seconds before giving up")] = None
 

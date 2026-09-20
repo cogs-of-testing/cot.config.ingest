@@ -1,7 +1,7 @@
 """
-Tests for SubConfig inheritance and nested loading.
+Tests for ConfigPart inheritance and nested loading.
 
-These tests verify that SubConfig classes support inheritance
+These tests verify that ConfigPart classes support inheritance
 and can be loaded from nested configuration structures.
 """
 
@@ -14,12 +14,11 @@ from cot.config import (
     ConfigManager,
     ConfigPart,
     EnvSource,
-    SubConfig,
     TomlSource,
 )
 
 
-class BaseOutput(SubConfig):
+class BaseOutput(ConfigPart):
     """Base output settings for testing inheritance."""
 
     level: str = "WARNING"
@@ -39,18 +38,18 @@ class FileOutput(BaseOutput):
 
 
 class OutputConfig(ConfigPart, prefix="output"):
-    """Config with nested SubConfigs for testing."""
+    """Config with nested ConfigParts for testing."""
 
     cli: CliOutput
     file: FileOutput
     capture: BaseOutput
 
 
-class TestSubConfigInheritance:
-    """Test SubConfig inheritance pattern."""
+class TestConfigPartInheritance:
+    """Test ConfigPart inheritance pattern."""
 
     def test_inherited_fields_have_defaults(self) -> None:
-        """Child SubConfig inherits field defaults from parent."""
+        """Child ConfigPart inherits field defaults from parent."""
         cli = CliOutput()
 
         # Inherited defaults
@@ -60,7 +59,7 @@ class TestSubConfigInheritance:
         assert cli.enabled is False
 
     def test_child_can_override_inherited_fields(self) -> None:
-        """Child SubConfig can set inherited fields."""
+        """Child ConfigPart can set inherited fields."""
         cli = CliOutput(enabled=True, level="DEBUG", format="custom")
 
         assert cli.enabled is True
@@ -68,7 +67,7 @@ class TestSubConfigInheritance:
         assert cli.format == "custom"
 
     def test_different_children_are_independent(self) -> None:
-        """Different child SubConfigs don't share state."""
+        """Different child ConfigParts don't share state."""
         cli = CliOutput(level="DEBUG")
         file = FileOutput(level="ERROR", path="/var/log/test.log")
         capture = BaseOutput(level="INFO")
@@ -84,11 +83,11 @@ class TestSubConfigInheritance:
         assert not hasattr(capture, "path")
 
 
-class TestNestedSubConfigLoading:
-    """Test loading nested SubConfigs from sources."""
+class TestNestedConfigPartLoading:
+    """Test loading nested ConfigParts from sources."""
 
     def test_load_nested_from_toml(self, tmp_path: Path) -> None:
-        """Load nested SubConfig from TOML with dotted sections."""
+        """Load nested ConfigPart from TOML with dotted sections."""
         toml_file = tmp_path / "config.toml"
         toml_file.write_text(
             dedent("""
@@ -126,7 +125,7 @@ class TestNestedSubConfigLoading:
         assert config.capture.format == "%(message)s"  # default
 
     def test_nested_env_vars(self) -> None:
-        """Load nested SubConfig from environment variables."""
+        """Load nested ConfigPart from environment variables."""
         env = {
             "OUTPUT_CLI_ENABLED": "true",
             "OUTPUT_CLI_LEVEL": "DEBUG",

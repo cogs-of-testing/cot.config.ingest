@@ -37,7 +37,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Annotated, Any
 
 from ._annotations import from_parent, help, named, no_cli
-from ._bases import ConfigPart, SubConfig
+from ._bases import ConfigPart
 from .pytest_plugin import install
 
 # A plugin loaded with `-p` is loaded *before* entry-point plugins, so the
@@ -51,7 +51,7 @@ if TYPE_CHECKING:
     from _pytest.terminal import TerminalReporter
 
 
-class TimingOutput(SubConfig):
+class TimingOutput(ConfigPart):
     """Settings shared by every place the report can go.
 
     `threshold` is marked `from_parent`, so `--timing-threshold` sets it for

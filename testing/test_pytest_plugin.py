@@ -20,9 +20,9 @@ pytest_plugins = ["pytester"]
 PLUGIN = """
     from typing import Annotated
 
-    from cot.config import ConfigPart, SubConfig, from_parent, help, named, no_cli
+    from cot.config import ConfigPart, from_parent, help, named, no_cli
 
-    class LogOutput(SubConfig):
+    class LogOutput(ConfigPart):
         level: Annotated[str | None, from_parent, help("log level")] = None
         format: Annotated[str, from_parent, help("log format")] = "PLAIN"
 
