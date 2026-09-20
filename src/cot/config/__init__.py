@@ -19,15 +19,27 @@ from ._annotations import (
     short,
 )
 from ._bases import ConfigPart
-from ._errors import ConfigCollisionError, ConfigDeclarationError, ConfigError
+from ._diagnostics import (
+    ConfigCollisionError,
+    ConfigDeclarationError,
+    ConfigError,
+    ConfigLifecycleError,
+    ConfigUsageError,
+    ConfigValueError,
+    ConfigWarning,
+    DeprecatedNameWarning,
+    MissingConfigError,
+    RuntimeMutationWarning,
+    ShadowedValueWarning,
+    UnknownConfigKeyWarning,
+    UnknownOverrideKeyWarning,
+)
 from ._index import SpellingIndex, SpellingTarget
 from ._manager import (
-    ConfigLifecycleError,
     ConfigManager,
     ConfigSource,
     DeclaringSource,
     Discoverable,
-    UnknownConfigKeyWarning,
 )
 from ._origins import Origin, OriginAware, OriginKind
 from ._precedence import Precedence
@@ -49,12 +61,20 @@ __all__ = [
     "ConfigSource",
     "DeclaringSource",
     "Discoverable",
-    "ConfigLifecycleError",
-    "UnknownConfigKeyWarning",
     # Diagnostics
     "ConfigError",
+    "ConfigLifecycleError",
     "ConfigDeclarationError",
     "ConfigCollisionError",
+    "ConfigUsageError",
+    "ConfigValueError",
+    "MissingConfigError",
+    "ConfigWarning",
+    "UnknownConfigKeyWarning",
+    "UnknownOverrideKeyWarning",
+    "DeprecatedNameWarning",
+    "ShadowedValueWarning",
+    "RuntimeMutationWarning",
     # Specs and the index
     "FieldSpec",
     "CliForm",

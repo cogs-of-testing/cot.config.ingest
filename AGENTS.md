@@ -61,7 +61,7 @@ src/cot/config/     the library; every _-prefixed module is internal
   _names.py         path -> every source-facing spelling
   _specs.py         field -> FieldSpec, the one derivation of what an option is
   _index.py         spelling -> field; collisions and adoption
-  _errors.py        the exception hierarchy (partial until step 3)
+  _diagnostics.py   the warning and error set, aggregation, strict mode
   _coerce.py        string -> declared type
   _sources.py       the source implementations
   _manager.py       declare/resolve/get, merging, provenance
