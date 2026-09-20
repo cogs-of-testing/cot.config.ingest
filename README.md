@@ -103,87 +103,24 @@ config.file.path       # the --log-file / log_file value
 
 ## Using it
 
+The usage walkthrough, names, precedence, provenance and help live in
+[the documentation](docs/index.md); it
+is executed by `testing/test_docs_index.py` the same way this README is by
+`testing/test_readme.py`. In short:
+
 ```python
 import sys
-from pathlib import Path
 
-from cot.config import CLISource, ConfigManager, EnvSource, TomlSource
+from cot.config import CLISource, ConfigManager, EnvSource
 
-manager = ConfigManager(sources=[
-    TomlSource(Path("pyproject.toml")),
-    EnvSource("PYTEST"),
-    CLISource(sys.argv[1:]),
-])
+manager = ConfigManager(sources=[EnvSource(), CLISource(sys.argv[1:])])
 manager.declare(LoggingConfig)
-
 config = manager.get(LoggingConfig)
 ```
 
-Three phases: `declare()` registers a type and its options, `resolve()` runs the
-bootstrap once for everything declared, `get()` returns the built instance.
-`get()` resolves implicitly; calling `resolve()` yourself is how you pin the
-moment configuration freezes. Declaring after that raises
-`ConfigLifecycleError`.
-
-The split exists because a host collects declarations from independent plugins
-before any of them can be resolved — in pytest, every plugin's
-`pytest_addoption` runs before a single argument is parsed.
-
-### Names
-
-One structural path, a different spelling per source. For
-`LoggingConfig(prefix="pytest", name_prefix="log")`:
-
-| path | CLI | INI / flat | env | TOML nested |
-|---|---|---|---|---|
-| `("level",)` | `--log-level` | `log_level` | `PYTEST_LOG_LEVEL` | `[pytest] level` |
-| `("cli","level")` | `--log-cli-level` | `log_cli_level` | `PYTEST_LOG_CLI_LEVEL` | `[pytest.cli] level` |
-
-File sources accept both spellings, so a nested table and a flat prefixed key
-reach the same field. `prefix=` names the config-file section and namespaces the
-environment; `name_prefix=` prefixes the option names. They are separate because
-pytest's logging options live in `[pytest]` but are individually called
-`log_cli_level`.
-
-### Precedence
-
-```
-defaults(-1) < file(15) < addopts(18) < env(20) < cli(25)
-```
-
-These are defaults, not an enum — every source takes `precedence=`, and that
-number is the only thing that decides a winner:
-
-```python
-from cot.config import Precedence, TomlSource
-
-TomlSource(path, precedence=Precedence.CLI + 1)   # outranks a typed argument
-```
-
-### Where did this value come from?
-
-Merging several sources means the winner is not obvious from any one of them:
-
-```python
-manager.origin_of(LoggingConfig, "cli.level")
-# Origin(kind="env", location="PYTEST_LOG_CLI_LEVEL", precedence=20)
-
-print(manager.explain(LoggingConfig))
-# field           value       origin
-# --------------------------------------------------
-# level           'WARNING'   default:level default
-# cli.level       'DEBUG'     env:PYTEST_LOG_CLI_LEVEL
-# file.path       None        default:file.path default
-```
-
-An option injected through an `addopts` field reports as
-`addopts --log-cli-level` rather than looking like something you typed.
-
-### Help
-
-`manager.format_help()` returns the rendered option help and
-`manager.help_requested()` reports whether `-h`/`--help` was passed. Neither
-prints nor exits — this is a library, the application owns the process.
+`declare()` registers a type, `get()` resolves every declared type once and
+returns the built instance, and `manager.explain(LoggingConfig)` says where each
+value came from.
 
 ## pytest integration (a hack, on purpose)
 
@@ -204,7 +141,9 @@ That is deliberate for now. The point of the proof of concept is to show the
 library driving real pytest options, and a conftest-level
 `pytest_plugins = [...]` would be too late: that conftest's own
 `pytest_addoption` runs before its plugin list is processed. It is not how a
-stable release should behave, and it will change.
+stable release should behave, and it will change: the plan is to replace it with
+importable `add_config(parser, T)` / `get_config(config, T)` functions. See
+[`docs/design/pytest/evolution.md`](docs/design/pytest/evolution.md).
 
 What you should know:
 
@@ -230,16 +169,6 @@ def pytest_configure(config):
 The intended end state is the reverse of this: pytest using the library
 directly, with no patching at all.
 
-### Example plugin
-
-`cot.config.example_plugin` is a worked example — a slow-test reporter with a
-nested structure, the `from_parent` cascade, `named()`, `no_cli`, help text, ini
-and CLI. It is **not** auto-enabled:
-
-```bash
-pytest -p cot.config.example_plugin --timing-report --timing-threshold=0.5
-```
-
 ## Installing
 
 ```bash
@@ -249,27 +178,14 @@ pip install cot-config
 Requires Python 3.10+. Read the pytest section above first — installing is
 activating.
 
-## Not implemented yet
+## Where the code and the design differ
 
-Present in `docs/design/` as intent, absent from the code:
-
-- plugin discovery — the `Discoverable` protocol has no implementors
-- list merge semantics (append / reset)
-- change notification, hot reload, dependency graphs
-- type coercion as a validation hook (construction checks required fields and
-  rejects unknown kwargs; coercion itself lives in `_coerce.py`, driven by the
-  sources)
-
-## Open questions
-
-- [x] mapping of prefixes/underscores and sub-objects — `prefix=` names the file
-      section, `name_prefix=` prefixes the option names, and a field's dotted
-      path flattens into each source's spelling. See `src/cot/config/_names.py`.
-- [x] mapping of ini options — INI has no nesting, so flat keys are resolved
-      against the same mapping; `log_cli_level` reaches `cli.level`.
-- [ ] ingestion of backward compatibility fields
-- [ ] toml/yaml behaviours — TOML accepts both nested tables and flat keys;
-      YAML is not implemented.
+`docs/design/` is normative. The code is being rebuilt to it
+([D20](docs/design/decisions.md#d20)) in
+[the build order](docs/design/index.md#build-order); until that lands, the
+code in `src/` is the pre-rebuild shape and the design describes the target.
+Plugin discovery, list merge semantics, YAML and hot reload are design intent
+with no code behind them either way.
 
 ## Development
 

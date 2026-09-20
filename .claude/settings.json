@@ -3,9 +3,8 @@
     "allow": [
       "Bash(uv run pytest:*)",
       "Bash(uv run mypy:*)",
-      "Bash(uv run ruff:*)"
-    ],
-    "deny": [],
-    "ask": []
+      "Bash(uv run ruff:*)",
+      "Bash(pre-commit run:*)"
+    ]
   }
 }

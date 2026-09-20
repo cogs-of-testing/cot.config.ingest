@@ -1,279 +1,131 @@
-# ConfigPart Specification
+# ConfigParts
 
-## Overview
+The data model: the class a user writes, and the field model everything else
+reads it through.
 
-ConfigParts are the fundamental building blocks of the configuration system. They define the structure, types, and metadata for configuration data.
-
-## Basic ConfigPart
-
-```python
-from cot.config import ConfigPart
-
-class LogConfig(ConfigPart):
-    """Logging configuration."""
-    level: str = "INFO"
-    file: str | None = None
-    format: str = "%(levelname)s: %(message)s"
-```
-
-ConfigParts are:
-- **Type-annotated**: All fields must have type hints
-- **Frozen**: Immutable after creation
-- **Composable**: Can contain other ConfigParts as SubConfigs
-
-## Field Types
-
-### Supported Types
-
-| Python Type | CLI | Config File | Environment |
-|-------------|-----|-------------|-------------|
-| `str` | `--field value` | `"value"` | `FIELD=value` |
-| `int` | `--field 42` | `42` | `FIELD=42` |
-| `float` | `--field 3.14` | `3.14` | `FIELD=3.14` |
-| `bool` | `--field` / `--no-field` | `true`/`false` | `FIELD=1`/`0` |
-| `Path` | `--field /path` | `"/path"` | `FIELD=/path` |
-| `list[T]` | `--field a --field b` | `["a", "b"]` | `FIELD=a,b` |
-| `T \| None` | Optional | `null` or value | Empty or value |
-
-### Required vs Optional Fields
+## One class, two roles
 
 ```python
-class DatabaseConfig(ConfigPart):
-    host: str                    # Required - no default
-    port: int = 5432             # Optional - has default
-    ssl: bool = False            # Optional - has default
-    timeout: float | None = None # Optional - nullable
+class LogCliConfig(ConfigPart):
+    level: Annotated[str | None, from_parent] = None
+    enabled: bool = False
+
+class LoggingConfig(ConfigPart, prefix="pytest", name_prefix="log"):
+    level: str = "WARNING"
+    cli: LogCliConfig
 ```
 
-## SubConfig Composition
+There is one class. A ConfigPart handed to `manager.declare()` is a **root**:
+the unit a plugin declares and a host retrieves. A ConfigPart that is the type
+of another part's field is **nested**: a section inside its parent, positioned
+by its path. The same class may play both roles in different declarations,
+because a field's identity is its path within the root ([I1](invariants.md#i1))
+and a class carries no position of its own. `FieldInfo.is_nested` reports
+which fields hold a part.
 
-ConfigParts can nest other configurations:
+`prefix=`, `name_prefix=` and `from_env=` are class keywords that describe a
+root. A nested part carrying any of them is a
+[`ConfigDeclarationError`](diagnostics.md#errors) at `declare()`, naming the
+field and the keyword: the keyword would have no effect, and its author
+expected one. Rationale in [D30](decisions.md#d30).
+
+Instances in either role are:
+
+- **keyword-only**, with no positional construction
+- **frozen**: `__setattr__` and `__delattr__` raise
+- **materialised**: defaults are written into the instance `__dict__`, so
+  equality, `repr` and [`explain()`](reporting.md#the-provenance-api) do not
+  depend on whether a value was passed or inherited
+- **hashable**: list, dict and set values are frozen structurally for
+  `__hash__`
+
+A mutable class-level default is deep-copied per instance, so a
+`list[list[str]]` default is not shared through its inner lists.
+
+`@dataclass_transform(eq_default=True, kw_only_default=True, frozen_default=True)`
+gives type checkers the right synthesised `__init__`.
+
+Construction is where required fields are enforced and where a directly
+constructed instance is type-checked
+([types](types.md#construction-checks)).
+
+## Fields
+
+Type annotations are required. A class attribute without an annotation is not a
+field.
+
+The field model in `_fields.py` is the single source of truth about a class's
+shape. `fields_of(cls)` walks the MRO, resolves annotations with
+`include_extras=True`, and returns `FieldInfo` records:
+
+| Attribute | Meaning |
+|---|---|
+| `path` | `("cli", "level")`, the identity ([I1](invariants.md#i1)) |
+| `name` | `"level"`, the bare attribute |
+| `annotation` | as written, `Annotated[...]` preserved |
+| `type` | `Annotated` and `Optional` stripped |
+| `default` | the class-level default, or `MISSING` |
+| `markers` | the `Annotated` extras, in declaration order |
+| `owner` | the MRO class that declared it |
+| `is_nested` | whether `type` is a `ConfigPart` subclass |
+
+No other module may re-derive this. A `get_origin(x) is Annotated` loop outside
+`_fields.py` is a bug.
+
+Results are cached per `(cls, recurse)` in a `WeakKeyDictionary`, so classes
+defined inside test functions do not leak.
+
+Inheritance stays simple: parts pick up fields via `__mro__`, base classes
+first. Nothing beyond what the acceptance test needs is supported, which is
+`LogCliConfig(LogOutputConfig)` and
+`LoggingConfig(LogOutputConfig, ConfigPart, ...)`.
+
+## Markers
+
+Markers are `Annotated` extras, written either way:
 
 ```python
-class ServerConfig(SubConfig):
-    host: str = "localhost"
-    port: int = 8000
-
-class DatabaseConfig(SubConfig):
-    host: str = "localhost"
-    port: int = 5432
-
-class AppConfig(ConfigPart):
-    debug: bool = False
-    server: ServerConfig
-    database: DatabaseConfig
+level: Annotated[str, from_parent, help("log level")] = "WARNING"
+level: str @ from_parent @ help("log level") = "WARNING"      # _MarkerMixin.__rmatmul__
 ```
 
-**Note**: Use `SubConfig` for nested configurations, `ConfigPart` for top-level fragments.
+`@` binds tighter than `|`, so `str | None @ from_parent` annotates `None`
+alone rather than the field. A union takes `Annotated[...]` or parentheses:
+`(str | None) @ from_parent`.
 
-## Prefixes
+The field model rejects the mis-binding rather than losing the marker: a
+library marker found on a member of a union, instead of on the field, is a
+[`ConfigDeclarationError`](diagnostics.md#errors) at `declare()` naming the
+field, the marker and the parenthesised spelling. Rationale in
+[D31](decisions.md#d31).
 
-Prefixes control how field names map to CLI args and environment variables.
+| Marker | Effect | Documented in |
+|---|---|---|
+| `from_parent` | value cascades from the parent field of the same name | [merging](merging.md#the-from_parent-cascade) |
+| `named("...")` | replaces the derived flat name | [names](names.md#per-field-overrides) |
+| `formerly("...")` | declares a legacy flat spelling; a value arriving under it warns | [names](names.md#per-field-overrides) |
+| `env_named("...")` | pins an absolute environment variable name | [names](names.md#per-field-overrides) |
+| `from_env` | gives the field, or a nested part's whole subtree, an environment spelling | [sources](sources.md#exposure-is-opt-in) |
+| `no_cli` | suppresses the CLI option, keeps file and env | [names](names.md#per-field-overrides) |
+| `no_ini` | suppresses the file spelling, keeps CLI and env | [names](names.md#per-field-overrides) |
+| `short("v")` | adds a short option to the field's own CLI form | [names](names.md#per-field-overrides) |
+| `form("--exitfirst", short="x", contributes=1)` | adds a further CLI form, optionally supplying a constant | [specs](specs.md#cli-forms) |
+| `counted` | occurrences of any CLI form are summed | [specs](specs.md#derivation-over-declaration) |
+| `help("...")` | help text | [reporting](reporting.md#help) |
+| `config_source` | the value names a file that becomes a source | [sources](sources.md#config-file-discovery) |
+| `injected_args` | the value is re-parsed as CLI tokens | [lifecycle](lifecycle.md#the-injected-arguments-loop) |
+| `bootstrap_only` | cannot be set from injected arguments | [lifecycle](lifecycle.md#the-injected-arguments-loop) |
 
-### Class-Level Prefix
+Every one of them works at any depth ([I7](invariants.md#i7)).
 
-```python
-class DatabaseConfig(ConfigPart, prefix="db"):
-    host: str = "localhost"
-    port: int = 5432
+`prefix=`, `name_prefix=` and `from_env=` are class keywords rather than field
+markers, because they describe the root, not a field. See
+[names](names.md#prefix-versus-name_prefix) and
+[the environment](sources.md#exposure-is-opt-in).
 
-# Results in:
-# CLI: --db-host, --db-port
-# Env: DB_HOST, DB_PORT
-```
+## Required and optional
 
-### Field-Level Prefix
-
-```python
-from cot.config._annotations import PrefixMarker
-
-class AppConfig(ConfigPart):
-    database: DatabaseConfig @ PrefixMarker("db")
-```
-
-See [Name Matching](name-matching.md) for full mapping rules.
-
-## Field Annotations
-
-### Help Text
-
-```python
-from cot.config._annotations import help
-
-class ServerConfig(ConfigPart):
-    host: str @ help("Server hostname") = "localhost"
-    port: int @ help("Server port number") = 8000
-    workers: int @ help("Number of worker processes") = 4
-```
-
-### From Parent
-
-Fields can inherit values from parent context:
-
-```python
-from cot.config._annotations import from_parent
-
-class SubConfig(ConfigPart):
-    root_dir: Path @ from_parent  # Populated from parent's context
-    name: str
-```
-
-## The `discover()` Protocol
-
-ConfigParts can implement `discover()` to customize their initialization during bootstrap.
-
-### Basic Pattern
-
-```python
-from dataclasses import replace
-from typing import Self
-
-class ConfigFileConfig(ConfigPart):
-    config: Path | None = None
-    config_files: list[Path] = []
-
-    def discover(self, manager: ConfigManager) -> Self:
-        """
-        Discover configuration and return updated instance.
-
-        Args:
-            manager: ConfigManager with access to fragments and sources
-
-        Returns:
-            Updated copy of self (ConfigParts are frozen)
-        """
-        invocation = manager.get(InvocationConfig)
-        loaded = manager.load_for_part(type(self))
-
-        config = loaded.get("config") or self.config
-        if config:
-            config_files = [config]
-        else:
-            config_files = discover_config_files(invocation.invocation_dir)
-
-        return replace(self, config=config, config_files=config_files)
-```
-
-### How `discover()` Works
-
-1. Manager creates default instance: `ConfigFileConfig()`
-2. Manager calls `instance.discover(manager)`
-3. `discover()` accesses other fragments via `manager.get()`
-4. `discover()` loads from sources via `manager.load_for_part()`
-5. `discover()` returns updated copy via `replace(self, ...)`
-6. Manager stores the returned instance
-
-### When to Use `discover()`
-
-Use `discover()` when you need to:
-- Access other ConfigParts to make decisions
-- Perform file system operations (finding config files)
-- Have side effects (registering plugins)
-- Implement custom loading logic
-
-### Default Behavior (No `discover()`)
-
-If `discover()` is not defined, the manager uses default loading:
-
-```python
-# Manager does this automatically:
-loaded = manager.load_for_part(ConfigType)
-instance = replace(ConfigType(), **loaded)
-```
-
-See [Bootstrap Process](bootstrap-process.md) for how discovery fits into staged loading.
-
-## Frozen Behavior
-
-ConfigParts are **immutable after creation**:
-
-```python
-config = AppConfig(debug=True)
-config.debug = False  # AttributeError: Cannot modify frozen attribute
-```
-
-To "modify" a ConfigPart, create a new instance:
-
-```python
-from dataclasses import replace
-
-new_config = replace(config, debug=False)
-```
-
-## Class Markers
-
-ConfigParts can have class-level markers that control behavior:
-
-```python
-class ConfigFileConfig(ConfigPart, prefix="cfg", discover_files=True):
-    ...
-```
-
-| Marker | Purpose |
-|--------|---------|
-| `prefix="..."` | Set prefix for CLI/env name mapping |
-| `discover_files=True` | Manager adds discovered files as sources |
-| `bootstrap=True` | Marker for documentation (no runtime effect) |
-
-## Validation
-
-*To be designed*
-
-Planned features:
-- Field-level validators
-- Cross-field validation
-- Validation timing (during discover vs after build)
-
-## Examples
-
-### Simple Application Config
-
-```python
-class AppConfig(ConfigPart):
-    name: str = "myapp"
-    debug: bool = False
-    log_level: str = "INFO"
-```
-
-### Nested Configuration
-
-```python
-class DatabaseConfig(SubConfig, prefix="db"):
-    host: str = "localhost"
-    port: int = 5432
-    name: str = "app_db"
-
-class CacheConfig(SubConfig, prefix="cache"):
-    enabled: bool = True
-    ttl: int = 3600
-
-class AppConfig(ConfigPart):
-    app_name: str = "myapp"
-    database: DatabaseConfig
-    cache: CacheConfig
-```
-
-### With Discovery
-
-```python
-class PluginConfig(ConfigPart):
-    plugins: list[str] = []
-
-    def discover(self, manager: ConfigManager) -> Self:
-        loaded = manager.load_for_part(type(self))
-        plugins = loaded.get("plugins", [])
-
-        # Register plugin-provided ConfigParts
-        for plugin_name in plugins:
-            plugin = import_plugin(plugin_name)
-            if hasattr(plugin, "Config"):
-                manager.declare(plugin.Config)
-
-        return replace(self, plugins=plugins)
-```
-
-## Related Documents
-
-- [Bootstrap Process](bootstrap-process.md) - Staged loading and discovery
-- [ConfigManager](config-manager.md) - Manager API
-- [Name Matching](name-matching.md) - Field name mapping rules
+A field with no default and no nested type is required. If no source supplies
+it, construction raises [`MissingConfigError`](diagnostics.md#errors) naming
+every missing field at once, along with the origins that were found. A nested
+field never needs a default; the manager builds it from its own defaults.
