@@ -325,6 +325,7 @@ def check_declaration(root: type[Any]) -> None:
     call site that caused it.
     """
     from ._bases import declared_root_keywords
+    from ._convert import has_conversion
     from ._diagnostics import ConfigDeclarationError
 
     for field in fields_of(root):
@@ -340,6 +341,13 @@ def check_declaration(root: type[Any]) -> None:
             )
 
         if not field.is_nested:
+            if not has_conversion(field.annotation):
+                raise ConfigDeclarationError(
+                    f"{root.__name__}.{field.dotted} is declared "
+                    f"{field.type!r}, which has no registered conversion, so "
+                    f"no source could ever supply it. Register one with "
+                    f"register_conversion(), or declare a type that has one."
+                )
             continue
         keywords = declared_root_keywords(field.type)
         if keywords:
