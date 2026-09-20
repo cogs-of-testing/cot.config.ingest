@@ -44,6 +44,7 @@ from ._manager import (
 )
 from ._origins import Origin, OriginAware, OriginKind
 from ._precedence import Precedence
+from ._projection import Projection, project
 from ._sources import (
     AddoptsSource,
     CLISource,
@@ -53,6 +54,13 @@ from ._sources import (
     TomlSource,
 )
 from ._specs import CliForm, EnvSpelling, FieldSpec, field_specs
+from ._store import (
+    FailedValue,
+    LayeredStore,
+    LayeredValue,
+    Reading,
+    Unmatched,
+)
 
 __all__ = [
     # Base classes
@@ -85,6 +93,14 @@ __all__ = [
     "field_specs",
     "SpellingIndex",
     "SpellingTarget",
+    # The store and the projection
+    "Reading",
+    "Unmatched",
+    "LayeredValue",
+    "FailedValue",
+    "LayeredStore",
+    "Projection",
+    "project",
     # Provenance
     "Origin",
     "OriginAware",

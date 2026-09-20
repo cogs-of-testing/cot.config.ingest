@@ -327,6 +327,9 @@ def check_declaration(root: type[Any]) -> None:
     from ._bases import declared_root_keywords
     from ._convert import has_conversion
     from ._diagnostics import ConfigDeclarationError
+    from ._projection import check_cascade_targets
+
+    check_cascade_targets(root)
 
     for field in fields_of(root):
         misbound = misbound_markers(field.annotation)
