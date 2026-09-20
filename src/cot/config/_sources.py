@@ -17,6 +17,7 @@ else:
 from ._annotations import HelpMarker, ShortMarker
 from ._bases import part_prefix
 from ._coerce import coerce, coerce_parsed
+from ._diagnostics import ConfigUsageError
 from ._fields import (
     FieldInfo,
     fields_of,
@@ -701,9 +702,9 @@ class ConfigFileDiscoverySource:
             if not path.is_absolute():
                 path = self._invocation_dir / path
             if not path.exists():
-                raise FileNotFoundError(
+                raise ConfigUsageError(
                     f"Config file not found: {path} "
-                    f"(specified via --{self._config_file_cli_arg.replace('_', '-')})"
+                    f"(named by --{self._config_file_cli_arg.replace('_', '-')})"
                 )
             return path
         return None
@@ -719,9 +720,9 @@ class ConfigFileDiscoverySource:
             if not path.is_absolute():
                 path = self._invocation_dir / path
             if not path.exists():
-                raise FileNotFoundError(
+                raise ConfigUsageError(
                     f"Config file not found: {path} "
-                    f"(specified via {self._config_file_env_var})"
+                    f"(named by {self._config_file_env_var})"
                 )
             return path
         return None

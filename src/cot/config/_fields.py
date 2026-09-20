@@ -325,7 +325,7 @@ def check_declaration(root: type[Any]) -> None:
     call site that caused it.
     """
     from ._bases import declared_root_keywords
-    from ._errors import ConfigDeclarationError
+    from ._diagnostics import ConfigDeclarationError
 
     for field in fields_of(root):
         misbound = misbound_markers(field.annotation)

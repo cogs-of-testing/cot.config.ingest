@@ -16,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, TypeVar
 
-from ._errors import ConfigCollisionError
+from ._diagnostics import ConfigCollisionError
 from ._specs import FieldSpec, field_specs
 
 if TYPE_CHECKING:

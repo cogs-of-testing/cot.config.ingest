@@ -69,8 +69,9 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from ._bases import ConfigPart
 from ._coerce import coerce_parsed
+from ._diagnostics import ConfigLifecycleError
 from ._fields import FieldInfo, marker_of, unwrap_type
-from ._manager import ConfigLifecycleError, ConfigManager
+from ._manager import ConfigManager
 from ._names import FieldNames, cli_visible, named_leaf_fields, set_path
 from ._origins import Origin
 

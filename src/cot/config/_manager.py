@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import warnings
 from collections.abc import Sequence
 from typing import (
     TYPE_CHECKING,
@@ -19,6 +18,12 @@ from ._annotations import (
     InjectedArgsMarker,
 )
 from ._bases import ConfigPart
+from ._diagnostics import (
+    ConfigLifecycleError,
+    ConfigUsageError,
+    Diagnostics,
+    UnknownConfigKeyWarning,
+)
 from ._fields import (
     MISSING,
     check_declaration,
@@ -35,10 +40,6 @@ if TYPE_CHECKING:
     from ._sources import AddoptsSource
 
 _T = TypeVar("_T", bound=ConfigPart)
-
-
-class ConfigLifecycleError(RuntimeError):
-    """A configuration operation happened in the wrong phase."""
 
 
 @runtime_checkable
@@ -116,6 +117,8 @@ class ConfigManager:
     def __init__(
         self,
         sources: Sequence[ConfigSource] = (),
+        *,
+        strict: bool = False,
     ) -> None:
         """
         Create ConfigManager with sources.
@@ -123,6 +126,9 @@ class ConfigManager:
         Args:
             sources: Configuration sources (CLI, env, files, etc.)
                 Sources are sorted by precedence. Higher precedence wins.
+            strict: Raise where the library would otherwise warn, for the
+                warnings that report input. An application that treats one kind
+                of user error as fatal has no reason to tolerate the rest.
 
         Note: CLISource should be passed in directly if CLI args are needed.
         The ConfigManager no longer creates sources automatically.
@@ -132,6 +138,7 @@ class ConfigManager:
         self._fragments: dict[type[ConfigPart], ConfigPart] = {}
         self._declared: list[type[ConfigPart]] = []
         self._index = SpellingIndex()
+        self._diagnostics = Diagnostics(strict=strict)
         self._sources: list[ConfigSource] = []
         self._cli_source: CLISource | None = None
         self._addopts_source: AddoptsSource | None = None
@@ -204,6 +211,16 @@ class ConfigManager:
         self._declare_to_sources(fragment_type)
 
     @property
+    def strict(self) -> bool:
+        """Whether input the library would warn about is fatal instead."""
+        return self._diagnostics.strict
+
+    @property
+    def diagnostics(self) -> Diagnostics:
+        """What this resolution found, before it is emitted."""
+        return self._diagnostics
+
+    @property
     def index(self) -> SpellingIndex:
         """Every spelling of every declared root, resolvable back to its field."""
         return self._index
@@ -261,11 +278,16 @@ class ConfigManager:
             for fragment_type in self._declared:
                 self._collect_addopts(fragment_type)
 
+            self._diagnostics.clear()
             for fragment_type in self._declared:
                 self._fragments[fragment_type] = self._build(fragment_type)
         finally:
             self._resolving = False
         self._resolved = True
+        # One report for the whole resolution: the order roots are visited is
+        # not something the user controls, so a per-root stream would come out
+        # in an order nobody can predict or diff.
+        self._diagnostics.emit()
 
     def _run_discover(self, fragment_type: type[ConfigPart]) -> None:
         """Call the type's discover() hook, if it implements Discoverable."""
@@ -326,7 +348,7 @@ class ConfigManager:
         # Keys a source produced that the ConfigPart does not declare are user
         # error in a config file, not programmer error -- warn and drop them
         # rather than letting the constructor reject the whole load.
-        merged = _drop_unknown_keys(fragment_type, merged)
+        merged = _drop_unknown_keys(fragment_type, merged, self._diagnostics)
 
         # Build nested parts from type hints
         inherited: dict[str, str] = {}
@@ -544,8 +566,8 @@ class ConfigManager:
             # Check file exists - error if explicitly specified but missing
             if isinstance(value, Path):
                 if not value.exists():
-                    raise FileNotFoundError(
-                        f"Config file not found: {value} (specified via {field_name})"
+                    raise ConfigUsageError(
+                        f"Config file not found: {value} (named by {field_name})"
                     )
                 if value.suffix in (".toml",):
                     self.add_source(TomlSource(value, precedence=marker.precedence))
@@ -619,36 +641,36 @@ def _reject_bootstrap_only(tokens: list[str], bootstrap_only: set[str]) -> None:
             continue
         name = token[2:].split("=")[0].replace("-", "_")
         if name in bootstrap_only:
-            raise ValueError(
-                f"Cannot set bootstrap-only field '{name}' via addopts. "
-                f"Field '{name}' must be set via CLI arguments, not in "
-                f"config file addopts."
+            raise ConfigUsageError(
+                f"{name} cannot be set from injected arguments: it is "
+                f"bootstrap_only, and the decisions it drives -- which config "
+                f"file to open, above all -- have already been made. "
+                f"Pass it on the command line instead."
             )
-
-
-class UnknownConfigKeyWarning(UserWarning):
-    """A source supplied a key the ConfigPart does not declare."""
 
 
 def _drop_unknown_keys(
     fragment_type: type[ConfigPart],
     data: dict[str, Any],
+    diagnostics: Diagnostics,
 ) -> dict[str, Any]:
-    """Drop keys the ConfigPart does not declare, at any depth, warning once.
+    """Drop keys the ConfigPart does not declare, at any depth, reporting them.
 
     A typo in a nested table is the same user error as a typo at the top level
     and gets the same treatment. Letting it through instead reached the
     nested part's constructor, which -- correctly, for a programming error --
     raised ``TypeError`` and took the whole load down.
+
+    The report is collected rather than emitted: every root is judged before
+    anything is said, so a file with six typos produces one warning.
     """
     unknown: list[str] = []
     result = _prune(fragment_type, data, prefix=(), unknown=unknown)
     if unknown:
-        warnings.warn(
+        diagnostics.add(
+            UnknownConfigKeyWarning,
             f"Unknown config option(s) for {fragment_type.__name__}: "
             f"{', '.join(sorted(unknown))}",
-            UnknownConfigKeyWarning,
-            stacklevel=4,
         )
     return result
 

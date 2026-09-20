@@ -21,6 +21,7 @@ from cot.config import (
     ConfigFileDiscoverySource,
     ConfigManager,
     ConfigPart,
+    ConfigUsageError,
     EnvSource,
     bootstrap_only,
     config_source,
@@ -139,8 +140,11 @@ class TestBootstrapConfigFileDiscovery:
         assert config.testpaths == "tests"
 
     def test_nonexistent_config_file_raises_error(self, tmp_path: Path) -> None:
-        """
-        If specified config file doesn't exist, FileNotFoundError is raised.
+        """A file named explicitly and absent is input that cannot be honoured.
+
+        `ConfigUsageError`, not `FileNotFoundError`: every diagnostic this
+        library raises shares one base, so an application can tell "the
+        configuration was rejected" from any other exception.
         """
         import pytest
 
@@ -154,7 +158,7 @@ class TestBootstrapConfigFileDiscovery:
         )
         manager = ConfigManager(sources=[cli, files])
 
-        with pytest.raises(FileNotFoundError, match="nonexistent.toml"):
+        with pytest.raises(ConfigUsageError, match="nonexistent.toml"):
             manager.declare(PytestConfig)
             manager.get(PytestConfig)
 
@@ -396,7 +400,7 @@ class TestAddoptsPropagation:
         )
         manager = ConfigManager(sources=[cli, files])
 
-        with pytest.raises(ValueError, match="config.file.*addopts|bootstrap"):
+        with pytest.raises(ConfigUsageError, match="bootstrap_only"):
             manager.declare(PytestConfigWithVerbose)
             manager.get(PytestConfigWithVerbose)
 
