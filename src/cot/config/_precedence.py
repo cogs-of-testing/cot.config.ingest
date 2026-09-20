@@ -33,7 +33,7 @@ class Precedence:
     """TOML/INI files, and files named by a ``config_source`` field."""
 
     ADDOPTS: Final = 18
-    """Arguments contributed by an ``addopts_field``, re-parsed as CLI args."""
+    """Arguments contributed by an ``injected_args``, re-parsed as CLI args."""
 
     ENV: Final = 20
     """Environment variables."""

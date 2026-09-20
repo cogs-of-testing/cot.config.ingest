@@ -13,10 +13,10 @@ from typing import (
 )
 
 from ._annotations import (
-    AddoptsMarker,
     BootstrapOnlyMarker,
     ConfigSourceMarker,
     FromParentMarker,
+    InjectedArgsMarker,
 )
 from ._bases import ConfigPart
 from ._fields import (
@@ -28,6 +28,7 @@ from ._fields import (
     leaf_fields,
     marker_of,
 )
+from ._index import SpellingIndex
 from ._origins import Origin, default_origin, generic_origin
 
 if TYPE_CHECKING:
@@ -130,6 +131,7 @@ class ConfigManager:
 
         self._fragments: dict[type[ConfigPart], ConfigPart] = {}
         self._declared: list[type[ConfigPart]] = []
+        self._index = SpellingIndex()
         self._sources: list[ConfigSource] = []
         self._cli_source: CLISource | None = None
         self._addopts_source: AddoptsSource | None = None
@@ -184,6 +186,8 @@ class ConfigManager:
             ConfigLifecycleError: If called after resolve().
             ConfigDeclarationError: If the class is one the library cannot
                 honour as declared.
+            ConfigCollisionError: If it claims a spelling another declared root
+                claims and means something else by it.
         """
         if self._resolved:
             raise ConfigLifecycleError(
@@ -193,8 +197,16 @@ class ConfigManager:
         if fragment_type in self._declared:
             return
         check_declaration(fragment_type)
+        # Extends one index over every declared root, so a spelling two roots
+        # claim is judged here rather than resolved by whoever asks first.
+        self._index.add(fragment_type)
         self._declared.append(fragment_type)
         self._declare_to_sources(fragment_type)
+
+    @property
+    def index(self) -> SpellingIndex:
+        """Every spelling of every declared root, resolvable back to its field."""
+        return self._index
 
     @property
     def declared(self) -> list[type[ConfigPart]]:
@@ -544,7 +556,7 @@ class ConfigManager:
         data: dict[str, Any],
     ) -> None:
         """
-        Process fields marked with addopts_field annotation.
+        Process fields marked with injected_args annotation.
 
         Each field's value is handed to an :class:`AddoptsSource`, which parses
         it as command-line arguments at its own precedence -- above files and
@@ -566,7 +578,7 @@ class ConfigManager:
         }
 
         for field in part_fields:
-            marker = marker_of(field, AddoptsMarker)
+            marker = marker_of(field, InjectedArgsMarker)
             if marker is None:
                 continue
 
@@ -581,7 +593,7 @@ class ConfigManager:
     def _ensure_addopts_source(self, precedence: int) -> AddoptsSource:
         """The addopts source, created on first use at ``precedence``.
 
-        Created lazily so that a configuration with no ``addopts_field`` never
+        Created lazily so that a configuration with no ``injected_args`` never
         grows a source it has nothing to put in, and so the precedence the
         marker asks for is the precedence the source gets.
         """

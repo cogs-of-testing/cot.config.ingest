@@ -20,16 +20,19 @@ from cot.config import (
     ConfigPart,
     IniSource,
     TomlSource,
-    addopts_field,
     config_source,
+    injected_args,
 )
 
 
-class Alpha(ConfigPart, prefix="alpha"):
+# Distinct name_prefixes, because the flat name is one namespace across every
+# declared root whatever their `prefix`: two roots both deriving `value` is a
+# ConfigCollisionError, and `TestCollisions` below is where that is pinned.
+class Alpha(ConfigPart, prefix="alpha", name_prefix="alpha"):
     value: str = "alpha-default"
 
 
-class Beta(ConfigPart, prefix="beta"):
+class Beta(ConfigPart, prefix="beta", name_prefix="beta"):
     value: str = "beta-default"
 
 
@@ -154,12 +157,12 @@ class TestCrossFragmentBootstrap:
         ini.write_text(
             dedent("""
             [opts]
-            addopts = --value from-addopts
+            addopts = --alpha-value from-addopts
         """)
         )
 
         class Opts(ConfigPart, prefix="opts"):
-            addopts: Annotated[str, addopts_field] = ""
+            addopts: Annotated[str, injected_args] = ""
 
         manager = ConfigManager(
             sources=[
@@ -178,12 +181,12 @@ class TestCrossFragmentBootstrap:
         ini.write_text(
             dedent("""
             [opts]
-            addopts = --value from-addopts
+            addopts = --alpha-value from-addopts
         """)
         )
 
         class Opts(ConfigPart, prefix="opts"):
-            addopts: Annotated[str, addopts_field] = ""
+            addopts: Annotated[str, injected_args] = ""
 
         def build(*order: type[ConfigPart]) -> str:
             manager = ConfigManager(
@@ -218,7 +221,9 @@ class TestSourcesAddedLate:
         manager = ConfigManager()
         manager.declare(Alpha)
         # The CLI source has to be told about Alpha even though it arrived
-        # after the declaration, or --value would be an unknown argument.
-        manager.add_source(CLISource(args=["--value", "x"], invocation_dir=tmp_path))
+        # after the declaration, or --alpha-value would be an unknown argument.
+        manager.add_source(
+            CLISource(args=["--alpha-value", "x"], invocation_dir=tmp_path)
+        )
 
         assert manager.get(Alpha).value == "x"
