@@ -19,7 +19,7 @@ run them, and which mistakes this codebase has already made.
 | when does what happen? | `docs/design/lifecycle.md` |
 | which source wins? | `docs/design/sources.md` |
 | does this warn or raise? | `docs/design/diagnostics.md` |
-| why is it like that? | `docs/design/decisions.md` — D1 to D30, each with a cost |
+| why is it like that? | `docs/design/decisions.md` — D1 to D31, each with a cost |
 | in what order is the core built? | `docs/design/index.md#build-order` |
 
 **Core and host policy are separate.** Everything directly under `docs/design/`

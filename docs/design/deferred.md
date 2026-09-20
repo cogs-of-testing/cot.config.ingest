@@ -42,11 +42,6 @@ Undecided. Unlike a decision, these have no committed answer.
    fall back to `Path.cwd()` ([sources](sources.md#config-file-discovery)).
    Should a manager with no `CLISource` be required to state its own base
    directory instead?
-5. **How much of a fragment's lifetime is the library's?**
-   [D11](decisions.md#d11) gives a root a context manager and the manager
-   enters it "when the host asks". A host with no obvious configure/teardown
-   pair has nowhere natural to put that. Does the library offer a default
-   scope, or is entering always the host's call?
-6. **The iteration bound.** [D23](decisions.md#d23) bounds the resolution
+5. **The iteration bound.** [D23](decisions.md#d23) bounds the resolution
    loop and leaves the number to the manager. A fixed count, a multiple of the
    declared set's size, or a host-supplied limit?

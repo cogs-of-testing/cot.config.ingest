@@ -90,8 +90,14 @@ level: str @ from_parent @ help("log level") = "WARNING"      # _MarkerMixin.__r
 ```
 
 `@` binds tighter than `|`, so `str | None @ from_parent` annotates `None`
-alone and the marker is lost. A union takes `Annotated[...]` or parentheses:
+alone rather than the field. A union takes `Annotated[...]` or parentheses:
 `(str | None) @ from_parent`.
+
+The field model rejects the mis-binding rather than losing the marker: a
+library marker found on a member of a union, instead of on the field, is a
+[`ConfigDeclarationError`](diagnostics.md#errors) at `declare()` naming the
+field, the marker and the parenthesised spelling. Rationale in
+[D31](decisions.md#d31).
 
 | Marker | Effect | Documented in |
 |---|---|---|

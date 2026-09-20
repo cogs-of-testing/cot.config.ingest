@@ -133,7 +133,7 @@ writer.
 ```
 manager.set(OutputConfig, "color", False, writer="pager")
   RuntimeMutationWarning: OutputConfig.color set by pager after resolve;
-  rebuilt, and any instance derived from it recreated
+  the fragment is rebuilt
 
 manager.origin_of(OutputConfig, "color")   ->  runtime:pager
 ```
@@ -149,14 +149,18 @@ to a field `discover()` reads is accepted and warned about like any other, and
 declares nothing, because declaration is closed. Rationale in
 [D29](decisions.md#d29).
 
-The warning is there because a fragment implies an object, so mutating it late
-means destroying and rebuilding that object. Rationale in
+The warning is there because everything downstream read a value that has now
+changed: a frozen fragment is something a caller is entitled to have copied,
+derived from or built an object out of. What the library does not do is chase
+those consequences. It rebuilds the fragment, and anything an integration made
+from the old one is that integration's to replace
+([lifetime](#fragment-lifetime-belongs-to-the-integration)). Rationale in
 [D11](decisions.md#d11).
 
-## Plugin instances and lifetime
+## Fragment lifetime belongs to the integration
 
-A fragment does not just configure something; it implies it. A root may expose
-a context manager that creates the object it configures and destroys it:
+A fragment does not just configure something; it implies it. A root may say so
+by originating a context manager for the object it configures:
 
 ```python
 class TimingConfig(ConfigPart, prefix="app", name_prefix="timing"):
@@ -175,13 +179,58 @@ class TimingConfig(ConfigPart, prefix="app", name_prefix="timing"):
             reporter.close()
 ```
 
-The manager enters every declared fragment's context when the host asks it to
-and exits at the end of the host's lifetime. A yielded non-`None` value is what
-the host registers.
+That is the whole of the core's involvement. `manager.instance(T)` returns the
+context manager the fragment originated; the library never enters it, never
+holds it open and never decides when it ends. Lifetime is a context manager's
+concern, and which scope a context manager belongs to is a property of the
+toolset it is running in, not of the configuration that described it
+([D32](decisions.md#d32)).
 
-A context manager rather than a constructor gives two things:
+A context manager rather than a constructor is what makes teardown expressible:
+anything holding a file handle or a socket otherwise closes it by hand, if at
+all, and a fragment that yields `None` says the thing was not configured, which
+is the check every host writes anyway.
 
-- **Teardown is expressible.** Anything holding a file handle or a socket
-  otherwise closes it by hand, if at all.
-- **Invalidation has a protocol.** A [runtime](#the-runtime-layer) mutation
-  exits the context, rebuilds the fragment, and enters a new one.
+### The integration owns the scope
+
+Every toolset already has the scope, and no two of them agree on what it is. An
+integration binds the fragment's context manager to the one it has:
+
+```python
+# pytest's scope is the Config, and it already owns an ExitStack
+def pytest_configure(config: Config) -> None:
+    timing = get_config(config, TimingConfig)
+
+    stack = ExitStack()
+    reporter = stack.enter_context(timing.instance())
+    config.add_cleanup(stack.close)
+
+    if reporter is not None:
+        config.pluginmanager.register(reporter, "cot-timing-reporter")
+        config.add_cleanup(lambda: config.pluginmanager.unregister(reporter))
+```
+
+`Config.add_cleanup` is the `callback` of a `contextlib.ExitStack` the `Config`
+holds, so those run last-registered first: the reporter is unregistered, and
+then its context closes. The stack closes when the `Config` goes out of use,
+which is what `pytest_unconfigure` coincides with, and the idiom of handing a
+whole stack over that way is pytest's own, in `_pytest/warnings.py`.
+
+A long-running server enters the same context manager into its startup and
+shutdown instead. A command-line application enters it in `main`, in a `with`
+statement, and that is the whole mechanism.
+
+None of those scopes is expressible in the core. A manager that entered
+contexts itself would have to invent one, enter every declared fragment in an
+order [I3](invariants.md#i3) says may not matter, and unwind them in an order
+it cannot know is right. What it would buy is the `with` statement an
+integration writes once.
+
+### Registration is the integration's too
+
+A yielded object usually goes somewhere: pytest registers it with the plugin
+manager, another host puts it in a container, an application assigns it to a
+name. The library never sees that handle, which is why it also does not
+re-place one. A [runtime write](#the-runtime-layer) rebuilds the fragment and
+warns; whether the object built from the old fragment should be torn down and
+replaced is a question only the integration holding it can answer.

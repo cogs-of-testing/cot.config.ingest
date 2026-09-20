@@ -73,5 +73,27 @@ pytest -p cot.config.example_plugin --timing-report --timing-threshold=0.5
 Everything it adds lives under `timing_` and `--timing-*`, a namespace pytest
 does not use. `testing/test_example_plugin.py` pins that it clobbers nothing.
 
-It collapses to a declaration plus a context manager once
-[plugin lifetime](../lifecycle.md#plugin-instances-and-lifetime) lands.
+Once [fragment lifetime](../lifecycle.md#fragment-lifetime-belongs-to-the-integration)
+lands it keeps a `pytest_configure`, and that is the point of the example: the
+declaration says what the reporter is configured by and owns its teardown,
+while entering the context and registering the result stay here, in the
+binding, because the scope and the plugin manager are pytest's
+([D32](../decisions.md#d32)).
+
+```python
+def pytest_configure(config: Config) -> None:
+    timing = get_config(config, TimingConfig)
+
+    stack = ExitStack()
+    reporter = stack.enter_context(timing.instance())
+    config.add_cleanup(stack.close)
+
+    if reporter is not None:
+        config.pluginmanager.register(reporter, "cot-timing-reporter")
+        config.add_cleanup(lambda: config.pluginmanager.unregister(reporter))
+```
+
+That is the shape `_pytest/junitxml.py` already has, with the conditional
+construction moved into the fragment and the teardown it never had made
+expressible. `TimingReporter` gains a `close()` and stops writing its file from
+`pytest_terminal_summary`.

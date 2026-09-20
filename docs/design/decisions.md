@@ -7,7 +7,8 @@ A decision is what turns a rule elsewhere into a commitment. Disagreeing with
 one means amending the record here, not quietly building something else.
 D1 to D19 came out of two reviews of the first implementation; D20 to D30 out
 of reading the resulting design as if there were no implementation at all,
-which is what [D20](#d20) then made true.
+which is what [D20](#d20) then made true. D31 onwards come from reading the
+design for what it costs a reader.
 
 ## D1
 
@@ -195,25 +196,28 @@ ladder over it.
 
 ## D11
 
-**A runtime layer exists; fragments imply context-managed instances.**
-([lifecycle](lifecycle.md#the-runtime-layer),
-[lifecycle](lifecycle.md#plugin-instances-and-lifetime))
+**A runtime layer exists: a late write lands at the top rung and rebuilds the
+fragment.** ([lifecycle](lifecycle.md#the-runtime-layer))
 
 Fragments are frozen, but a host may need to derive one setting from another
 after resolution. A write lands in a runtime source at the top of the ladder,
 the affected fragment is rebuilt, and a warning names the fragment and the
 writer.
 
-The warning is load-bearing because a fragment implies an instance. A root
-exposes a context manager that creates the object it configures and destroys
-it, so mutating a fragment after that object exists means tearing it down and
-building a new one. A constructor would have been enough to build an instance.
-A context manager is what makes invalidation well defined, and it gives
-configuration-scoped objects a teardown hook.
+The warning is load-bearing because the old fragment has already been read.
+Anything downstream may have copied a value out of it, derived a second value
+from it, or built an object from it, and none of that is recomputed. Saying so
+is the whole of what the library can do about it; what it must not do is
+pretend to chase the consequences ([D32](#d32)).
 
 *Cost:* a mechanism that warns on every use is a mechanism that wants to be
-deleted; whether it outlives the migration that motivated it is open. Entering
-contexts eagerly also means a fragment that fails to build fails earlier.
+deleted; whether it outlives the migration that motivated it is open.
+
+*Amended:* this decision originally also settled that fragments imply
+context-managed instances and that the manager enters them, which made the
+warning stand on invalidating those instances. That half is now [D32](#d32),
+and it is answered the other way: the library does not hold the instances, so
+it cannot invalidate them.
 
 ## D12
 
@@ -587,3 +591,77 @@ error.
 
 *Cost:* a reader cannot tell from a class definition whether it is meant to be
 declared or nested. The class keywords are the tell when they are present.
+
+## D31
+
+**A marker bound to a union member is a declaration error, not a lost marker.**
+([config-parts](config-parts.md#markers))
+
+`@` binds tighter than `|`. `str | None @ from_parent` therefore annotates
+`None` and the field carries no marker at all, so a cascade the author wrote
+silently never fires. It is the one place in the design where a user's
+declaration is read as something else without a word being said, which is what
+[I8](invariants.md#i8) forbids everywhere a *value* is concerned and had no
+answer for where a *declaration* is.
+
+The mis-binding is detectable: markers belong to the field, so one found inside
+a union member is never what the author meant. The field model raises, naming
+the parenthesised spelling that works.
+
+*Cost:* a per-member annotation is refused outright, so a marker cannot be used
+to say something about one arm of a union. Nothing in the design gives a marker
+that meaning, and a marker that acquired one would need its own spelling rather
+than a binding accident.
+
+*Alternative rejected:* dropping `__rmatmul__` and requiring `Annotated`. The
+trap goes away, but so does the notation for the ninety per cent of fields that
+are not unions, and `Annotated[str, from_parent, help("log level")]` is the
+spelling the operator exists to avoid.
+
+## D32
+
+**A fragment originates a context manager; the integration owns its lifetime.**
+([lifecycle](lifecycle.md#fragment-lifetime-belongs-to-the-integration))
+
+A root that implies an object exposes `instance()`, a context manager that
+builds the object and tears it down. The core defines that and stops.
+`manager.instance(T)` hands the context manager over; the library never enters
+it, never holds it open, and never decides when it ends.
+
+Lifetime is what a context manager is for, and every toolset already has the
+scope to enter one into. pytest's is the `Config`, which holds a
+`contextlib.ExitStack` behind `add_cleanup`; a server's is startup and
+shutdown; an application's is a `with` statement in `main`. None of those is
+expressible in the core, and a manager that entered contexts itself would have
+to invent a scope, enter every declared fragment in an order
+[I3](invariants.md#i3) says may not matter, and unwind them in an order it has
+no way to know is right. That last one is not hypothetical:
+`dependency-injector`, which does own its resources' lifecycles, has had a
+shutdown-ordering bug open since 2021.
+
+The handle is the second half. A yielded object is registered somewhere — with
+pytest's plugin manager, in a container, under a name. The library never sees
+that handle, so it cannot replace one: a
+[runtime write](lifecycle.md#the-runtime-layer) rebuilds the fragment and
+warns, and whether the object built from the old one is torn down and replaced
+is the integration's call. In the one host that exists, doing it eagerly would
+be wrong anyway — pytest's logging plugin writes `config.option.verbose` from
+inside `pytest_runtestloop`, so a rebuild-and-re-enter would tear down a live
+plugin mid-hook.
+
+Where the ecosystem draws this line is the same place. Hydra's `instantiate()`
+builds objects from configuration and stops; lifecycle is the application's.
+Click puts the scope on the host object, and user code pushes context managers
+onto it with `Context.with_resource`. `svcs` splits the long-lived registry of
+factories from the per-scope container that holds instances and cleanups.
+
+*Cost:* an integration writes the `with` statement, or the enter-and-clean-up
+pair, itself. Three lines in the pytest binding, and they are three lines only
+the host can write. A fragment whose context fails to build now fails when the
+integration enters it rather than at the end of `resolve()`.
+
+*Alternative rejected:* dropping `instance()` and leaving object construction
+entirely to the caller. The declaration that a fragment implies an object, and
+the place its teardown is written, are worth keeping next to the fields that
+configure it; what was worth giving up is the library holding it open.
+

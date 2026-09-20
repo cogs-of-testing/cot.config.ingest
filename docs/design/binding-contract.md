@@ -60,6 +60,7 @@ finds itself reimplementing one of them has found a missing core capability.
 | **Help rendering and errors** | which formatter is used, whether the host adopts a new format, whether [strict mode](diagnostics.md#strict-mode) is the default |
 | **File layout and section naming** | which tables in which files, and which are compatibility namespaces |
 | **Migration policy** | ingest, conversion order, what un-migrated options look like |
+| **Fragment lifetime** | which scope a fragment's [context manager](lifecycle.md#fragment-lifetime-belongs-to-the-integration) is entered into, when it closes, and what happens to the object after a runtime write |
 
 None of that requires core changes, and none of it constrains another binding.
 

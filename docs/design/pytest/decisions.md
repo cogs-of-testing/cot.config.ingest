@@ -57,20 +57,31 @@ changelog line on the pytest side.
 
 ## P3
 
-**`config.option` is the runtime view, and the four mutation sites keep
+**`config.option` is the runtime view, and the five mutation sites keep
 working.** ([evolution](evolution.md#the-legacy-view))
 
-Four places in pytest assign to `config.option.*` after parsing: `setuponly`,
-`setupplan` twice, and `stepwise`. They must keep working through the
-migration, so `config.option` becomes a live view over the store and a write
-lands in the core [runtime layer](../lifecycle.md#the-runtime-layer).
+Five places in pytest 9.0.1 assign to `config.option.*` after parsing:
+`setuponly`, `setupplan` twice, `stepwise`, and `logging`. They must keep
+working through the migration, so `config.option` becomes a live view over the
+store and a write lands in the core
+[runtime layer](../lifecycle.md#the-runtime-layer).
 
 The mechanism is core; using it for `config.option` is this binding's choice.
 
-*Cost:* every one of those four writes now warns. That is intended
-([D11](../decisions.md#d11)), but pytest's own test suite gets four new
+The first four happen in `pytest_configure`, deriving one option from another
+before anything has been built. The fifth does not: `LoggingPlugin` sets
+`config.option.verbose` from inside `pytest_runtestloop`, which is a live
+plugin instance changing configuration mid-run. It is the reason a runtime
+write rebuilds the fragment and stops there, rather than replacing the objects
+built from it ([D32](../decisions.md#d32)) — doing that eagerly would tear down
+a plugin inside its own hook.
+
+*Cost:* every one of those five writes now warns. That is intended
+([D11](../decisions.md#d11)), but pytest's own test suite gets five new
 warnings until those sites are converted to derived fields in
-[stage 9](evolution.md#stages).
+[stage 9](evolution.md#stages). The fifth is not a derived field: it is a
+decision made after the run has started, so stage 9 has to answer it
+differently or leave it warning.
 
 ## P4
 

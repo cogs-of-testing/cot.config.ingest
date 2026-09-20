@@ -121,7 +121,7 @@ Everything below is one pipeline, and each document owns one stage of it:
 | [Reporting](reporting.md) | Provenance and help |
 | [Diagnostics](diagnostics.md) | The warning and error set, strict mode, and which one an input gets |
 | [Binding contract](binding-contract.md) | The core/host boundary, and conformance |
-| [Decisions](decisions.md) | D1 to D30, core, with rationale and cost |
+| [Decisions](decisions.md) | D1 to D31, core, with rationale and cost |
 | [Deferred](deferred.md) | Not in scope, plus the open questions |
 
 Everything above is core: it holds for every host and for an application with
@@ -163,7 +163,7 @@ is that every stage is a value.
 | 5 | **The store and projection** | readings in, `LayeredValue` out; shadowed failures; the cascade; assembly; construction checks | 2, 3, 4 |
 | 6 | **Sources** | `TomlSource`, `IniSource`, `EnvSource`, `TomlEnvSource`, the native parser and `CLISource.bind()`, `OverrideSource`, `InjectedArgsSource`, discovery; distinct rungs | 2, 5 |
 | 7 | **The manager** | `declare()`, the iteration, `get()`, `partial()`, `origin_of()`, `explain()`, `format_help()` | 5, 6 |
-| 8 | **The runtime layer and fragment lifetime** | `set()`, `RuntimeSource`, `instance()` contexts | 7 |
+| 8 | **The runtime layer and fragment lifetime** | `set()`, `RuntimeSource`; `manager.instance()` handing over a fragment's context manager | 7 |
 | 9 | **The pytest binding** | `add_config()`, `get_config()`, the forward binder, the host source; the example plugin | 7 |
 | 10 | **Conformance** | one suite over the native parser and the pytest binding; the yardstick runs through it | 6, 9 |
 | 11 | **YAML** | a third file format, once [its questions](deferred.md#open-questions) are answered | 6 |

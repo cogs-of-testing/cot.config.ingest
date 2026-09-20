@@ -15,7 +15,7 @@ The core capabilities the plan depends on are specified on the other side of
 | what an option is, as data | [Specs](../specs.md) |
 | every source's value retained | [The layered store](../merging.md#the-layered-store) |
 | runtime mutation and rebuild | [The runtime layer](../lifecycle.md#the-runtime-layer) |
-| fragments implying instances | [Plugin lifetime](../lifecycle.md#plugin-instances-and-lifetime) |
+| fragments originating context managers | [Fragment lifetime](../lifecycle.md#fragment-lifetime-belongs-to-the-integration) |
 | help rendered from specs | [Help](../reporting.md#help) |
 | opt-in environment exposure | [Sources](../sources.md#exposure-is-opt-in) |
 | the warning and error set | [Diagnostics](../diagnostics.md) |
@@ -35,7 +35,9 @@ configures it:
 
 ```
 argv, ini  ->  sources  ->  layered store  ->  fragment  ->  plugin instance
-                                          \                  (context-managed)
+                                          \                (from the fragment's
+                                           \                context manager, which
+                                           \                this binding enters)
                                            \-> getoption / getini / config.option
                                                   (legacy views)
 ```
@@ -160,7 +162,7 @@ capability that this binding then consumes.
 | 4 | Legacy view | `getoption`/`getini` answerable from fragments | binding |
 | 5 | Differential harness + allowlist | proof the view is faithful where it means to be | binding |
 | 6 | Ingest binder | hand-written options join the store; `--help` uniform | binding |
-| 7 | [Plugin lifetime](../lifecycle.md#plugin-instances-and-lifetime) | instances derived from fragments | core |
+| 7 | [Fragment lifetime](../lifecycle.md#fragment-lifetime-belongs-to-the-integration) | `instance()` on a root; the binding enters it into the `Config`'s stack | core + binding |
 | 8 | Convert plugin options | logging first, then the rest of the built-ins | binding |
 | 9 | Convert pytest core options | `-x`, `--tb`, `-k`, `-m`, … | binding |
 | 10 | Discovery and bootstrap | `-p`, `-c`, `--rootdir`, rootdir determination | binding |
