@@ -86,7 +86,7 @@ Markers are `Annotated` extras, written either way:
 
 ```python
 level: Annotated[str, from_parent, help("log level")] = "WARNING"
-level: str @ from_parent @ help("log level") = "WARNING"      # _MarkerMixin.__rmatmul__
+level: str @ from_parent @ help("log level") = "WARNING"      # Marker.__rmatmul__
 ```
 
 `@` binds tighter than `|`, so `str | None @ from_parent` annotates `None`

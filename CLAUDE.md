@@ -19,7 +19,7 @@ run them, and which mistakes this codebase has already made.
 | when does what happen? | `docs/design/lifecycle.md` |
 | which source wins? | `docs/design/sources.md` |
 | does this warn or raise? | `docs/design/diagnostics.md` |
-| why is it like that? | `docs/design/decisions.md` — D1 to D31, each with a cost |
+| why is it like that? | `docs/design/decisions.md` — D1 to D34, each with a cost |
 | in what order is the core built? | `docs/design/index.md#build-order` |
 
 **Core and host policy are separate.** Everything directly under `docs/design/`
@@ -49,19 +49,27 @@ code) resumes for whatever drifts after that.
 
 ## Layout
 
-The pre-rebuild layout. The rebuild keeps the module split where it matches
+The layout through build-order step 9. The rebuild keeps the module split where it matches
 the pipeline in `docs/design/index.md#the-pipeline` and renames where it does
 not; update this block as modules land.
 
 ```
 src/cot/config/     the library; every _-prefixed module is internal
+  _bases.py         ConfigPart: one class, root or nested by declaration
+  _annotations.py   the markers, and the Marker base that identifies them
   _fields.py        the field model — the only place class shape is derived
   _names.py         path -> every source-facing spelling
-  _coerce.py        string -> declared type
-  _sources.py       the source implementations
-  _manager.py       declare/resolve/get, merging, provenance
-  _cli_parser.py    the re-parsing argument parser
-  pytest_plugin.py  the pytest binding (public)
+  _specs.py         field -> FieldSpec, the one derivation of what an option is
+  _index.py         spelling -> field; collisions and adoption
+  _diagnostics.py   the warning and error set, aggregation, strict mode
+  _convert.py       raw value -> declared type; the registry, origin-aware
+  _store.py         readings in, layers out; conversion on entry
+  _projection.py    winners, the from_parent cascade, assembly
+  _parser.py        the re-parsing argument parser, driven by CLI forms
+  _reading.py       the sources, as they read: input in, readings out
+  _help.py          help text, rendered from specs
+  _manager.py       declare, the iteration to a fixpoint, get, set, provenance
+  pytest_binding.py the pytest binding: add_config, get_config (public)
   example_plugin.py a worked example plugin (public)
 testing/            the tests — note: not tests/
 docs/design/        normative design
@@ -104,10 +112,10 @@ yet buildable.
 
 ## Things that will surprise you
 
-- **Installing the pre-rebuild package patches pytest.** `pytest_plugin.py`
-  monkeypatches `Parser` and `Config` through a `pytest11` entry point, at
-  import time. It is additive only and `-p no:cot_config` disables it. The
-  rebuilt binding has no patch and no entry point (P1).
+- **0.1.0 patched pytest; nothing after it does.** The released 0.1.0 shipped
+  `pytest_plugin.py` behind a `pytest11` entry point that monkeypatched
+  `Parser` and `Config`. The rebuilt binding is two importable functions with
+  no entry point (P1); do not bring the patch back for convenience.
 - **`resolve()` is multi-pass on purpose**, because you cannot know every source
   until you have read some configuration. Each pass runs for *every* declared
   type before the next begins — that is invariant I3, and
@@ -118,8 +126,8 @@ yet buildable.
 ## Absent from the code entirely
 
 Do not assume these exist in either the old code or the rebuild: plugin
-discovery (the `Discoverable` protocol has no implementors), list append/reset
-merge semantics, YAML files, change notification and hot reload, and validation
+discovery beyond the `discover()` classmethod hook a root may define, list
+append/reset merge semantics, YAML files, change notification and hot reload, and validation
 hooks beyond required-field, unknown-kwarg and type checks.
 
 Injected arguments (`addopts`) *do* accumulate: every contribution is appended to

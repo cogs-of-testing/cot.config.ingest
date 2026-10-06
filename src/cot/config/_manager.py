@@ -1,787 +1,765 @@
-"""ConfigManager for orchestrating configuration loading."""
+"""declare, resolve, get: the pipeline, run to a fixpoint.
+
+The manager holds two things across resolution, the **base sources** the
+application constructed and the **declared set**, and recomputes everything
+else on every iteration: the store, the files a ``config_source`` field named,
+the sources a ``discover()`` hook added, and the injected arguments. An
+iteration that grows neither the declared set nor the derived sources is the
+last; its store is projected once, and only its diagnostics are reported.
+
+Each step runs for every declared root before the next begins, so the order
+roots were declared in, and the order sources were added in, cannot change the
+result (I3).
+"""
 
 from __future__ import annotations
 
-import warnings
-from collections.abc import Sequence
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    Protocol,
-    TypeVar,
-    runtime_checkable,
-)
+import shlex
+from contextlib import AbstractContextManager
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
-from ._annotations import (
-    AddoptsMarker,
-    BootstrapOnlyMarker,
-    ConfigSourceMarker,
-    FromParentMarker,
+from ._annotations import BootstrapOnlyMarker, ConfigSourceMarker, InjectedArgsMarker
+from ._bases import ConfigPart
+from ._diagnostics import (
+    ConfigDeclarationError,
+    ConfigError,
+    ConfigLifecycleError,
+    ConfigUsageError,
+    DeprecatedNameWarning,
+    Diagnostics,
+    RuntimeMutationWarning,
+    UnknownConfigKeyWarning,
+    UnknownOverrideKeyWarning,
 )
-from ._bases import ConfigPart, SubConfig
 from ._fields import (
-    MISSING,
-    field_defaults,
+    FieldInfo,
+    check_declaration,
     fields_of,
     has_marker,
-    leaf_fields,
     marker_of,
 )
-from ._origins import Origin, default_origin, generic_origin
+from ._help import format_help as _format_help
+from ._index import SpellingIndex
+from ._origins import Origin
+from ._projection import Projection, check_cascade_targets, project
+from ._reading import (
+    BindingSource,
+    CLISource,
+    ConfigSource,
+    InjectedArgsSource,
+    OverrideSource,
+    RuntimeSource,
+    _ArgvSource,
+    source_for_file,
+)
+from ._store import FailedValue, LayeredStore, LayeredValue, Reading, Unmatched
 
 if TYPE_CHECKING:
-    from ._sources import AddoptsSource
+    from collections.abc import Iterable, Sequence
 
 _T = TypeVar("_T", bound=ConfigPart)
 
-
-class ConfigLifecycleError(RuntimeError):
-    """A configuration operation happened in the wrong phase."""
+Phase = Literal["declaring", "resolving", "projecting", "resolved"]
 
 
-@runtime_checkable
-class ConfigSource(Protocol):
-    """Protocol for configuration sources."""
+class _Iteration:
+    """What one pass over the sources produced. Discarded unless it is the last."""
 
-    @property
-    def precedence(self) -> int:
-        """Higher values override lower values."""
-        ...
-
-    def load(self, part_type: type[ConfigPart]) -> dict[str, Any]:
-        """Load configuration data for a ConfigPart type."""
-        ...
-
-
-@runtime_checkable
-class DeclaringSource(Protocol):
-    """Optional protocol: a source that needs to know about types up front.
-
-    A file or environment source reads whatever names it is asked about, so it
-    has nothing to declare. A source backed by an argument parser does: the
-    parser has to be told an option exists before it can parse it.
-    """
-
-    def declare(self, part_type: type[ConfigPart]) -> None:
-        """Register a ConfigPart type's fields as options."""
-        ...
-
-
-@runtime_checkable
-class Discoverable(Protocol):
-    """
-    Protocol for ConfigParts that can discover/modify sources before loading.
-
-    The discover classmethod is called BEFORE the instance is created,
-    allowing it to add sources (e.g., discovered config files) that will
-    be used when loading the final instance.
-    """
-
-    @classmethod
-    def discover(cls, manager: ConfigManager) -> None:
-        """
-        Discover and add sources before instance creation.
-
-        This is called before loading data from sources, allowing the
-        ConfigPart to inspect bootstrap fragments and add new sources
-        (e.g., a config file path from CLI args).
-
-        Args:
-            manager: ConfigManager to add sources to
-        """
-        ...
+    def __init__(self, strict: bool) -> None:
+        self.store = LayeredStore()
+        self.diagnostics = Diagnostics(strict=strict)
+        self.sources: list[ConfigSource] = []
+        self.derived: list[ConfigSource] = []
 
 
 class ConfigManager:
-    """
-    Orchestrates configuration loading from multiple sources.
+    """Declares roots, resolves them against sources, and hands out instances.
 
-    The ConfigManager coordinates sources and builds final ConfigPart instances.
-    Sources handle all context (invocation_dir, args, env vars, config files).
+    Example::
 
-    Example:
-        cli = CLISource(args=sys.argv[1:], invocation_dir=Path.cwd())
-        env = EnvSource(prefix="MYAPP")
-        files = ConfigFileDiscoverySource(
-            invocation_dir=cli.invocation_dir,
-            cli_source=cli,
-        )
-        manager = ConfigManager(sources=[cli, env, files])
-        manager.declare(MyConfig)
-        config = manager.get(MyConfig)
+        manager = ConfigManager(sources=[
+            ConfigFileDiscoverySource(Path.cwd()),
+            EnvSource("APP"),
+            CLISource(sys.argv[1:]),
+        ])
+        manager.declare(AppConfig)
+        config = manager.get(AppConfig)
     """
+
+    #: How many iterations resolution may take before the configuration is
+    #: judged not to settle. Each one must declare a root or derive a source.
+    MAX_ITERATIONS = 16
 
     def __init__(
         self,
         sources: Sequence[ConfigSource] = (),
+        *,
+        strict: bool = False,
     ) -> None:
         """
-        Create ConfigManager with sources.
-
         Args:
-            sources: Configuration sources (CLI, env, files, etc.)
-                Sources are sorted by precedence. Higher precedence wins.
-
-        Note: CLISource should be passed in directly if CLI args are needed.
-        The ConfigManager no longer creates sources automatically.
+            sources: The base sources. Every resolution iteration starts from
+                these; no two may share a precedence.
+            strict: Raise where the library would otherwise warn, for the
+                warnings that report input.
         """
-        from ._sources import CLISource
-
-        self._fragments: dict[type[ConfigPart], ConfigPart] = {}
+        self._strict = strict
+        self._base: list[ConfigSource] = []
         self._declared: list[type[ConfigPart]] = []
-        self._sources: list[ConfigSource] = []
-        self._cli_source: CLISource | None = None
-        self._addopts_source: AddoptsSource | None = None
-        self._origins: dict[type[ConfigPart], dict[str, Origin]] = {}
-        self._resolved = False
-        self._resolving = False
+        self._index = SpellingIndex()
+        self._phase: Phase = "declaring"
+        self._runtime = RuntimeSource()
+
+        self._current: _Iteration | None = None
+        self._previous: _Iteration | None = None
+        self._final: _Iteration | None = None
+        self._projections: dict[type[ConfigPart], Projection[Any]] = {}
+        self._failure: ConfigError | None = None
 
         for source in sources:
             self.add_source(source)
 
-    def add_source(self, source: ConfigSource) -> None:
-        """
-        Add a configuration source.
+    # -- declaration -------------------------------------------------------
 
-        Sources are kept sorted by precedence (lowest first). A source added
-        after declarations have been made still learns about them, which is
-        what lets a config file discovered during resolve() participate.
-        """
-        from ._sources import AddoptsSource, CLISource
+    def declare(self, root: type[ConfigPart]) -> None:
+        """Record a root. Nothing is loaded.
 
-        self._sources.append(source)
-        self._sources.sort(key=lambda s: s.precedence)
-
-        # A CLI source is tracked separately: the bootstrap passes have to read
-        # it before the full merge exists, to learn which config file to open.
-        if isinstance(source, CLISource):
-            self._cli_source = source
-        if isinstance(source, AddoptsSource):
-            self._addopts_source = source
-
-        declare = getattr(source, "declare", None)
-        if callable(declare):
-            for fragment_type in self._declared:
-                declare(fragment_type)
-
-    # -- Phase 1: declaration --------------------------------------------
-
-    def declare(self, fragment_type: type[ConfigPart]) -> None:
-        """
-        Declare a ConfigPart type and its options. Nothing is loaded yet.
-
-        Declaration is separate from resolution because a host may collect
-        declarations from many independent plugins before any of them can be
-        resolved. pytest is the motivating case: every plugin's
-        `pytest_addoption` runs before a single argument is parsed, so a
-        fragment built at declaration time could not see options declared by a
-        plugin loaded after it.
-
-        Declaring the same type twice is a no-op.
+        Declaring a root already declared is a no-op, which is what lets a
+        ``discover()`` hook run on every iteration.
 
         Raises:
-            ConfigLifecycleError: If called after resolve().
+            ConfigLifecycleError: after ``resolve()``, or during projection.
+            ConfigDeclarationError: if the class is one the library cannot
+                honour as declared.
+            ConfigCollisionError: if it claims a spelling another declared root
+                claims and means something else by it.
         """
-        if self._resolved:
+        if root in self._declared:
+            return
+        if self._phase in ("projecting", "resolved"):
             raise ConfigLifecycleError(
-                f"Cannot declare {fragment_type.__name__} after resolve(); "
+                f"Cannot declare {root.__name__} after resolve(); "
                 f"configuration is already frozen"
             )
-        if fragment_type in self._declared:
+        check_declaration(root)
+        check_cascade_targets(root)
+        _check_reserved_shorts(root)
+        self._index.add(root)
+        self._declared.append(root)
+
+    def add_source(self, source: ConfigSource) -> None:
+        """Add a base source, or, from a ``discover()`` hook, a derived one.
+
+        A derived source lasts one iteration: the next one asks the hook again.
+
+        Raises:
+            ConfigDeclarationError: if another source holds that precedence.
+            ConfigLifecycleError: after ``resolve()``.
+        """
+        if self._phase == "resolving" and self._current is not None:
+            _check_rung(source, self._current.sources)
+            self._current.sources.append(source)
+            self._current.derived.append(source)
             return
-        self._declared.append(fragment_type)
-        self._declare_to_sources(fragment_type)
+        if self._phase != "declaring":
+            raise ConfigLifecycleError(
+                f"Cannot add {_describe(source)} after resolve(); "
+                f"configuration is already frozen"
+            )
+        _check_rung(source, self._base)
+        self._base.append(source)
+
+    @property
+    def strict(self) -> bool:
+        """Whether input the library would warn about is fatal instead."""
+        return self._strict
+
+    @property
+    def index(self) -> SpellingIndex:
+        """Every spelling of every declared root, resolvable back to its field."""
+        return self._index
 
     @property
     def declared(self) -> list[type[ConfigPart]]:
-        """The ConfigPart types declared so far, in declaration order."""
+        """The roots declared so far, in declaration order."""
         return list(self._declared)
 
-    def _declare_to_sources(self, fragment_type: type[ConfigPart]) -> None:
-        """Let every source that accepts declarations register the type.
+    @property
+    def sources(self) -> list[ConfigSource]:
+        """Every source the last resolution read, lowest rung first.
 
-        `declare` is optional on the ConfigSource protocol: a file or env
-        source has nothing to declare, while CLISource adds parser options and
-        the pytest adapter forwards to `parser.addoption`/`addini`.
+        Before resolution, the base sources.
         """
-        for source in self._sources:
-            declare = getattr(source, "declare", None)
-            if callable(declare):
-                declare(fragment_type)
+        held = self._final.sources if self._final is not None else self._base
+        return sorted(held, key=lambda source: source.precedence)
 
-    # -- Phase 2: resolution ---------------------------------------------
+    # -- resolution --------------------------------------------------------
 
     @property
     def resolved(self) -> bool:
         """Whether resolve() has run and the configuration is frozen."""
-        return self._resolved
+        return self._phase == "resolved"
 
     def resolve(self) -> None:
-        """
-        Run the bootstrap feedback loops once and build every declared fragment.
+        """Run the iteration to a fixpoint, then build every declared root.
 
-        Idempotent, and triggered automatically by the first `get()`. Calling
-        it explicitly is how a host pins the moment configuration freezes.
+        Idempotent, and triggered by the first ``get()``. Calling it explicitly
+        is how a host pins the moment configuration freezes.
 
-        The staging matters: every declared type contributes config files
-        before any type reads them, and every type contributes addopts before
-        any type is built. Doing this per-fragment -- as the previous API did
-        -- meant a fragment could be built against a source a later fragment
-        was about to add.
+        Raises:
+            ConfigLifecycleError: if the declared set or the derived sources
+                keep growing past :attr:`MAX_ITERATIONS`.
         """
-        if self._resolved or self._resolving:
+        if self._phase != "declaring":
             return
-        self._resolving = True
+        self._phase = "resolving"
         try:
-            for fragment_type in self._declared:
-                self._run_discover(fragment_type)
-
-            # Every config_source field across all fragments, so the files are
-            # all present before anything reads them.
-            for fragment_type in self._declared:
-                self._collect_config_sources(fragment_type)
-
-            # Then every addopts field, so the CLI is complete before parsing.
-            for fragment_type in self._declared:
-                self._collect_addopts(fragment_type)
-
-            for fragment_type in self._declared:
-                self._fragments[fragment_type] = self._build(fragment_type)
+            self._final = self._iterate_to_fixpoint()
+        except BaseException:
+            # Nothing froze: the input was rejected, and the application may
+            # fix it and resolve again.
+            self._phase = "declaring"
+            raise
         finally:
-            self._resolving = False
-        self._resolved = True
+            self._current = None
+            self._previous = None
+        self._phase = "projecting"
+        try:
+            self._project_all(self._final.diagnostics)
+        finally:
+            self._phase = "resolved"
+        # One report for the whole resolution: the order roots are visited is
+        # not something the user controls, so a per-root stream would come out
+        # in an order nobody can predict or diff.
+        try:
+            self._final.diagnostics.emit()
+        except ConfigError as error:
+            # Every later access sees the same rejection, rather than a
+            # half-built configuration or a KeyError for a root that failed.
+            self._failure = error
+            raise
 
-    def _run_discover(self, fragment_type: type[ConfigPart]) -> None:
-        """Call the type's discover() hook, if it implements Discoverable."""
-        if issubclass(fragment_type, Discoverable):
-            fragment_type.discover(self)
-
-    def _collect_config_sources(self, fragment_type: type[ConfigPart]) -> None:
-        """Turn this type's config_source fields into sources.
-
-        Every source that already exists is consulted, not just the CLI: a
-        config file named by an environment variable is as explicit a request
-        as one named by an argument.
-        """
-        defaults = field_defaults(fragment_type)
-        loaded = self.load_for_part(fragment_type)
-        self._process_config_source_fields(fragment_type, {**defaults, **loaded})
-
-    def _collect_addopts(self, fragment_type: type[ConfigPart]) -> None:
-        """Feed this type's addopts field into the addopts source."""
-        defaults = field_defaults(fragment_type)
-        loaded = self.load_for_part(fragment_type)
-        self._process_addopts_fields(fragment_type, {**defaults, **loaded})
-
-    def _load_cli(self, fragment_type: type[ConfigPart]) -> dict[str, Any]:
-        if self._cli_source is None:
-            return {}
-        return self._cli_source.load(fragment_type)
-
-    def _build(self, fragment_type: type[ConfigPart]) -> ConfigPart:
-        """Merge every source into one instance, recording provenance.
-
-        Sources are already sorted by precedence, and that order is the only
-        thing deciding a winner -- no source is special-cased above the ladder.
-        """
-        defaults = field_defaults(fragment_type)
-
-        # This must be a deep merge: CLI and file sources both produce nested
-        # dicts for SubConfigs, and a shallow update would let `--log-file-level`
-        # from the CLI wipe `log_file` from the config file.
-        #
-        # Provenance rides along with the merge: whichever source last wrote a
-        # path is the one that won it.
-        origins: dict[str, Origin] = {}
-        merged: dict[str, Any] = {}
-
-        _deep_merge(merged, defaults)
-        # Seed every leaf that declares a default, nested ones included, so a
-        # value nobody configured still reports *why* it has the value it has.
-        for field in leaf_fields(fragment_type):
-            if field.default is not MISSING:
-                origins[field.dotted] = default_origin(field.dotted)
-
-        for source in self._sources:
-            data = source.load(fragment_type)
-            _deep_merge(merged, data)
-            self._record_origins(origins, source, fragment_type, data)
-
-        # Keys a source produced that the ConfigPart does not declare are user
-        # error in a config file, not programmer error -- warn and drop them
-        # rather than letting the constructor reject the whole load.
-        merged = _drop_unknown_keys(fragment_type, merged)
-
-        # Build nested SubConfigs from type hints
-        inherited: dict[str, str] = {}
-        merged = _build_nested_subconfigs(fragment_type, merged, inherited=inherited)
-
-        # A cascaded value did not come from the child's own default -- it came
-        # from wherever the parent got it. Attribute it there, or `--log-level
-        # DEBUG` would show `cli.level` as a default.
-        for child, parent in inherited.items():
-            parent_origin = origins.get(parent)
-            if parent_origin is None:
-                continue
-            origins[child] = Origin(
-                kind=parent_origin.kind,
-                location=f"inherited from {parent} ({parent_origin.location})",
-                precedence=parent_origin.precedence,
+    def _iterate_to_fixpoint(self) -> _Iteration:
+        for _ in range(self.MAX_ITERATIONS):
+            declared_before = len(self._declared)
+            iteration = self._iterate()
+            previous = self._previous
+            settled = len(self._declared) == declared_before and (
+                previous is not None
+                and all(source in previous.derived for source in iteration.derived)
             )
+            self._previous = iteration
+            if settled or (previous is None and self._settles_at_once(iteration)):
+                return iteration
+        raise ConfigLifecycleError(
+            f"Resolution did not settle after {self.MAX_ITERATIONS} iterations: "
+            f"the declared roots ({_names(self._declared)}) or the derived "
+            f"sources ({_names_of_sources(self._previous)}) kept growing"
+        )
 
-        self._origins[fragment_type] = origins
+    def _settles_at_once(self, iteration: _Iteration) -> bool:
+        """A first iteration that declared nothing and derived nothing is final.
 
-        return fragment_type(**merged)
-
-    # -- Phase 3: access --------------------------------------------------
-
-    def get(self, fragment_type: type[_T]) -> _T:
+        The next one would start from the same base with the same roots and
+        read exactly the same thing.
         """
-        Get the built instance of a declared ConfigPart type.
+        return not iteration.derived and not any(
+            hasattr(root, "discover") for root in self._declared
+        )
 
-        Resolves first if that has not happened yet, so a host that never
-        calls resolve() explicitly still gets a consistent view.
+    def _iterate(self) -> _Iteration:
+        iteration = _Iteration(self._strict)
+        iteration.sources = list(self._base)
+        self._current = iteration
 
-        Raises:
-            KeyError: If the type was never declared.
-        """
-        if not self._resolved:
-            self.resolve()
-        if fragment_type not in self._fragments:
-            raise KeyError(
-                f"Fragment type {fragment_type.__name__} was never declared; "
-                f"declared: "
-                f"{', '.join(t.__name__ for t in self._declared) or '(none)'}"
-            )
-        return self._fragments[fragment_type]  # type: ignore[return-value]
+        # 1. every binding source learns every option declared so far
+        for source in iteration.sources:
+            if isinstance(source, BindingSource):
+                source.bind(self._index.all_specs())
 
-    def load_for_part(
+        # 2. discover(), reading the previous iteration's store
+        for root in list(self._declared):
+            discover = getattr(root, "discover", None)
+            if callable(discover):
+                discover(self)
+
+        # 3. every source into a fresh store
+        unmatched: list[tuple[ConfigSource, Unmatched]] = []
+        argv: list[_ArgvSource] = []
+        for source in iteration.sources:
+            self._load(source, iteration, unmatched)
+            if isinstance(source, _ArgvSource):
+                argv.append(source)
+
+        # 4. the files config_source fields name, until they name no new one
+        self._load_named_files(iteration, unmatched)
+
+        # 5. injected arguments, then -o from every argv source
+        argv.extend(self._load_injected(iteration, unmatched))
+        if argv and not any(isinstance(s, OverrideSource) for s in iteration.sources):
+            overrides = OverrideSource(sources=argv)
+            _check_rung(overrides, iteration.sources)
+            iteration.sources.append(overrides)
+            self._load(overrides, iteration, unmatched)
+
+        if self._runtime.writes:
+            iteration.sources.append(self._runtime)
+            self._load(self._runtime, iteration, unmatched)
+
+        self._report_unmatched(unmatched, iteration.diagnostics)
+        return iteration
+
+    def _load(
         self,
-        fragment_type: type[ConfigPart],
-    ) -> dict[str, Any]:
-        """
-        Load data for a ConfigPart from all active sources.
-
-        Merges data from all sources in precedence order.
-        Used by discover() methods to get source data.
-
-        Args:
-            fragment_type: ConfigPart class to load data for
-
-        Returns:
-            Dict of field names to values
-        """
-        merged: dict[str, Any] = {}
-        for source in self._sources:
-            data = source.load(fragment_type)
-            _deep_merge(merged, data)
-        return merged
-
-    @property
-    def sources(self) -> list[ConfigSource]:
-        """Get list of registered sources (sorted by precedence)."""
-        return list(self._sources)
-
-    def _record_origins(
-        self,
-        origins: dict[str, Origin],
         source: ConfigSource,
-        fragment_type: type[ConfigPart],
-        data: dict[str, Any],
+        iteration: _Iteration,
+        unmatched: list[tuple[ConfigSource, Unmatched]],
+        readings: Iterable[Reading | Unmatched] | None = None,
     ) -> None:
-        """Attribute every path ``data`` supplied to ``source``."""
-        describe = getattr(source, "describe_origin", None)
-        fallback = generic_origin(source)
+        """Read one source into the store, building each reading's origin.
 
-        for dotted, path in _dotted_paths(data, with_paths=True):
-            origin: Origin | None = None
-            if callable(describe):
-                origin = describe(fragment_type, path)
-            origins[dotted] = origin if origin is not None else fallback
-
-    def format_help(self, *, prog: str | None = None) -> str:
+        A source says where a value came from; the manager turns that into an
+        origin from the source's kind and rung.
         """
-        Render help text for every option registered so far.
+        delegates = getattr(source, "delegates", None)
+        if readings is None and callable(delegates):
+            for delegate in delegates():
+                self._load(delegate, iteration, unmatched)
+            return
 
-        Returns the text; it never prints and never exits. Whether `--help`
-        was asked for is `help_requested()`, and what to do about it is the
-        application's decision.
+        kind = source.kind
+        base_dir = source.base_dir
+        dialect = source.dialect
+        items = source.read(self._index) if readings is None else readings
+        for item in items:
+            if isinstance(item, Unmatched):
+                unmatched.append((source, item))
+                continue
+            origin = Origin(
+                kind=kind,
+                location=item.location,
+                precedence=source.precedence,
+                base_dir=base_dir,
+            )
+            iteration.store.add(item, origin, item.dialect or dialect)
+            if item.alias is not None:
+                current = _field_at(item.root, item.path)
+                iteration.diagnostics.add(
+                    DeprecatedNameWarning,
+                    f"{item.alias} is a deprecated name for "
+                    f"{item.root.__name__}.{current.dotted}, used at "
+                    f"{item.location}; spell it "
+                    f"{_flat_of(self._index, item.root, item.path)} instead",
+                )
+
+    def _load_named_files(
+        self, iteration: _Iteration, unmatched: list[tuple[ConfigSource, Unmatched]]
+    ) -> None:
+        """Turn every ``config_source`` winner into a source, at any depth.
+
+        Repeated until no new file is named, because a named file may itself
+        name another.
         """
-        if self._cli_source is None:
-            return "options:\n  (no CLI source configured)\n"
-        return self._cli_source.format_help(prog=prog)
+        named: dict[Path, ConfigSource] = {}
+        while True:
+            found = False
+            for root, info, marker in self._marked(ConfigSourceMarker):
+                path = self._named_path(iteration, root, info)
+                if path is None or path in named:
+                    continue
+                try:
+                    source = source_for_file(path, precedence=marker.precedence)
+                except ConfigUsageError as error:
+                    iteration.diagnostics.add(
+                        ConfigUsageError, f"{error} (named by {info.dotted})"
+                    )
+                    continue
+                _check_rung(source, iteration.sources)
+                named[path] = source
+                iteration.sources.append(source)
+                iteration.derived.append(source)
+                self._load(source, iteration, unmatched)
+                found = True
+            if not found:
+                return
 
-    def help_requested(self) -> bool:
-        """Whether -h/--help appeared in the command line arguments."""
-        if self._cli_source is None:
-            return False
-        return self._cli_source.help_requested()
+    def _named_path(
+        self, iteration: _Iteration, root: type[ConfigPart], info: FieldInfo
+    ) -> Path | None:
+        won = iteration.store.winner(root, info.path)
+        if not isinstance(won, LayeredValue) or won.value is None:
+            return None
+        path = Path(won.value)
+        if not path.is_absolute():
+            path = self._invocation_dir() / path
+        if not path.exists():
+            iteration.diagnostics.add(
+                ConfigUsageError,
+                f"Config file not found: {path}, named by {info.dotted} ({won.origin})",
+            )
+            return None
+        return path
 
-    def origin_of(self, fragment_type: type[ConfigPart], path: str) -> Origin:
+    def _invocation_dir(self) -> Path:
+        for source in self._base:
+            if isinstance(source, CLISource):
+                return source.invocation_dir
+        return Path.cwd()
+
+    def _load_injected(
+        self, iteration: _Iteration, unmatched: list[tuple[ConfigSource, Unmatched]]
+    ) -> list[InjectedArgsSource]:
+        """Build one injected source per rung the markers ask for, and load it.
+
+        Every layer of an ``injected_args`` field contributes, not only the
+        winner: this is the one place a value accumulates. Contributions are
+        ordered by the rung of the source each came from, so the later one wins
+        without depending on the order anything was added.
         """
-        Report where a field's final value came from.
+        by_rung: dict[int, list[tuple[int, str, list[str]]]] = {}
+        for root, info, marker in self._marked(InjectedArgsMarker):
+            for layer in iteration.store.layers(root, info.path):
+                if isinstance(layer, FailedValue):
+                    continue
+                tokens = _tokens_of(layer.value)
+                if tokens:
+                    by_rung.setdefault(marker.precedence, []).append(
+                        (layer.origin.precedence, layer.origin.location, tokens)
+                    )
 
-        Args:
-            fragment_type: A registered ConfigPart class.
-            path: Dotted field path, e.g. "cli.level".
+        made: list[InjectedArgsSource] = []
+        for precedence, contributions in sorted(by_rung.items()):
+            source = InjectedArgsSource(precedence=precedence)
+            for _, contributor, tokens in sorted(contributions, key=lambda c: c[0]):
+                source.contribute(contributor, tokens)
+            _check_rung(source, iteration.sources)
+            iteration.sources.append(source)
+            readings = list(source.read(self._index))
+            self._refuse_bootstrap_only(source, readings)
+            self._load(source, iteration, unmatched, readings)
+            made.append(source)
+        return made
 
-        Returns:
-            The Origin of the winning value.
+    def _refuse_bootstrap_only(
+        self, source: InjectedArgsSource, readings: Sequence[Reading | Unmatched]
+    ) -> None:
+        """Refuse an injected value for a field whose decisions are already made.
+
+        Judged on paths, through the index, never on token strings: an option,
+        its short form, its ``--no-`` form and an ``-o`` pair are all the same
+        field.
+        """
+        targets = [
+            (item.root, item.path, item.location)
+            for item in readings
+            if isinstance(item, Reading)
+        ]
+        for key, _value, _label in source.overrides:
+            targets.extend(
+                (target.root, target.path, f"-o {key}")
+                for target in self._index.flat(key)
+            )
+        for root, path, location in targets:
+            info = _field_at(root, path)
+            if has_marker(info, BootstrapOnlyMarker):
+                raise ConfigUsageError(
+                    f"{root.__name__}.{info.dotted} cannot be set from injected "
+                    f"arguments ({location}): it is bootstrap_only, and the "
+                    f"decisions it drives, which config file to open above all, "
+                    f"have already been made. Pass it on the command line instead."
+                )
+
+    def _marked(
+        self, marker_type: type[Any]
+    ) -> list[tuple[type[ConfigPart], FieldInfo, Any]]:
+        """Every field carrying ``marker_type``, at any depth, in every root."""
+        found: list[tuple[type[ConfigPart], FieldInfo, Any]] = []
+        for root in self._declared:
+            for info in fields_of(root):
+                marker = marker_of(info, marker_type)
+                if marker is not None and not info.is_nested:
+                    found.append((root, info, marker))
+        return found
+
+    def _report_unmatched(
+        self,
+        unmatched: Sequence[tuple[ConfigSource, Unmatched]],
+        diagnostics: Diagnostics,
+    ) -> None:
+        for source, item in unmatched:
+            if isinstance(source, OverrideSource):
+                diagnostics.add(
+                    UnknownOverrideKeyWarning,
+                    f"-o {item.spelling} addresses no field; searched "
+                    f"{_names(self._declared) or '(no roots)'}",
+                )
+            else:
+                diagnostics.add(
+                    UnknownConfigKeyWarning,
+                    f"Unknown config option {item.spelling} in {item.location}",
+                )
+
+    def _project_all(self, diagnostics: Diagnostics) -> None:
+        assert self._final is not None
+        store = self._final.store
+        projections: dict[type[ConfigPart], Projection[Any]] = {}
+        for root in self._declared:
+            store.report_failures(root, diagnostics)
+            try:
+                projections[root] = project(root, store)
+            except ConfigError as error:
+                diagnostics.add(type(error), str(error))
+        self._projections = projections
+
+    # -- access ------------------------------------------------------------
+
+    def get(self, root: type[_T]) -> _T:
+        """The built instance of a declared root, resolving first if needed.
 
         Raises:
-            KeyError: If the type was never declared, or the path is unknown.
+            KeyError: if the root was never declared.
         """
-        origins = self.origins(fragment_type)
-        if path not in origins:
-            raise KeyError(f"No origin recorded for {fragment_type.__name__}.{path}")
-        return origins[path]
+        return self._projection(root).instance  # type: ignore[no-any-return]
 
-    def origins(self, fragment_type: type[ConfigPart]) -> dict[str, Origin]:
-        """Every recorded origin for a declared ConfigPart, keyed by path.
-
-        Resolves first if that has not happened yet, matching `get()`.
-        """
-        if not self._resolved:
+    def _projection(self, root: type[ConfigPart]) -> Projection[Any]:
+        if self._phase == "declaring":
             self.resolve()
-        if fragment_type not in self._origins:
-            raise KeyError(f"Fragment type {fragment_type.__name__} was never declared")
-        return dict(self._origins[fragment_type])
+        if self._failure is not None:
+            raise self._failure
+        if root not in self._projections:
+            raise KeyError(
+                f"{root.__name__} was never declared; declared: "
+                f"{_names(self._declared) or '(none)'}"
+            )
+        return self._projections[root]
 
-    def explain(self, fragment_type: type[ConfigPart]) -> str:
-        """
-        Render a table of every field's value and where it came from.
+    def partial(self, root: type[ConfigPart]) -> dict[str, Any]:
+        """The winner per path so far, for a ``discover()`` hook to read.
 
-        Intended for `--debug-config` style output: the whole point of merging
-        sources is that the winner is not obvious from any single one of them.
+        Converted, but with no cascade, no assembly and no required-field
+        check, because the iteration is not finished. Keyed by dotted path.
         """
-        instance = self.get(fragment_type)
-        recorded = self._origins.get(fragment_type, {})
+        store = self._previous.store if self._previous is not None else None
+        if self._phase != "resolving" and self._final is not None:
+            store = self._final.store
+        if store is None:
+            return {}
+        values: dict[str, Any] = {}
+        for info in fields_of(root):
+            won = store.winner(root, info.path)
+            if isinstance(won, LayeredValue):
+                values[info.dotted] = won.value
+        return values
+
+    def layers(
+        self, root: type[ConfigPart], path: str
+    ) -> tuple[LayeredValue | FailedValue, ...]:
+        """Every source that supplied ``path``, lowest rung first."""
+        self._projection(root)
+        assert self._final is not None
+        return self._final.store.layers(root, tuple(path.split(".")))
+
+    def origin_of(self, root: type[ConfigPart], path: str) -> Origin:
+        """Where a field's final value came from.
+
+        Raises:
+            KeyError: if the root was never declared, or the path is unknown.
+        """
+        origins = self._projection(root).origins
+        if path not in origins:
+            raise KeyError(f"No origin recorded for {root.__name__}.{path}")
+        origin: Origin = origins[path]
+        return origin
+
+    def origins(self, root: type[ConfigPart]) -> dict[str, Origin]:
+        """Every recorded origin for a declared root, keyed by dotted path."""
+        return dict(self._projection(root).origins)
+
+    def explain(self, root: type[ConfigPart]) -> str:
+        """Every field's value, where it came from, and what it beat.
+
+        The ``--debug-config`` output: the point of merging sources is that the
+        winner is not obvious from any one of them.
+        """
+        projection = self._projection(root)
+        assert self._final is not None
+        store = self._final.store
 
         rows: list[tuple[str, str, str]] = []
-        for field in leaf_fields(fragment_type):
-            dotted = field.dotted
-            value: Any = instance
-            for segment in field.path:
+        for info in fields_of(root):
+            if info.is_nested:
+                continue
+            value: Any = projection.instance
+            for segment in info.path:
                 value = getattr(value, segment, None)
-            origin = recorded.get(dotted)
-            rows.append((dotted, repr(value), str(origin) if origin else "unset"))
+            origin = projection.origins.get(info.dotted)
+            shown = str(origin) if origin is not None else "unset"
+            beaten = store.layers(root, info.path)[:-1]
+            if origin is not None and origin.kind != "default" and beaten:
+                over = ", ".join(str(layer.origin) for layer in beaten)
+                shown += f" (over {over})"
+            rows.append((info.dotted, repr(value), shown))
 
         if not rows:
-            return f"{fragment_type.__name__}: no fields\n"
+            return f"{root.__name__}: no fields\n"
 
-        widths = [max(len(row[column]) for row in rows) for column in range(3)]
-        header = (
-            f"{'field'.ljust(widths[0])}  "
-            f"{'value'.ljust(widths[1])}  "
-            f"{'origin'.ljust(widths[2])}"
-        ).rstrip()
-
-        lines = [f"{fragment_type.__name__}:", header, "-" * len(header)]
+        widths = [max(len(row[column]) for row in rows) for column in range(2)]
+        header = f"{'field'.ljust(widths[0])}  {'value'.ljust(widths[1])}  origin"
+        lines = [f"{root.__name__}:", header, "-" * len(header)]
         lines.extend(
             f"{name.ljust(widths[0])}  {value.ljust(widths[1])}  {origin}".rstrip()
             for name, value, origin in rows
         )
         return "\n".join(lines) + "\n"
 
-    def _process_config_source_fields(
-        self, fragment_type: type[ConfigPart], data: dict[str, Any]
+    def format_help(self, *, prog: str | None = None) -> str:
+        """Every declared option, rendered from specs. Never prints."""
+        return _format_help(self._index.all_specs(), prog=prog)
+
+    def help_requested(self) -> bool:
+        """Whether ``-h`` or ``--help`` was among the arguments read."""
+        held = self._final.sources if self._final is not None else self._base
+        return any(
+            isinstance(source, _ArgvSource) and source.help_requested for source in held
+        )
+
+    # -- the runtime layer -------------------------------------------------
+
+    def set(
+        self, root: type[ConfigPart], path: str, value: Any, *, writer: str
     ) -> None:
-        """
-        Process fields marked with config_source annotation from merged data.
+        """Write a value after resolution, at the top of the ladder.
 
-        For each field with the config_source marker, if the value is a
-        path to a config file, add it as a source.
-
-        This is called during resolve() BEFORE the instance
-        is created, using the merged data from defaults + sources + CLI.
+        The fragment is rebuilt from the store with the write on top; the
+        iteration is not re-run, so a field that would add a source cannot be
+        written.
 
         Raises:
-            FileNotFoundError: If a config file is specified but doesn't exist
+            ConfigUsageError: for a ``config_source`` or ``injected_args`` field.
+            KeyError: for a root never declared or a path it does not have.
         """
-        from pathlib import Path
-
-        from ._sources import TomlSource
-
-        for field in fields_of(fragment_type, recurse=False):
-            marker = marker_of(field, ConfigSourceMarker)
-            if marker is None:
-                continue
-
-            field_name = field.name
-            value = data.get(field_name)
-            if value is None:
-                continue
-
-            # Convert string to Path if needed
-            if isinstance(value, str):
-                value = Path(value)
-
-            # If it's a relative path, resolve against invocation_dir
-            if isinstance(value, Path) and not value.is_absolute():
-                invocation_dir = (
-                    self._cli_source.invocation_dir
-                    if self._cli_source is not None
-                    else Path.cwd()
+        self._projection(root)
+        assert self._final is not None
+        segments = tuple(path.split("."))
+        info = _field_at(root, segments)
+        for marker in (ConfigSourceMarker, InjectedArgsMarker):
+            if has_marker(info, marker):
+                raise ConfigUsageError(
+                    f"{root.__name__}.{path} cannot be set at runtime: it adds a "
+                    f"source, and sources are closed once resolve() has run"
                 )
-                value = invocation_dir / value
 
-            # Check file exists - error if explicitly specified but missing
-            if isinstance(value, Path):
-                if not value.exists():
-                    raise FileNotFoundError(
-                        f"Config file not found: {value} (specified via {field_name})"
-                    )
-                if value.suffix in (".toml",):
-                    self.add_source(TomlSource(value, precedence=marker.precedence))
+        self._runtime.set(root, segments, value, writer)
+        if self._runtime not in self._final.sources:
+            self._final.sources.append(self._runtime)
+        origin = Origin(
+            kind="runtime",
+            location=writer,
+            precedence=self._runtime.precedence,
+        )
+        reading = Reading(root=root, path=segments, raw=value, location=origin.location)
+        self._final.store.add(reading, origin, self._runtime.dialect)
 
-    def _process_addopts_fields(
-        self,
-        fragment_type: type[ConfigPart],
-        data: dict[str, Any],
-    ) -> None:
-        """
-        Process fields marked with addopts_field annotation.
+        diagnostics = Diagnostics(strict=self._strict)
+        diagnostics.add(
+            RuntimeMutationWarning,
+            f"{root.__name__}.{path} set by {writer} after resolve; "
+            f"the fragment is rebuilt",
+        )
+        self._final.store.report_failures(root, diagnostics)
+        diagnostics.emit()
+        self._projections[root] = project(root, self._final.store)
 
-        Each field's value is handed to an :class:`AddoptsSource`, which parses
-        it as command-line arguments at its own precedence -- above files and
-        the environment, below arguments the user actually typed.
+    # -- fragment lifetime -------------------------------------------------
 
-        Also validates that no bootstrap_only fields are being set via addopts.
+    def instance(self, root: type[ConfigPart]) -> AbstractContextManager[Any]:
+        """The context manager the fragment originates, never entered here.
 
-        Args:
-            fragment_type: ConfigPart class being registered
-            data: Merged data from all sources
+        Which scope it belongs to is the integration's to decide.
 
         Raises:
-            ValueError: If addopts tries to set a bootstrap_only field
+            ConfigUsageError: if the root defines no ``instance()``.
         """
-        part_fields = fields_of(fragment_type, recurse=False)
-
-        bootstrap_only_fields = {
-            f.name for f in part_fields if has_marker(f, BootstrapOnlyMarker)
-        }
-
-        for field in part_fields:
-            marker = marker_of(field, AddoptsMarker)
-            if marker is None:
-                continue
-
-            value = data.get(field.name)
-            if not value or not isinstance(value, str | list):
-                continue
-
-            source = self._ensure_addopts_source(marker.precedence)
-            tokens = source.extend(value)
-            _reject_bootstrap_only(tokens, bootstrap_only_fields)
-
-    def _ensure_addopts_source(self, precedence: int) -> AddoptsSource:
-        """The addopts source, created on first use at ``precedence``.
-
-        Created lazily so that a configuration with no ``addopts_field`` never
-        grows a source it has nothing to put in, and so the precedence the
-        marker asks for is the precedence the source gets.
-        """
-        from ._sources import AddoptsSource
-
-        if self._addopts_source is None:
-            # add_source registers every already-declared type with it and
-            # keeps the ladder sorted.
-            self.add_source(AddoptsSource(precedence=precedence))
-            assert self._addopts_source is not None
-        return self._addopts_source
+        fragment = self.get(root)
+        originate = getattr(fragment, "instance", None)
+        if not callable(originate):
+            raise ConfigUsageError(
+                f"{root.__name__} originates no context manager: it defines no "
+                f"instance() method"
+            )
+        context: AbstractContextManager[Any] = originate()
+        return context
 
 
-def _reject_bootstrap_only(tokens: list[str], bootstrap_only: set[str]) -> None:
-    """Refuse addopts that try to set a field marked ``bootstrap_only``.
+def _check_reserved_shorts(root: type[ConfigPart]) -> None:
+    """Refuse a ``short()`` the parser keeps for itself, at ``declare()``."""
+    from ._parser import RESERVED_SHORTS
+    from ._specs import field_specs
 
-    By the time addopts are read, the decisions such a field drives -- which
-    config file to open, above all -- have already been made, so honouring it
-    here would silently do nothing.
-    """
-    for token in tokens:
-        if not token.startswith("--"):
-            continue
-        name = token[2:].split("=")[0].replace("-", "_")
-        if name in bootstrap_only:
-            raise ValueError(
-                f"Cannot set bootstrap-only field '{name}' via addopts. "
-                f"Field '{name}' must be set via CLI arguments, not in "
-                f"config file addopts."
+    for spec in field_specs(root):
+        for form in spec.cli:
+            if form.short in RESERVED_SHORTS:
+                purpose = "overrides" if form.short == "-o" else "help"
+                raise ConfigDeclarationError(
+                    f"{root.__name__}.{'.'.join(spec.path)} claims {form.short}, "
+                    f"which is reserved for {purpose}. Pick another short()."
+                )
+
+
+def _check_rung(source: ConfigSource, held: Iterable[ConfigSource]) -> None:
+    """Refuse a second source at an occupied rung (D22)."""
+    for other in held:
+        if other is source:
+            raise ConfigDeclarationError(f"{_describe(source)} was added twice")
+        if other.precedence == source.precedence:
+            raise ConfigDeclarationError(
+                f"{_describe(source)} and {_describe(other)} both sit at "
+                f"precedence {source.precedence}; the result would depend on the "
+                f"order they were added. Give one of them a distinct precedence="
             )
 
 
-class UnknownConfigKeyWarning(UserWarning):
-    """A source supplied a key the ConfigPart does not declare."""
+def _describe(source: ConfigSource) -> str:
+    path = getattr(source, "path", None)
+    name = type(source).__name__
+    return f"{name}({path})" if path is not None else name
 
 
-def _drop_unknown_keys(
-    fragment_type: type[ConfigPart],
-    data: dict[str, Any],
-) -> dict[str, Any]:
-    """Drop keys the ConfigPart does not declare, at any depth, warning once.
-
-    A typo in a nested table is the same user error as a typo at the top level
-    and gets the same treatment. Letting it through instead reached the
-    SubConfig constructor, which -- correctly, for a programming error --
-    raised ``TypeError`` and took the whole load down.
-    """
-    unknown: list[str] = []
-    result = _prune(fragment_type, data, prefix=(), unknown=unknown)
-    if unknown:
-        warnings.warn(
-            f"Unknown config option(s) for {fragment_type.__name__}: "
-            f"{', '.join(sorted(unknown))}",
-            UnknownConfigKeyWarning,
-            stacklevel=4,
-        )
-    return result
+def _names(roots: Iterable[type[ConfigPart]]) -> str:
+    return ", ".join(root.__name__ for root in roots)
 
 
-def _prune(
-    cls: type[Any],
-    data: dict[str, Any],
-    *,
-    prefix: tuple[str, ...],
-    unknown: list[str],
-) -> dict[str, Any]:
-    """Recursive worker for :func:`_drop_unknown_keys`."""
-    known = {field.name: field for field in fields_of(cls, recurse=False)}
-
-    result: dict[str, Any] = {}
-    for key, value in data.items():
-        field = known.get(key)
-        if field is None:
-            unknown.append(".".join((*prefix, key)))
-            continue
-        if field.is_sub_config and isinstance(value, dict):
-            value = _prune(field.type, value, prefix=(*prefix, key), unknown=unknown)
-        result[key] = value
-    return result
+def _names_of_sources(iteration: _Iteration | None) -> str:
+    if iteration is None:
+        return "none"
+    return ", ".join(_describe(source) for source in iteration.derived) or "none"
 
 
-def _build_nested_subconfigs(
-    cls: type[ConfigPart] | type[SubConfig],
-    data: dict[str, Any],
-    *,
-    prefix: tuple[str, ...] = (),
-    inherited: dict[str, str] | None = None,
-) -> dict[str, Any]:
-    """
-    Recursively convert nested dicts to SubConfig instances.
-
-    For each field annotated as a SubConfig type, if the value is a dict,
-    convert it to the appropriate SubConfig instance.
-
-    Also handles parent-to-child cascade: if the parent has a field with
-    the same name as a SubConfig field (e.g., parent.level), that value
-    cascades to children that don't explicitly set it.
-
-    Args:
-        prefix: Dotted path of ``cls`` within the root ConfigPart.
-        inherited: Optional out-parameter, filled with
-            ``{child_dotted: parent_dotted}`` for every cascaded value, so the
-            caller can attribute those values to where the parent got them
-            rather than to the child's own default.
-    """
-    own_fields = fields_of(cls, recurse=False)
-    result = dict(data)
-
-    # Collect parent values that could cascade to children.
-    # These are the non-SubConfig fields present in the parent data.
-    cascade_values = {
-        field.name: result[field.name]
-        for field in own_fields
-        if not field.is_sub_config and field.name in result
-    }
-
-    for field in own_fields:
-        if not field.is_sub_config:
-            continue
-
-        sub_type: type[SubConfig] = field.type
-        value = result.get(field.name)
-        child_prefix = (*prefix, field.name)
-
-        if not isinstance(value, dict):
-            if value is not None and field.name in result:
-                # Already an instance (or something else the caller supplied).
-                continue
-            value = {}
-
-        cascaded = _apply_cascade(cascade_values, sub_type, value)
-        if inherited is not None:
-            for name in cascaded.keys() - value.keys():
-                inherited[".".join((*child_prefix, name))] = ".".join((*prefix, name))
-
-        # Merge: class defaults < cascaded parent values < explicit values
-        merged_value = {**field_defaults(sub_type), **cascaded}
-        merged_value = _build_nested_subconfigs(
-            sub_type, merged_value, prefix=child_prefix, inherited=inherited
-        )
-        result[field.name] = sub_type(**merged_value)
-
-    return result
+def _field_at(root: type[ConfigPart], path: tuple[str, ...]) -> FieldInfo:
+    for info in fields_of(root):
+        if info.path == path:
+            return info
+    raise KeyError(f"{root.__name__} has no field {'.'.join(path)}")
 
 
-def _apply_cascade(
-    parent_values: dict[str, Any],
-    child_type: type[SubConfig],
-    child_data: dict[str, Any],
-) -> dict[str, Any]:
-    """
-    Apply parent values to child where child doesn't have explicit value.
-
-    Only cascades values for fields that:
-    1. Are marked with `from_parent` annotation
-    2. Exist in the parent's data
-    3. Are not already set in the child's data
-
-    Child's explicit values take precedence over cascaded values.
-    """
-    result = dict(child_data)
-    for field in fields_of(child_type, recurse=False):
-        if (
-            field.name not in result
-            and field.name in parent_values
-            and has_marker(field, FromParentMarker)
-        ):
-            result[field.name] = parent_values[field.name]
-    return result
+def _flat_of(
+    index: SpellingIndex, root: type[ConfigPart], path: tuple[str, ...]
+) -> str:
+    for spec in index.specs(root):
+        if spec.path == path:
+            return spec.flat
+    return ".".join(path)
 
 
-def _dotted_paths(
-    data: dict[str, Any],
-    *,
-    prefix: tuple[str, ...] = (),
-    with_paths: bool = False,
-) -> list[Any]:
-    """Every leaf path in a nested dict, as dotted strings.
-
-    With ``with_paths``, yields ``(dotted, path_tuple)`` pairs instead, which
-    is what origin lookup needs.
-    """
-    result: list[Any] = []
-    for key, value in data.items():
-        path = (*prefix, key)
-        if isinstance(value, dict):
-            result.extend(_dotted_paths(value, prefix=path, with_paths=with_paths))
-        else:
-            dotted = ".".join(path)
-            result.append((dotted, path) if with_paths else dotted)
-    return result
+def _tokens_of(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return shlex.split(value)
+    if isinstance(value, list | tuple):
+        return [str(token) for token in value]
+    return [str(value)]
 
 
-def _deep_merge(target: dict[str, Any], source: dict[str, Any]) -> None:
-    """Deep merge source into target, modifying target in place."""
-    for key, value in source.items():
-        if key in target and isinstance(target[key], dict) and isinstance(value, dict):
-            _deep_merge(target[key], value)
-        else:
-            target[key] = value
-
-
-__all__ = [
-    "ConfigManager",
-    "ConfigSource",
-    "Discoverable",
-]
+__all__ = ["ConfigManager"]

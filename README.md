@@ -7,9 +7,9 @@ name mapping and the provenance all falling out of the declaration.
 > **Experimental.** This is an early experiment that may or may not work out.
 > The API moves between releases, and there is no deprecation policy yet.
 
-> **Installing this package patches pytest.** See
-> [pytest integration](#pytest-integration-a-hack-on-purpose) before installing
-> it anywhere you care about. `-p no:cot_config` turns it off.
+> **0.1.0 patched pytest on install.** That release registered a `pytest11`
+> entry point that monkeypatched `Parser` and `Config`. The next release
+> patches nothing; see [pytest integration](#pytest-integration).
 
 ## The problem
 
@@ -54,10 +54,10 @@ CLI:
 ```python
 from typing import Annotated
 
-from cot.config import ConfigPart, SubConfig, from_parent, help, named, no_cli
+from cot.config import ConfigPart, from_parent, help, named, no_cli
 
 
-class LogOutputConfig(SubConfig):
+class LogOutputConfig(ConfigPart):
     """Settings shared by every log output.
 
     `from_parent` is what makes `log_cli_level` fall back to `log_level`.
@@ -82,7 +82,9 @@ class LogFileConfig(LogOutputConfig):
     mode: Annotated[str, named("log_file_mode"), help("log file open mode")] = "w"
 
 
-class LoggingConfig(LogOutputConfig, ConfigPart, prefix="pytest", name_prefix="log"):
+class LoggingConfig(
+    LogOutputConfig, ConfigPart, prefix="pytest", name_prefix="log", from_env=True
+):
     auto_indent: Annotated[str | None, help("auto-indent multiline messages")] = None
     logger_disable: Annotated[
         list[str], named("log_disable"), help("disable a logger by name")
@@ -122,52 +124,27 @@ config = manager.get(LoggingConfig)
 returns the built instance, and `manager.explain(LoggingConfig)` says where each
 value came from.
 
-## pytest integration (a hack, on purpose)
+## pytest integration
 
-`cot.config.pytest_plugin` **monkeypatches pytest**. It adds three methods
-pytest does not have:
-
-- `Parser.add_config(part_type)`
-- `Config.get_config(part_type)`
-- `Config.explain_config(part_type)`
-
-It is registered as a `pytest11` entry point, so **installing the package is
-enough to activate it** — importing the plugin module patches
-`_pytest.config.Parser` and `_pytest.config.Config` at import time, in every
-environment the package is installed into, including as a transitive
-dependency.
-
-That is deliberate for now. The point of the proof of concept is to show the
-library driving real pytest options, and a conftest-level
-`pytest_plugins = [...]` would be too late: that conftest's own
-`pytest_addoption` runs before its plugin list is processed. It is not how a
-stable release should behave, and it will change: the plan is to replace it with
-importable `add_config(parser, T)` / `get_config(config, T)` functions. See
-[`docs/design/pytest/evolution.md`](docs/design/pytest/evolution.md).
-
-What you should know:
-
-- **The patch is additive only.** No option, ini key, hook or behaviour of
-  pytest's is replaced.
-- **Turn it off with `-p no:cot_config`.**
-- **A type checker cannot see the patched methods.** Use
-  `manager_for_config(config).get(T)` for the statically-typed equivalent.
-- **The collision behaviour is pinned by tests**: an ini key pytest already
-  declares (`log_level`) is *adopted* rather than clobbered, and a colliding CLI
-  option raises `ConfigLifecycleError` naming the field instead of argparse's
-  bare "conflicting option string".
+`cot.config.pytest_binding` has two typed functions, and nothing is patched or
+auto-enabled: a plugin that does not import them is untouched.
 
 ```python
+from cot.config.pytest_binding import add_config, explain_config, get_config
+
 def pytest_addoption(parser):
-    parser.add_config(LoggingConfig)        # declare
+    add_config(parser, LoggingConfig)        # declare and register options
 
 def pytest_configure(config):
-    log = config.get_config(LoggingConfig)  # resolve + get, typed
-    config.explain_config(LoggingConfig)    # provenance table
+    log = get_config(config, LoggingConfig)  # resolve + get, typed
+    explain_config(config, LoggingConfig)    # provenance table
 ```
 
-The intended end state is the reverse of this: pytest using the library
-directly, with no patching at all.
+pytest keeps argument parsing and ini reading; the binding translates each
+field's spec into `addoption`/`addini` calls and reads the values back. An ini
+key pytest already declares (`log_level`) is adopted rather than clobbered,
+and a colliding CLI option raises `ConfigCollisionError` naming the field. See
+[`docs/design/pytest/index.md`](docs/design/pytest/index.md).
 
 ## Installing
 
@@ -175,15 +152,14 @@ directly, with no patching at all.
 pip install cot-config
 ```
 
-Requires Python 3.10+. Read the pytest section above first — installing is
-activating.
+Requires Python 3.10+.
 
 ## Where the code and the design differ
 
-`docs/design/` is normative. The code is being rebuilt to it
-([D20](docs/design/decisions.md#d20)) in
-[the build order](docs/design/index.md#build-order); until that lands, the
-code in `src/` is the pre-rebuild shape and the design describes the target.
+`docs/design/` is normative. The code has been rebuilt to it
+([D20](docs/design/decisions.md#d20)) through step 9 of
+[the build order](docs/design/index.md#build-order); conformance and YAML
+remain.
 Plugin discovery, list merge semantics, YAML and hot reload are design intent
 with no code behind them either way.
 

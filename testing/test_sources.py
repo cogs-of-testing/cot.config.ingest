@@ -149,12 +149,15 @@ class TestIniSource:
 
 
 class TestEnvSource:
-    """Test loading config from environment variables."""
+    """Test loading config from environment variables.
+
+    Every root here opts in with ``from_env=True``: exposure is opt-in (D13).
+    """
 
     def test_load_from_env(self) -> None:
         """Load config from environment variables."""
 
-        class AppConfig(ConfigPart, prefix="APP"):
+        class AppConfig(ConfigPart, prefix="APP", from_env=True):
             debug: bool = False
             log_level: str = "INFO"
             name: str = "default"
@@ -178,7 +181,7 @@ class TestEnvSource:
     def test_env_prefix_from_class(self) -> None:
         """Environment variables use ConfigPart prefix."""
 
-        class DbConfig(ConfigPart, prefix="DB"):
+        class DbConfig(ConfigPart, prefix="DB", from_env=True):
             host: str = "localhost"
             port: int = 5432
 
@@ -205,7 +208,7 @@ class TestEnvSource:
         made ``EnvSource("APP")`` silently read nothing.
         """
 
-        class DbConfig(ConfigPart, prefix="db"):
+        class DbConfig(ConfigPart, prefix="db", from_env=True):
             host: str = "localhost"
 
         manager = ConfigManager(
@@ -219,7 +222,7 @@ class TestEnvSource:
     def test_unprefixed_source_leaves_the_part_prefix_alone(self) -> None:
         """With no source prefix the part's prefix is the whole name."""
 
-        class DbConfig(ConfigPart, prefix="db"):
+        class DbConfig(ConfigPart, prefix="db", from_env=True):
             host: str = "localhost"
 
         manager = ConfigManager(sources=[EnvSource(environ={"DB_HOST": "prod"})])
@@ -234,7 +237,7 @@ class TestSourcePrecedence:
     def test_env_overrides_file(self, tmp_path: Path) -> None:
         """Environment variables override file config."""
 
-        class AppConfig(ConfigPart, prefix="app"):
+        class AppConfig(ConfigPart, prefix="app", from_env=True):
             debug: bool = False
             log_level: str = "INFO"
             name: str = "default"
@@ -335,7 +338,6 @@ class TestSourcesOnly:
         )
         files = ConfigFileDiscoverySource(
             invocation_dir=tmp_path,
-            cli_source=cli,
             filenames=["config.ini"],
         )
 

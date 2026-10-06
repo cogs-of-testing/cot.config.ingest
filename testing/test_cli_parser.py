@@ -1,227 +1,131 @@
-"""
-Tests for the CLI parser module.
+"""The native parser, driven by the CLI forms the specs derive.
 
-These tests verify the CLIParser functionality including:
-- Basic long option parsing
-- Short option parsing
-- Combined short options
-- Conflict detection
-- Override mechanism
+Rewritten for the rebuild: the parser no longer takes field names and types,
+it registers ``CliForm``s (``docs/design/specs.md#cli-forms``). Conflicts
+between two fields are judged by the spelling index at ``declare()``
+(``testing/test_index.py``), not by the parser, so the warn and ignore modes
+are gone with it. ``-o`` is the only override spelling (D1), and a string of
+injected tokens is split by the manager, not the parser.
 """
 
 from __future__ import annotations
 
-import warnings
+from typing import Annotated
 
 import pytest
 
-from cot.config._cli_parser import CLIConflictError, CLIParser
+from cot.config import (
+    ConfigDeclarationError,
+    ConfigManager,
+    ConfigPart,
+    ConfigUsageError,
+    short,
+)
+from cot.config._parser import ArgumentParser, ParseResult
+from cot.config._specs import field_specs
+
+
+class App(ConfigPart):
+    config_file: str | None = None
+    log_level: str = "WARNING"
+    verbose: Annotated[bool, short("v")] = False
+    exitfirst: Annotated[bool, short("x")] = False
+    jobs: Annotated[int, short("j")] = 1
+
+
+def parse(*tokens: str) -> ParseResult:
+    parser = ArgumentParser()
+    parser.register(field_specs(App))
+    return parser.parse(tokens)
+
+
+def values(result: ParseResult) -> dict[str, object]:
+    return {o.spec.flat: o.raw for o in result.occurrences}
 
 
 class TestBasicParsing:
-    """Test basic CLI argument parsing."""
-
     def test_long_option_with_value(self) -> None:
-        """Parse --key value form."""
-        parser = CLIParser()
-        parser.add_field("config_file", str)
+        result = parse("--config-file", "test.toml")
 
-        result = parser.parse(["--config-file", "test.toml"])
-
-        assert result.values == {"config_file": "test.toml"}
-        assert result.unknown_args == []
+        assert values(result) == {"config_file": "test.toml"}
+        assert result.unknown == []
 
     def test_long_option_equals_form(self) -> None:
-        """Parse --key=value form."""
-        parser = CLIParser()
-        parser.add_field("log_level", str)
-
-        result = parser.parse(["--log-level=DEBUG"])
-
-        assert result.values == {"log_level": "DEBUG"}
+        assert values(parse("--log-level=DEBUG")) == {"log_level": "DEBUG"}
 
     def test_boolean_flag(self) -> None:
-        """Parse --flag (boolean, no value)."""
-        parser = CLIParser()
-        parser.add_field("verbose", bool)
+        assert values(parse("--verbose")) == {"verbose": True}
 
-        result = parser.parse(["--verbose"])
+    def test_boolean_negative_form(self) -> None:
+        """Every boolean has a --no- form, so a file's true is reachable (D2)."""
+        assert values(parse("--no-verbose")) == {"verbose": False}
 
-        assert result.values == {"verbose": True}
+    def test_boolean_with_explicit_value_keeps_the_value(self) -> None:
+        """``--flag=false`` is a value to convert, never mere presence (I8)."""
+        assert values(parse("--verbose=false")) == {"verbose": "false"}
 
     def test_unknown_args_passed_through(self) -> None:
-        """Unknown arguments are collected."""
-        parser = CLIParser()
-        parser.add_field("config_file", str)
+        result = parse("--log-level", "DEBUG", "--unknown", "file.py")
 
-        result = parser.parse(["--config-file", "test.toml", "--unknown", "value"])
+        assert values(result) == {"log_level": "DEBUG"}
+        assert result.unknown == ["--unknown", "file.py"]
 
-        assert result.values == {"config_file": "test.toml"}
-        assert "--unknown" in result.unknown_args
-        assert "value" in result.unknown_args
+    def test_value_is_consumed_unconditionally(self) -> None:
+        """``--jobs -5`` works, which a startswith("-") guard made impossible."""
+        assert values(parse("--jobs", "-5")) == {"jobs": "-5"}
+
+    def test_missing_value_names_the_option(self) -> None:
+        with pytest.raises(ConfigUsageError, match="--log-level"):
+            parse("--log-level")
 
 
 class TestShortOptions:
-    """Test short option parsing."""
-
     def test_short_boolean_flag(self) -> None:
-        """Parse -v (boolean flag)."""
-        parser = CLIParser()
-        parser.add_field("verbose", bool, short="v")
-
-        result = parser.parse(["-v"])
-
-        assert result.values == {"verbose": True}
+        assert values(parse("-v")) == {"verbose": True}
 
     def test_short_option_with_value(self) -> None:
-        """Parse -c value form."""
-        parser = CLIParser()
-        parser.add_field("config_file", str, short="c")
+        assert values(parse("-j", "4")) == {"jobs": "4"}
 
-        result = parser.parse(["-c", "test.toml"])
-
-        assert result.values == {"config_file": "test.toml"}
+    def test_short_option_with_attached_value(self) -> None:
+        assert values(parse("-j4")) == {"jobs": "4"}
 
     def test_combined_short_flags(self) -> None:
-        """Parse -vq (combined boolean flags)."""
-        parser = CLIParser()
-        parser.add_field("verbose", bool, short="v")
-        parser.add_field("quiet", bool, short="q")
-
-        result = parser.parse(["-vq"])
-
-        assert result.values == {"verbose": True, "quiet": True}
-
-    def test_short_and_long_both_work(self) -> None:
-        """Both -v and --verbose set the same field."""
-        parser = CLIParser()
-        parser.add_field("verbose", bool, short="v")
-
-        result1 = parser.parse(["-v"])
-        result2 = parser.parse(["--verbose"])
-
-        assert result1.values == {"verbose": True}
-        assert result2.values == {"verbose": True}
+        assert values(parse("-vx")) == {"verbose": True, "exitfirst": True}
 
     def test_unknown_short_option(self) -> None:
-        """Unknown short options are collected."""
-        parser = CLIParser()
-        parser.add_field("verbose", bool, short="v")
+        result = parse("-z")
 
-        result = parser.parse(["-x"])
-
-        assert result.values == {}
-        assert "-x" in result.unknown_args
+        assert values(result) == {}
+        assert result.unknown == ["-z"]
 
 
-class TestConflictDetection:
-    """Test conflict detection when registering fields."""
+class TestReservedShorts:
+    def test_reserved_short_option_is_a_declaration_error(self) -> None:
+        """``-o`` belongs to overrides; claiming it is caught at declare()."""
 
-    def test_duplicate_field_name_raises(self) -> None:
-        """Registering same field name twice raises error."""
-        parser = CLIParser(on_conflict="error")
-        parser.add_field("verbose", bool)
+        class Clash(ConfigPart):
+            output: Annotated[str, short("o")] = ""
 
-        with pytest.raises(CLIConflictError, match="already registered"):
-            parser.add_field("verbose", bool)
-
-    def test_duplicate_long_option_raises(self) -> None:
-        """Registering conflicting long options raises error."""
-        parser = CLIParser(on_conflict="error")
-        parser.add_field("log_level", str)
-
-        # log_level -> --log-level, so log-level (with underscore) would conflict
-        with pytest.raises(CLIConflictError, match="already registered"):
-            parser.add_field("log_level", str)
-
-    def test_duplicate_short_option_raises(self) -> None:
-        """Registering conflicting short options raises error."""
-        parser = CLIParser(on_conflict="error")
-        parser.add_field("verbose", bool, short="v")
-
-        with pytest.raises(CLIConflictError, match="conflicts"):
-            parser.add_field("version", bool, short="v")
-
-    def test_reserved_short_option_raises(self) -> None:
-        """Reserved short options raise error."""
-        parser = CLIParser(on_conflict="error")
-
-        with pytest.raises(CLIConflictError, match="reserved"):
-            parser.add_field("output", str, short="o")
-
-    def test_conflict_warn_mode(self) -> None:
-        """In warn mode, conflicts emit warnings but don't raise."""
-        parser = CLIParser(on_conflict="warn")
-        parser.add_field("verbose", bool, short="v")
-
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            parser.add_field("version", bool, short="v")
-
-            assert len(w) == 1
-            assert "conflicts" in str(w[0].message)
-
-        # First field still works
-        result = parser.parse(["-v"])
-        assert result.values == {"verbose": True}
-
-    def test_conflict_ignore_mode(self) -> None:
-        """In ignore mode, conflicts are silently skipped."""
-        parser = CLIParser(on_conflict="ignore")
-        parser.add_field("verbose", bool, short="v")
-        parser.add_field("version", bool, short="v")  # silently ignored
-
-        # First field still works
-        result = parser.parse(["-v"])
-        assert result.values == {"verbose": True}
+        with pytest.raises(ConfigDeclarationError, match="-o"):
+            ConfigManager().declare(Clash)
 
 
 class TestOverrides:
-    """Test -o/--override mechanism."""
-
     def test_override_simple(self) -> None:
-        """Parse -o key=value."""
-        parser = CLIParser()
-
-        result = parser.parse(["-o", "log.level=DEBUG"])
-
-        assert result.overrides == {"log.level": "DEBUG"}
-
-    def test_override_long_form(self) -> None:
-        """Parse --override key=value."""
-        parser = CLIParser()
-
-        result = parser.parse(["--override", "log.level=DEBUG"])
-
-        assert result.overrides == {"log.level": "DEBUG"}
+        assert parse("-o", "log_level=DEBUG").overrides == [("log_level", "DEBUG")]
 
     def test_multiple_overrides(self) -> None:
-        """Multiple -o options accumulate."""
-        parser = CLIParser()
+        result = parse("-o", "log_level=DEBUG", "-o", "verbose=true")
 
-        result = parser.parse(["-o", "a=1", "-o", "b=2"])
+        assert result.overrides == [("log_level", "DEBUG"), ("verbose", "true")]
 
-        assert result.overrides == {"a": "1", "b": "2"}
+    def test_override_without_equals_raises(self) -> None:
+        with pytest.raises(ConfigUsageError, match="key=value"):
+            parse("-o", "log_level")
 
 
-class TestParseString:
-    """Test parsing from string (like addopts)."""
-
-    def test_parse_string_basic(self) -> None:
-        """Parse a string of arguments."""
-        parser = CLIParser()
-        parser.add_field("verbose", bool, short="v")
-        parser.add_field("tb", str)
-
-        result = parser.parse_string("-v --tb=short")
-
-        assert result.values == {"verbose": True, "tb": "short"}
-
-    def test_parse_string_with_quotes(self) -> None:
-        """Parse string with quoted values."""
-        parser = CLIParser()
-        parser.add_field("message", str)
-
-        result = parser.parse_string('--message "hello world"')
-
-        assert result.values == {"message": "hello world"}
+class TestHelp:
+    def test_help_is_reported_not_acted_on(self) -> None:
+        assert parse("--help").help_requested is True
+        assert parse("-h").help_requested is True
+        assert parse().help_requested is False

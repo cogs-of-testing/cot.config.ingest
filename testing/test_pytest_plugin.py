@@ -4,7 +4,8 @@ These run a real pytest in a `pytester` sandbox, so what is under test is the
 actual integration -- pytest parses the arguments and reads the ini file, and
 this library supplies the structure, the cascade and the types.
 
-The plugin is auto-enabled via its entry point; nothing here activates it.
+Each plugin imports `add_config` and `get_config` from
+`cot.config.pytest_binding`; nothing is patched onto pytest (P1).
 """
 
 from __future__ import annotations
@@ -20,9 +21,11 @@ pytest_plugins = ["pytester"]
 PLUGIN = """
     from typing import Annotated
 
-    from cot.config import ConfigPart, SubConfig, from_parent, help, named, no_cli
+    from cot.config.pytest_binding import add_config, explain_config, get_config
 
-    class LogOutput(SubConfig):
+    from cot.config import ConfigPart, from_parent, help, named, no_cli
+
+    class LogOutput(ConfigPart):
         level: Annotated[str | None, from_parent, help("log level")] = None
         format: Annotated[str, from_parent, help("log format")] = "PLAIN"
 
@@ -37,19 +40,15 @@ PLUGIN = """
         file: LogFile
 
     def pytest_addoption(parser):
-        parser.add_config(LoggingConfig)
+        add_config(parser, LoggingConfig)
 
     def pytest_configure(config):
-        config._seen = config.get_config(LoggingConfig)
+        config._seen = get_config(config, LoggingConfig)
 """
 
 
 def run(pytester: pytest.Pytester, *args: str) -> pytest.RunResult:
-    """Run pytest in the sandbox.
-
-    No activation flag: the PoC auto-enables through its `pytest11` entry
-    point, so `parser.add_config` is simply present.
-    """
+    """Run pytest in the sandbox. The conftest imports the binding itself."""
     return pytester.runpytest(*args)
 
 
@@ -164,7 +163,8 @@ class TestProvenanceThroughPytest:
             test_explain="""
             def test_explain(pytestconfig):
                 from conftest import LoggingConfig
-                print(pytestconfig.explain_config(LoggingConfig))
+                from cot.config.pytest_binding import explain_config
+                print(explain_config(pytestconfig, LoggingConfig))
             """
         )
         result = run(pytester, "-s", "--applog-cli-level", "DEBUG")
@@ -186,19 +186,22 @@ class TestCollisionWithPytestsOwnOptions:
     ) -> None:
         pytester.makeconftest(
             """
+            from cot.config.pytest_binding import add_config, explain_config, get_config
             from cot.config import ConfigPart
 
             class Clash(ConfigPart, prefix="pytest", name_prefix="log"):
                 level: str | None = None      # derives --log-level
 
             def pytest_addoption(parser):
-                parser.add_config(Clash)
+                add_config(parser, Clash)
             """
         )
         result = run(pytester)
 
         assert result.ret != 0
-        result.stderr.fnmatch_lines(["*Cannot declare --log-level for field 'level'*"])
+        result.stderr.fnmatch_lines(
+            ["*ConfigCollisionError: level cannot be declared as --log-level*"]
+        )
 
     def test_colliding_ini_key_is_adopted_not_clobbered(
         self, pytester: pytest.Pytester
@@ -209,16 +212,17 @@ class TestCollisionWithPytestsOwnOptions:
         pytester.makeconftest(
             """
             from typing import Annotated
+            from cot.config.pytest_binding import add_config, explain_config, get_config
             from cot.config import ConfigPart, no_cli
 
             class Adopted(ConfigPart, prefix="pytest", name_prefix="log"):
                 level: Annotated[str | None, no_cli] = None
 
             def pytest_addoption(parser):
-                parser.add_config(Adopted)
+                add_config(parser, Adopted)
 
             def pytest_configure(config):
-                config._adopted = config.get_config(Adopted)
+                config._adopted = get_config(config, Adopted)
             """
         )
         pytester.makeini("[pytest]\nlog_level = WARNING\n")
@@ -239,8 +243,9 @@ class TestLateDeclarationIsRejected:
     def test_declaring_after_configure_raises(self, pytester: pytest.Pytester) -> None:
         pytester.makeconftest(
             """
+            from cot.config.pytest_binding import add_config, explain_config, get_config
             from cot.config import ConfigPart
-            from cot.config.pytest_plugin import manager_for_config
+            from cot.config.pytest_binding import manager_for
 
             class Early(ConfigPart, prefix="pytest"):
                 value: str = "x"
@@ -249,12 +254,12 @@ class TestLateDeclarationIsRejected:
                 other: str = "y"
 
             def pytest_addoption(parser):
-                parser.add_config(Early)
+                add_config(parser, Early)
 
             def pytest_configure(config):
-                config.get_config(Early)          # resolves
+                get_config(config, Early)          # resolves
                 try:
-                    manager_for_config(config).declare(Late)
+                    manager_for(config).declare(Late)
                 except Exception as exc:
                     config._late_error = type(exc).__name__
                 else:
@@ -275,16 +280,24 @@ class TestPluginIsOptIn:
     def test_pytest_is_unpatched_without_the_plugin(
         self, pytester: pytest.Pytester
     ) -> None:
-        # Without loading the plugin, add_config must not exist -- the patch is
-        # opt-in, not something installing the package does to everyone.
+        # Installing the package patches nothing (P1): pytest's own classes
+        # carry no add_config, and the package registers no pytest11 plugin.
         pytester.makepyfile(
             test_unpatched="""
             import subprocess, sys, textwrap
 
             def test_unpatched():
                 code = textwrap.dedent('''
+                    from importlib.metadata import entry_points
+                    import cot.config.pytest_binding
                     from _pytest.config.argparsing import Parser
-                    print("HAS=%s" % hasattr(Parser, "add_config"))
+                    from _pytest.config import Config
+                    names = [e.value for e in entry_points(group="pytest11")]
+                    patched = hasattr(Parser, "add_config") or hasattr(
+                        Config, "get_config"
+                    )
+                    ours = any(n.startswith("cot.config") for n in names)
+                    print("HAS=%s" % (patched or ours))
                 ''')
                 out = subprocess.run(
                     [sys.executable, "-c", code], capture_output=True, text=True
@@ -294,3 +307,63 @@ class TestPluginIsOptIn:
         )
         result = pytester.runpytest_subprocess()
         assert result.ret == 0
+
+
+class TestTheBinderTranslatesSpecs:
+    """The table in docs/design/pytest/index.md, each row once."""
+
+    CONFTEST = """
+        import enum
+        from typing import Annotated, Literal
+        from cot.config import ConfigPart, counted, form, formerly, short
+        from cot.config.pytest_binding import add_config, get_config
+
+        class Run(ConfigPart, prefix="pytest", name_prefix="run"):
+            mode: Literal["fast", "slow"] = "fast"
+            jobs: int = 1
+            ratio: float = 0.5
+            verbose: Annotated[int, short("R"), counted] = 0
+            maxfail: Annotated[int, form("--run-x", contributes=1)] = 0
+            renamed: Annotated[str, formerly("run_oldname")] = ""
+
+        def pytest_addoption(parser):
+            add_config(parser, Run)
+
+        def pytest_configure(config):
+            config._run = get_config(config, Run)
+    """
+
+    REPORT = """
+        def test_report(pytestconfig):
+            run = pytestconfig._run
+            print("RUN=%r" % ((run.mode, run.jobs, run.ratio, run.verbose,
+                               run.maxfail, run.renamed),))
+    """
+
+    def _run(self, pytester: pytest.Pytester, *args: str) -> pytest.RunResult:
+        pytester.makeconftest(textwrap.dedent(self.CONFTEST))
+        pytester.makepyfile(test_report=textwrap.dedent(self.REPORT))
+        return run(pytester, "-s", *args)
+
+    def test_closed_values_become_choices(self, pytester: pytest.Pytester) -> None:
+        result = self._run(pytester, "--run-mode", "medium")
+
+        assert result.ret != 0
+        result.stderr.fnmatch_lines(["*invalid choice*medium*"])
+
+    def test_typed_ini_values_arrive_typed(self, pytester: pytest.Pytester) -> None:
+        pytester.makeini("[pytest]\nrun_jobs = 4\nrun_ratio = 0.25\n")
+        result = self._run(pytester)
+
+        result.stdout.fnmatch_lines(["*RUN=('fast', 4, 0.25, 0, 0, '')*"])
+
+    def test_counted_and_constant_forms(self, pytester: pytest.Pytester) -> None:
+        result = self._run(pytester, "-RRR", "--run-x", "--run-mode=slow")
+
+        result.stdout.fnmatch_lines(["*RUN=('slow', 1, 0.5, 3, 1, '')*"])
+
+    def test_an_ini_alias_reaches_the_field(self, pytester: pytest.Pytester) -> None:
+        pytester.makeini("[pytest]\nrun_oldname = legacy\n")
+        result = self._run(pytester)
+
+        result.stdout.fnmatch_lines(["*RUN=(*'legacy')*"])

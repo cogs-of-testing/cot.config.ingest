@@ -28,15 +28,17 @@ pytest_plugins = ["pytester"]
 PLUGIN = '''
     from typing import Annotated
 
+    from cot.config.pytest_binding import add_config, explain_config, get_config
+
     from cot.config import (
-        ConfigPart, SubConfig, from_parent, help, named, no_cli,
+        ConfigPart, ConfigPart, from_parent, help, named, no_cli,
     )
 
     DEFAULT_LOG_FORMAT = "%(levelname)-8s %(name)s:%(filename)s:%(lineno)d %(message)s"
     DEFAULT_LOG_DATE_FORMAT = "%H:%M:%S"
 
 
-    class LogOutputConfig(SubConfig):
+    class LogOutputConfig(ConfigPart):
         """Shared by every log output. `from_parent` is the fallback chain."""
 
         level: Annotated[
@@ -80,11 +82,11 @@ PLUGIN = '''
 
 
     def pytest_addoption(parser):
-        parser.add_config(LoggingConfig)
+        add_config(parser, LoggingConfig)
 
 
     def pytest_configure(config):
-        config._logging = config.get_config(LoggingConfig)
+        config._logging = get_config(config, LoggingConfig)
 '''
 
 
@@ -389,7 +391,8 @@ class TestProvenance:
             test_explain="""
             def test_explain(pytestconfig):
                 from conftest import LoggingConfig
-                print(pytestconfig.explain_config(LoggingConfig))
+                from cot.config.pytest_binding import explain_config
+                print(explain_config(pytestconfig, LoggingConfig))
             """
         )
         result = pytester.runpytest("-s", "test_explain.py", "--mylog-cli-level=DEBUG")
@@ -405,7 +408,8 @@ class TestProvenance:
             test_explain="""
             def test_explain(pytestconfig):
                 from conftest import LoggingConfig
-                print(pytestconfig.explain_config(LoggingConfig))
+                from cot.config.pytest_binding import explain_config
+                print(explain_config(pytestconfig, LoggingConfig))
             """
         )
         result = pytester.runpytest("-s", "test_explain.py", "--mylog-level=DEBUG")

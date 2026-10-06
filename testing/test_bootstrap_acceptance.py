@@ -21,10 +21,12 @@ from cot.config import (
     ConfigFileDiscoverySource,
     ConfigManager,
     ConfigPart,
+    ConfigUsageError,
     EnvSource,
-    addopts_field,
     bootstrap_only,
     config_source,
+    from_env,
+    injected_args,
     short,
 )
 
@@ -45,7 +47,8 @@ class PytestConfig(ConfigPart, prefix="pytest"):
     """
 
     config_file: Annotated[str | None, config_source] = None
-    addopts: str = ""
+    # PYTEST_ADDOPTS is read because the field opts in (D13).
+    addopts: Annotated[str, from_env] = ""
     testpaths: str = "tests"
 
 
@@ -77,7 +80,6 @@ class TestBootstrapConfigFileDiscovery:
         )
         files = ConfigFileDiscoverySource(
             invocation_dir=tmp_path,
-            cli_source=cli,
         )
         manager = ConfigManager(sources=[cli, files])
         manager.declare(PytestConfig)
@@ -112,7 +114,6 @@ class TestBootstrapConfigFileDiscovery:
         )
         files = ConfigFileDiscoverySource(
             invocation_dir=tmp_path,
-            cli_source=cli,
         )
         manager = ConfigManager(sources=[cli, files])
         manager.add_source(EnvSource(environ=env, precedence=20))
@@ -139,8 +140,11 @@ class TestBootstrapConfigFileDiscovery:
         assert config.testpaths == "tests"
 
     def test_nonexistent_config_file_raises_error(self, tmp_path: Path) -> None:
-        """
-        If specified config file doesn't exist, FileNotFoundError is raised.
+        """A file named explicitly and absent is input that cannot be honoured.
+
+        `ConfigUsageError`, not `FileNotFoundError`: every diagnostic this
+        library raises shares one base, so an application can tell "the
+        configuration was rejected" from any other exception.
         """
         import pytest
 
@@ -150,11 +154,10 @@ class TestBootstrapConfigFileDiscovery:
         )
         files = ConfigFileDiscoverySource(
             invocation_dir=tmp_path,
-            cli_source=cli,
         )
         manager = ConfigManager(sources=[cli, files])
 
-        with pytest.raises(FileNotFoundError, match="nonexistent.toml"):
+        with pytest.raises(ConfigUsageError, match="nonexistent.toml"):
             manager.declare(PytestConfig)
             manager.get(PytestConfig)
 
@@ -193,7 +196,6 @@ class TestAddoptsCombination:
         )
         files = ConfigFileDiscoverySource(
             invocation_dir=tmp_path,
-            cli_source=cli,
         )
         manager = ConfigManager(sources=[cli, files])
         manager.add_source(EnvSource(environ=env, precedence=20))
@@ -222,7 +224,6 @@ class TestAddoptsCombination:
         )
         files = ConfigFileDiscoverySource(
             invocation_dir=tmp_path,
-            cli_source=cli,
         )
         manager = ConfigManager(sources=[cli, files])
 
@@ -270,7 +271,6 @@ class TestAddoptsCombination:
         )
         files = ConfigFileDiscoverySource(
             invocation_dir=tmp_path,
-            cli_source=cli,
         )
         manager = ConfigManager(sources=[cli, files])
         manager.add_source(EnvSource(environ=env, precedence=20))
@@ -313,7 +313,6 @@ class TestAddoptsPropagation:
         )
         files = ConfigFileDiscoverySource(
             invocation_dir=tmp_path,
-            cli_source=cli,
         )
         manager = ConfigManager(sources=[cli, files])
         manager.declare(PytestConfigWithVerbose)
@@ -360,7 +359,6 @@ class TestAddoptsPropagation:
         )
         files = ConfigFileDiscoverySource(
             invocation_dir=tmp_path,
-            cli_source=cli,
         )
         manager = ConfigManager(sources=[cli, files])
         manager.declare(PytestConfigWithVerbose)
@@ -392,11 +390,10 @@ class TestAddoptsPropagation:
         )
         files = ConfigFileDiscoverySource(
             invocation_dir=tmp_path,
-            cli_source=cli,
         )
         manager = ConfigManager(sources=[cli, files])
 
-        with pytest.raises(ValueError, match="config.file.*addopts|bootstrap"):
+        with pytest.raises(ConfigUsageError, match="bootstrap_only"):
             manager.declare(PytestConfigWithVerbose)
             manager.get(PytestConfigWithVerbose)
 
@@ -418,7 +415,6 @@ class TestAddoptsPropagation:
         )
         files = ConfigFileDiscoverySource(
             invocation_dir=tmp_path,
-            cli_source=cli,
         )
         manager = ConfigManager(sources=[cli, files])
         manager.declare(PytestConfigWithVerbose)
@@ -434,8 +430,8 @@ class PytestConfigWithVerbose(ConfigPart, prefix="pytest"):
 
     # bootstrap_only: can only be set via CLI, not via addopts
     config_file: Annotated[str | None, config_source, bootstrap_only] = None
-    # addopts_field: value is re-parsed as CLI args
-    addopts: Annotated[str, addopts_field] = ""
+    # injected_args: value is re-parsed as CLI args
+    addopts: Annotated[str, injected_args, from_env] = ""
     testpaths: str = "tests"
     verbose: bool = False
     tb: str = "auto"

@@ -4,8 +4,8 @@
 `pytester` sandbox to show the library working end to end inside pytest, and to
 pin the claim that it adds options without taking anything over.
 
-Note the absence of `-p cot.config.pytest_plugin`: the PoC is auto-enabled
-through its entry point, so `parser.add_config` is simply there.
+The example imports `add_config` and `get_config` from
+`cot.config.pytest_binding`; nothing is patched onto pytest (P1).
 """
 
 from __future__ import annotations
@@ -172,12 +172,10 @@ class TestItDoesNotClobberPytest:
 
 @pytest.mark.usefixtures("tests")
 class TestInACleanProcess:
-    """Subprocess runs, because in-process ones lie here.
+    """Subprocess runs, so nothing this session imported can help.
 
-    `pytester.runpytest` runs in this very interpreter, where the PoC has
-    already patched pytest globally. That hides the fact that a `-p` plugin
-    loads *before* entry-point plugins and so cannot assume the patch exists.
-    Only a fresh process shows it.
+    A `-p` plugin loads before entry-point plugins and conftests. With no patch
+    to wait for, either route works from a cold start.
     """
 
     def test_p_flag_works_from_a_cold_start(self, pytester: pytest.Pytester) -> None:
@@ -186,21 +184,20 @@ class TestInACleanProcess:
         result.stdout.fnmatch_lines(["*slow tests*", "*test_timed.py::test_slow*"])
         assert result.ret == 0
 
-    def test_entry_point_activation_from_a_cold_start(
-        self, pytester: pytest.Pytester
-    ) -> None:
+    def test_conftest_import_from_a_cold_start(self, pytester: pytest.Pytester) -> None:
         pytester.makeconftest(
             """
+            from cot.config.pytest_binding import add_config, explain_config, get_config
             from cot.config import ConfigPart
 
             class Demo(ConfigPart, prefix="pytest", name_prefix="demo"):
                 value: str = "default"
 
             def pytest_addoption(parser):
-                parser.add_config(Demo)
+                add_config(parser, Demo)
 
             def pytest_configure(config):
-                config._demo = config.get_config(Demo)
+                config._demo = get_config(config, Demo)
             """
         )
         pytester.makepyfile(
@@ -213,65 +210,3 @@ class TestInACleanProcess:
 
         result.stdout.fnmatch_lines(["*VALUE='given'*"])
         assert result.ret == 0
-
-
-class TestAutoEnabled:
-    """The PoC itself needs no activation."""
-
-    def test_add_config_is_available_without_any_flag(
-        self, pytester: pytest.Pytester
-    ) -> None:
-        pytester.makeconftest(
-            """
-            from cot.config import ConfigPart
-
-            class Demo(ConfigPart, prefix="pytest", name_prefix="demo"):
-                value: str = "default"
-
-            def pytest_addoption(parser):
-                parser.add_config(Demo)
-
-            def pytest_configure(config):
-                config._demo = config.get_config(Demo)
-            """
-        )
-        pytester.makepyfile(
-            test_demo="""
-            def test_demo(pytestconfig):
-                print("VALUE=%r" % (pytestconfig._demo.value,))
-            """
-        )
-        result = pytester.runpytest("-s", "--demo-value", "given")
-
-        result.stdout.fnmatch_lines(["*VALUE='given'*"])
-        assert result.ret == 0
-
-    def test_can_be_switched_off(self, pytester: pytest.Pytester) -> None:
-        # Must be a subprocess: the patch is applied when the module is
-        # imported, and an in-process run inherits an already-patched pytest
-        # from this very test session.
-        pytester.makeconftest(
-            """
-            def pytest_addoption(parser):
-                assert not hasattr(parser, "add_config"), "should be unpatched"
-            """
-        )
-        pytester.makepyfile(test_nothing="def test_nothing(): pass")
-        result = pytester.runpytest_subprocess("-p", "no:cot_config")
-
-        assert result.ret == 0
-
-    def test_switched_off_really_means_unpatched(
-        self, pytester: pytest.Pytester
-    ) -> None:
-        pytester.makeconftest(
-            """
-            def pytest_addoption(parser):
-                parser.add_config(object)
-            """
-        )
-        pytester.makepyfile(test_nothing="def test_nothing(): pass")
-        result = pytester.runpytest_subprocess("-p", "no:cot_config")
-
-        assert result.ret != 0
-        result.stderr.fnmatch_lines(["*no attribute 'add_config'*"])

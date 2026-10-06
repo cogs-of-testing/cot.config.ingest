@@ -20,16 +20,19 @@ from cot.config import (
     ConfigPart,
     IniSource,
     TomlSource,
-    addopts_field,
     config_source,
+    injected_args,
 )
 
 
-class Alpha(ConfigPart, prefix="alpha"):
+# Distinct name_prefixes, because the flat name is one namespace across every
+# declared root whatever their `prefix`: two roots both deriving `value` is a
+# ConfigCollisionError, and `TestCollisions` below is where that is pinned.
+class Alpha(ConfigPart, prefix="alpha", name_prefix="alpha"):
     value: str = "alpha-default"
 
 
-class Beta(ConfigPart, prefix="beta"):
+class Beta(ConfigPart, prefix="beta", name_prefix="beta"):
     value: str = "beta-default"
 
 
@@ -127,7 +130,7 @@ class TestCrossFragmentBootstrap:
         extra.write_text(
             dedent("""
             [alpha]
-            value = "from-discovered-file"
+            alpha_value = "from-discovered-file"
         """)
         )
 
@@ -154,12 +157,12 @@ class TestCrossFragmentBootstrap:
         ini.write_text(
             dedent("""
             [opts]
-            addopts = --value from-addopts
+            addopts = --alpha-value from-addopts
         """)
         )
 
         class Opts(ConfigPart, prefix="opts"):
-            addopts: Annotated[str, addopts_field] = ""
+            addopts: Annotated[str, injected_args] = ""
 
         manager = ConfigManager(
             sources=[
@@ -178,12 +181,12 @@ class TestCrossFragmentBootstrap:
         ini.write_text(
             dedent("""
             [opts]
-            addopts = --value from-addopts
+            addopts = --alpha-value from-addopts
         """)
         )
 
         class Opts(ConfigPart, prefix="opts"):
-            addopts: Annotated[str, addopts_field] = ""
+            addopts: Annotated[str, injected_args] = ""
 
         def build(*order: type[ConfigPart]) -> str:
             manager = ConfigManager(
@@ -204,7 +207,8 @@ class TestSourcesAddedLate:
         self, tmp_path: Path
     ) -> None:
         toml = tmp_path / "late.toml"
-        toml.write_text('[alpha]\nvalue = "from-late-source"\n')
+        # The flat key: under name_prefix, the nested spelling is [alpha.alpha] (D8).
+        toml.write_text('[alpha]\nalpha_value = "from-late-source"\n')
 
         manager = ConfigManager()
         manager.declare(Alpha)
@@ -218,7 +222,9 @@ class TestSourcesAddedLate:
         manager = ConfigManager()
         manager.declare(Alpha)
         # The CLI source has to be told about Alpha even though it arrived
-        # after the declaration, or --value would be an unknown argument.
-        manager.add_source(CLISource(args=["--value", "x"], invocation_dir=tmp_path))
+        # after the declaration, or --alpha-value would be an unknown argument.
+        manager.add_source(
+            CLISource(args=["--alpha-value", "x"], invocation_dir=tmp_path)
+        )
 
         assert manager.get(Alpha).value == "x"

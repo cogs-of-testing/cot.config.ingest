@@ -121,7 +121,7 @@ Everything below is one pipeline, and each document owns one stage of it:
 | [Reporting](reporting.md) | Provenance and help |
 | [Diagnostics](diagnostics.md) | The warning and error set, strict mode, and which one an input gets |
 | [Binding contract](binding-contract.md) | The core/host boundary, and conformance |
-| [Decisions](decisions.md) | D1 to D31, core, with rationale and cost |
+| [Decisions](decisions.md) | D1 to D34, core, with rationale and cost |
 | [Deferred](deferred.md) | Not in scope, plus the open questions |
 
 Everything above is core: it holds for every host and for an application with

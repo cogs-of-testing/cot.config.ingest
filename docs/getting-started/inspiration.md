@@ -145,13 +145,13 @@ from typing import Annotated
 
 from pytest import Parser
 
-from cot.config import ConfigPart, SubConfig, from_parent, help, named, no_cli
+from cot.config import ConfigPart, from_parent, help, named, no_cli
 
 DEFAULT_LOG_FORMAT = "%(levelname)-8s %(name)s:%(filename)s:%(lineno)d %(message)s"
 DEFAULT_LOG_DATE_FORMAT = "%H:%M:%S"
 
 
-class LogOutputConfig(SubConfig):
+class LogOutputConfig(ConfigPart):
     """Settings shared by every log output.
 
     `from_parent` is what makes `log_cli_level` fall back to `log_level`.

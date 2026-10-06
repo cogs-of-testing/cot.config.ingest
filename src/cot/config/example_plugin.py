@@ -5,8 +5,7 @@ to run, and it exercises every feature the library has that pytest's own option
 machinery does not: nested structure, value cascade, per-field renaming,
 ini-only options and provenance.
 
-Unlike `pytest_plugin`, this is **not** auto-enabled -- it is an example, not
-infrastructure:
+It is not auto-enabled -- nothing in this package is:
 
     pytest -p cot.config.example_plugin --timing-report
 
@@ -34,24 +33,23 @@ hand-written fallback for every setting that defaults to a more general one.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Annotated, Any
+from contextlib import ExitStack, contextmanager
+from typing import TYPE_CHECKING, Annotated
 
 from ._annotations import from_parent, help, named, no_cli
-from ._bases import ConfigPart, SubConfig
-from .pytest_plugin import install
-
-# A plugin loaded with `-p` is loaded *before* entry-point plugins, so the
-# patch cannot be assumed to be in place yet. install() is idempotent; any
-# plugin that calls add_config and might load early should do this.
-install()
+from ._bases import ConfigPart
+from .pytest_binding import add_config, get_config
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from _pytest.config import Config
+    from _pytest.config.argparsing import Parser
     from _pytest.reports import TestReport
     from _pytest.terminal import TerminalReporter
 
 
-class TimingOutput(SubConfig):
+class TimingOutput(ConfigPart):
     """Settings shared by every place the report can go.
 
     `threshold` is marked `from_parent`, so `--timing-threshold` sets it for
@@ -107,25 +105,42 @@ class TimingConfig(TimingOutput, ConfigPart, prefix="pytest", name_prefix="timin
     terminal: TerminalOutput
     file: FileOutput
 
+    @contextmanager
+    def instance(self) -> Iterator[TimingReporter | None]:
+        """The reporter this configuration implies, and its teardown.
 
-def pytest_addoption(parser: Any) -> None:
+        Yields None when nothing was asked for, so the run gains no hooks.
+        """
+        if not self.report and self.file.path is None:
+            yield None
+            return
+        reporter = TimingReporter(self)
+        try:
+            yield reporter
+        finally:
+            reporter.close()
+
+
+def pytest_addoption(parser: Parser) -> None:
     """Declare the whole structure. One call."""
-    parser.add_config(TimingConfig)
+    add_config(parser, TimingConfig)
 
 
 def pytest_configure(config: Config) -> None:
-    """Read it back, typed, and register the reporter only if it is wanted."""
-    # `get_config` is monkeypatched onto Config, so a type checker cannot see
-    # it -- one more reason the end state should be pytest adopting the library
-    # rather than being patched. `manager_for_config(config).get(TimingConfig)`
-    # is the statically-typed spelling of the same thing.
-    timing: TimingConfig = config.get_config(TimingConfig)  # type: ignore[attr-defined]
+    """Enter the fragment's context into the Config's scope (D32).
 
-    if not timing.report and timing.file.path is None:
-        # Nothing was asked for: add no hooks at all.
-        return
+    The fragment says what the reporter is and owns its teardown; the scope it
+    lives in, and the plugin manager it is registered with, are pytest's.
+    """
+    timing = get_config(config, TimingConfig)
 
-    config.pluginmanager.register(TimingReporter(timing), "cot-timing-reporter")
+    stack = ExitStack()
+    reporter = stack.enter_context(timing.instance())
+    config.add_cleanup(stack.close)
+
+    if reporter is not None:
+        config.pluginmanager.register(reporter, "cot-timing-reporter")
+        config.add_cleanup(lambda: config.pluginmanager.unregister(reporter))
 
 
 class TimingReporter:
@@ -160,14 +175,17 @@ class TimingReporter:
             for nodeid, duration in slow:
                 terminalreporter.write_line(f"{duration:8.3f}s  {nodeid}")
 
+    def close(self) -> None:
+        """Write the file copy, if one was asked for. Runs at teardown."""
         path = self._timing.file.path
-        if path is not None:
-            lines = [
-                f"{duration:.3f}\t{nodeid}"
-                for nodeid, duration in self._slower_than(self._timing.file.threshold)
-            ]
-            with open(path, "w", encoding="utf-8") as stream:
-                stream.write("\n".join(lines) + ("\n" if lines else ""))
+        if path is None:
+            return
+        lines = [
+            f"{duration:.3f}\t{nodeid}"
+            for nodeid, duration in self._slower_than(self._timing.file.threshold)
+        ]
+        with open(path, "w", encoding="utf-8") as stream:
+            stream.write("\n".join(lines) + ("\n" if lines else ""))
 
 
 __all__ = [
