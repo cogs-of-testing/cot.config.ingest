@@ -3,7 +3,7 @@
 This project is experimental. Until it reaches 1.0 the API may change in any
 release, and breaking changes are noted here rather than deprecated.
 
-## Unreleased
+## 0.1.0 (2026-10-06)
 
 ### Added
 
@@ -27,4 +27,4 @@ release, and breaking changes are noted here rather than deprecated.
   `pytest11` entry point. **It monkeypatches pytest**; see the README.
 - `cot.config.example_plugin`, a worked opt-in example.
 
-[Unreleased]: https://github.com/cogs-of-testing/cot.config.ingest/commits/main
+[0.1.0]: https://github.com/cogs-of-testing/cot.config.ingest/commits/v0.1.0
