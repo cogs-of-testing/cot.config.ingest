@@ -5,6 +5,17 @@ release, and breaking changes are noted here rather than deprecated.
 
 <!-- towncrier release notes start -->
 
+## 0.2.0 (2026-10-06)
+
+### Breaking Changes
+
+- Renamed: `SubConfig` is `ConfigPart`, `AddoptsSource` is `InjectedArgsSource`, `Precedence.ADDOPTS` is `Precedence.INJECTED`, `addopts_field` is `injected_args`, and `EnvSource(parse_toml=True)` is `TomlEnvSource`.
+- The core is rebuilt to `docs/design/` (D20). The pytest binding patches nothing and is not auto-enabled: the `pytest11` entry point and `cot.config.pytest_plugin` are gone. A plugin opts in with `add_config(parser, T)` in `pytest_addoption` and `get_config(config, T)` from `cot.config.pytest_binding`.
+
+### Removed
+
+- `DeclaringSource`, `Discoverable` and `OriginAware` are removed.
+
 ## 0.1.0 (2026-10-06)
 
 ### Added
