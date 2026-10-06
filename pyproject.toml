@@ -1,6 +1,6 @@
 [build-system]
 build-backend = "hatchling.build"
-requires = [ "hatch-vcs", "hatchling" ]
+requires = [ "hatch-vcs", "hatchling", "vcs-versioning>=2.6" ]
 
 [project]
 name = "cot-config"
@@ -56,6 +56,7 @@ typing = [
 
 [tool.hatch]
 version.source = "vcs"
+version.raw-options.version_scheme = "towncrier-fragments-zerover"
 build.targets.wheel.packages = [ "src/cot" ]
 build.targets.wheel.sources = [ "src" ]
 # Editor and tooling state is not part of the source distribution. Hatchling
@@ -117,4 +118,23 @@ report.exclude_lines = [
   "if __name__ == .__main__.:",
   "if TYPE_CHECKING:",
   "no cov",
+]
+
+[tool.towncrier]
+directory = "changelog.d"
+filename = "CHANGELOG.md"
+start_string = "<!-- towncrier release notes start -->\n"
+template = "changelog.d/template.md"
+title_format = "## {version} ({project_date})"
+issue_format = "[#{issue}](https://github.com/cogs-of-testing/cot.config.ingest/issues/{issue})"
+underlines = [ "", "", "" ]
+type = [
+  { directory = "major", name = "Major Changes", showcontent = true },
+  { directory = "breaking", name = "Breaking Changes", showcontent = true },
+  { directory = "removal", name = "Removed", showcontent = true },
+  { directory = "deprecation", name = "Deprecated", showcontent = true },
+  { directory = "feature", name = "Added", showcontent = true },
+  { directory = "bugfix", name = "Fixed", showcontent = true },
+  { directory = "doc", name = "Documentation", showcontent = true },
+  { directory = "misc", name = "Miscellaneous", showcontent = true },
 ]

@@ -1,0 +1,1 @@
+Renamed: `SubConfig` is `ConfigPart`, `AddoptsSource` is `InjectedArgsSource`, `Precedence.ADDOPTS` is `Precedence.INJECTED`, `addopts_field` is `injected_args`, and `EnvSource(parse_toml=True)` is `TomlEnvSource`.

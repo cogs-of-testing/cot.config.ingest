@@ -1,0 +1,1 @@
+The core is rebuilt to `docs/design/` (D20). The pytest binding patches nothing and is not auto-enabled: the `pytest11` entry point and `cot.config.pytest_plugin` are gone. A plugin opts in with `add_config(parser, T)` in `pytest_addoption` and `get_config(config, T)` from `cot.config.pytest_binding`.
