@@ -35,10 +35,6 @@ urls.Changelog = "https://github.com/cogs-of-testing/cot.config.ingest/blob/main
 urls.Homepage = "https://github.com/cogs-of-testing/cot.config.ingest"
 urls.Issues = "https://github.com/cogs-of-testing/cot.config.ingest/issues"
 urls.Source = "https://github.com/cogs-of-testing/cot.config.ingest"
-# Auto-enables the proof of concept: loading this patches pytest's Parser and
-# Config with add_config/get_config. Installing the package is therefore enough
-# to patch pytest -- see the README. Disable with `-p no:cot_config`.
-entry-points.pytest11.cot_config = "cot.config.pytest_plugin"
 
 [dependency-groups]
 test = [

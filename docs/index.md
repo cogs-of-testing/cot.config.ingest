@@ -7,9 +7,8 @@ mapping and the provenance all fall out of the declaration.
 > **Experimental.** The API moves between releases and there is no deprecation
 > policy yet.
 
-> **Installing this package patches pytest.** See
-> [pytest](#pytest-a-hack-on-purpose) before installing it anywhere you care
-> about. `-p no:cot_config` turns it off.
+> **0.1.0 patched pytest on install.** The next release patches nothing; see
+> [pytest](#pytest).
 
 Every code block on this page is executed by `testing/test_docs_index.py`, so
 what it shows is what the code does today. Where the
@@ -169,49 +168,31 @@ db:
   --db-timeout VALUE       seconds before giving up  [file key: db_timeout]
 ```
 
-## pytest, a hack on purpose
+## pytest
 
-!!! warning "Installing this package patches pytest"
-
-    `cot.config.pytest_plugin` **monkeypatches pytest**, adding
-    `Parser.add_config`, `Config.get_config` and `Config.explain_config`. It is
-    registered as a `pytest11` entry point and patches at *import* time, so
-    installing the package activates it in every environment it lands in,
-    including as a transitive dependency.
-
-    The patch is additive only: no option, ini key, hook or behaviour of
-    pytest's is replaced. Turn it off with `-p no:cot_config`.
-
-    This is deliberate for the proof of concept and is not how a stable release
-    should behave. It is planned for removal in favour of importable
-    `add_config(parser, T)` / `get_config(config, T)` functions; see
-    [P1](design/pytest/decisions.md#p1) and
-    [Evolution](design/pytest/evolution.md).
-
-A conftest-level `pytest_plugins = [...]` would be too late as an activation
-route, because that conftest's own `pytest_addoption` runs before its plugin
-list is processed, which is why the entry point is used.
-
-With it in place, a plugin declares in `pytest_addoption` and reads afterwards:
+`cot.config.pytest_binding` has two typed functions. Nothing is patched onto
+pytest and nothing is auto-enabled, so a plugin that does not import them is
+untouched ([P1](design/pytest/decisions.md#p1)). A plugin declares in
+`pytest_addoption` and reads afterwards:
 
 ```python
+from cot.config.pytest_binding import add_config, explain_config, get_config
+
 def pytest_addoption(parser):
-    parser.add_config(DatabaseConfig)        # declare
+    add_config(parser, DatabaseConfig)        # declare
 
 def pytest_configure(config):
-    db = config.get_config(DatabaseConfig)   # resolve + get, typed
-    config.explain_config(DatabaseConfig)    # provenance table
+    db = get_config(config, DatabaseConfig)   # resolve + get, typed
+    explain_config(config, DatabaseConfig)    # provenance table
 ```
 
-Because the patch happens at import time, a type checker cannot see those
-methods; `manager_for_config(config).get(T)` is the statically typed
-equivalent. An ini key pytest already declares is adopted rather than
-clobbered, and a colliding CLI option raises `ConfigLifecycleError` naming the
-field.
+An ini key pytest already declares is adopted rather than clobbered, and a
+colliding CLI option raises `ConfigCollisionError` naming the field.
 
 `cot.config.example_plugin` is a worked example: a slow-test reporter with a
 nested structure, the `from_parent` cascade, `named()`, `no_cli`, help text,
-ini and CLI. It is not auto-enabled:
+ini and CLI, whose fragment originates the reporter as a context manager that
+the plugin enters into the `Config`'s cleanup stack. It is not auto-enabled:
 
 ```ini
 [pytest]
@@ -227,10 +208,9 @@ pytest -p cot.config.example_plugin --timing-report --timing-threshold=0.5
 ## Where the code and the design differ
 
 [**Design**](design/index.md) is the normative specification, split by
-component. The code is being rebuilt to it
-([D20](design/decisions.md#d20)) in [the build order](design/index.md#build-order);
-until that lands, the code is the pre-rebuild shape and the design describes
-the target.
+component. The code has been rebuilt to it ([D20](design/decisions.md#d20))
+through step 9 of [the build order](design/index.md#build-order); conformance
+and YAML remain.
 
 Absent from the code either way: plugin discovery, list append and reset merge
 semantics, YAML files, and change notification. Those are

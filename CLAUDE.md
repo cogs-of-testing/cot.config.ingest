@@ -49,7 +49,7 @@ code) resumes for whatever drifts after that.
 
 ## Layout
 
-The layout through build-order step 8. The rebuild keeps the module split where it matches
+The layout through build-order step 9. The rebuild keeps the module split where it matches
 the pipeline in `docs/design/index.md#the-pipeline` and renames where it does
 not; update this block as modules land.
 
@@ -69,7 +69,7 @@ src/cot/config/     the library; every _-prefixed module is internal
   _reading.py       the sources, as they read: input in, readings out
   _help.py          help text, rendered from specs
   _manager.py       declare, the iteration to a fixpoint, get, set, provenance
-  pytest_plugin.py  the pytest binding (public; still the pre-rebuild patch)
+  pytest_binding.py the pytest binding: add_config, get_config (public)
   example_plugin.py a worked example plugin (public)
 testing/            the tests — note: not tests/
 docs/design/        normative design
@@ -112,10 +112,10 @@ yet buildable.
 
 ## Things that will surprise you
 
-- **Installing the pre-rebuild package patches pytest.** `pytest_plugin.py`
-  monkeypatches `Parser` and `Config` through a `pytest11` entry point, at
-  import time. It is additive only and `-p no:cot_config` disables it. The
-  rebuilt binding has no patch and no entry point (P1).
+- **0.1.0 patched pytest; nothing after it does.** The released 0.1.0 shipped
+  `pytest_plugin.py` behind a `pytest11` entry point that monkeypatched
+  `Parser` and `Config`. The rebuilt binding is two importable functions with
+  no entry point (P1); do not bring the patch back for convenience.
 - **`resolve()` is multi-pass on purpose**, because you cannot know every source
   until you have read some configuration. Each pass runs for *every* declared
   type before the next begins — that is invariant I3, and

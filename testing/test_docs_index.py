@@ -95,9 +95,9 @@ def test_the_help_output_is_the_real_one(
     assert manager.format_help(prog="app").strip() == shown.strip()
 
 
-def test_the_page_documents_the_pytest_patching() -> None:
-    text = DOCS_INDEX.read_text(encoding="utf-8").lower()
+def test_the_page_shows_the_binding_and_the_old_patch() -> None:
+    text = DOCS_INDEX.read_text(encoding="utf-8")
 
-    assert "monkeypatches pytest" in text
-    assert "-p no:cot_config" in text
-    assert "installing this package" in text
+    assert "from cot.config.pytest_binding import add_config" in text
+    assert "0.1.0 patched pytest" in text
+    assert "parser.add_config" not in text

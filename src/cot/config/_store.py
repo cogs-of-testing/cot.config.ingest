@@ -42,6 +42,13 @@ class Reading:
     alias: str | None = None
     """The deprecated spelling the value arrived under, when it did."""
 
+    dialect: Dialect | None = None
+    """This reading's dialect, when it differs from its source's.
+
+    For a host whose one accessor returns typed values for some keys and text
+    for others, as pytest's ``getini`` does by ini type.
+    """
+
 
 @dataclass(frozen=True)
 class Unmatched:

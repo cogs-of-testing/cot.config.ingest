@@ -342,7 +342,7 @@ class ConfigManager:
                 precedence=source.precedence,
                 base_dir=base_dir,
             )
-            iteration.store.add(item, origin, dialect)
+            iteration.store.add(item, origin, item.dialect or dialect)
             if item.alias is not None:
                 current = _field_at(item.root, item.path)
                 iteration.diagnostics.add(

@@ -73,8 +73,8 @@ pytest -p cot.config.example_plugin --timing-report --timing-threshold=0.5
 Everything it adds lives under `timing_` and `--timing-*`, a namespace pytest
 does not use. `testing/test_example_plugin.py` pins that it clobbers nothing.
 
-Once [fragment lifetime](../lifecycle.md#fragment-lifetime-belongs-to-the-integration)
-lands it keeps a `pytest_configure`, and that is the point of the example: the
+With [fragment lifetime](../lifecycle.md#fragment-lifetime-belongs-to-the-integration)
+it keeps a `pytest_configure`, and that is the point of the example: the
 declaration says what the reporter is configured by and owns its teardown,
 while entering the context and registering the result stay here, in the
 binding, because the scope and the plugin manager are pytest's

@@ -75,14 +75,15 @@ def test_the_declaration_example_actually_works() -> None:
     assert config.file.path == "out.log"  # named("log_file") reaching file.path
 
 
-def test_readme_documents_the_pytest_patching() -> None:
-    """Installing the package patches pytest; the README must say so.
+def test_readme_shows_the_binding_and_the_old_patch() -> None:
+    """The README shows the functions, and warns 0.1.0 users about the patch.
 
-    This is the one thing a reader cannot discover from the API surface, and
-    the one that affects environments they did not intend to change.
+    0.1.0 patched pytest on install, which affected environments its users
+    never meant to change; that is the one thing they cannot discover from the
+    new API surface (P1).
     """
-    text = README.read_text(encoding="utf-8").lower()
+    text = README.read_text(encoding="utf-8")
 
-    assert "monkeypatches pytest" in text
-    assert "-p no:cot_config" in text
-    assert "installing the package" in text or "installing this package" in text
+    assert "from cot.config.pytest_binding import add_config" in text
+    assert "0.1.0 patched pytest" in text
+    assert "parser.add_config" not in text
