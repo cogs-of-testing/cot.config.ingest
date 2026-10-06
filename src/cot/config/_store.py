@@ -39,6 +39,9 @@ class Reading:
     location: str
     """Where exactly: ``pytest.ini[log_level]``, ``--log-level``, ``APP_DB_HOST``."""
 
+    alias: str | None = None
+    """The deprecated spelling the value arrived under, when it did."""
+
 
 @dataclass(frozen=True)
 class Unmatched:

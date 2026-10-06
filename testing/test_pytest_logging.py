@@ -76,12 +76,16 @@ class LogFileConfig(LogOutputConfig):
     mode: Annotated[str, named("log_file_mode"), help("log file open mode")] = "w"
 
 
-class LoggingConfig(LogOutputConfig, ConfigPart, prefix="pytest", name_prefix="log"):
+class LoggingConfig(
+    LogOutputConfig, ConfigPart, prefix="pytest", name_prefix="log", from_env=True
+):
     """pytest's logging configuration.
 
     `prefix="pytest"` puts the options in the `[pytest]` section; `name_prefix="log"`
     makes each option `log_*`. The two are separate on purpose -- pytest's
     options live in the pytest section but are named after their plugin.
+    `from_env=True` gives every option its `PYTEST_LOG_*` variable; the
+    environment is opt-in (D13).
     """
 
     auto_indent: Annotated[str | None, help("auto-indent multiline messages")] = None
@@ -218,13 +222,13 @@ class TestTomlSpellings:
         toml = tmp_path / "pyproject.toml"
         toml.write_text(
             dedent("""
-            [pytest]
+            [pytest.log]
             level = "WARNING"
 
-            [pytest.cli]
+            [pytest.log.cli]
             level = "DEBUG"
 
-            [pytest.file]
+            [pytest.log.file]
             path = "pytest.log"
         """)
         )
@@ -243,7 +247,7 @@ class TestTomlSpellings:
             [pytest]
             log_cli_level = "DEBUG"
 
-            [pytest.file]
+            [pytest.log.file]
             path = "pytest.log"
         """)
         )
@@ -285,7 +289,7 @@ class TestCLINames:
         config = load_config(cli)
 
         assert config.cli.enabled is False
-        assert "--log-cli" in cli.get_unknown_args()
+        assert "--log-cli" in cli.unknown
 
     def test_repeatable_option_accumulates(self, tmp_path: Path) -> None:
         # pytest: --log-disable can be passed multiple times.
@@ -297,14 +301,18 @@ class TestCLINames:
         assert config.logger_disable == ["urllib3", "asyncio"]
 
     def test_generic_override_reaches_nested_field(self, tmp_path: Path) -> None:
-        cli = CLISource(args=["-o", "cli.level=DEBUG"], invocation_dir=tmp_path)
+        # -o takes the flat name, spelled like the ini key; the path is not an
+        # alias (D1).
+        cli = CLISource(args=["-o", "log_cli_level=DEBUG"], invocation_dir=tmp_path)
         config = load_config(cli)
         assert config.cli.level == "DEBUG"
 
     def test_generic_override_converts_types(self, tmp_path: Path) -> None:
         # Would be the truthy string "false" without type-aware conversion.
-        cli = CLISource(args=["-o", "cli.enabled=false"], invocation_dir=tmp_path)
-        config = load_config(cli)
+        toml = tmp_path / "pyproject.toml"
+        toml.write_text("[pytest]\nlog_cli = true\n")
+        cli = CLISource(args=["-o", "log_cli=false"], invocation_dir=tmp_path)
+        config = load_config(TomlSource(toml), cli)
         assert config.cli.enabled is False
 
 

@@ -68,218 +68,201 @@ from argparse import ArgumentError
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from ._bases import ConfigPart
-from ._coerce import coerce_parsed
 from ._diagnostics import ConfigLifecycleError
-from ._fields import FieldInfo, marker_of, unwrap_type
+from ._fields import MISSING, unwrap_type
 from ._manager import ConfigManager
-from ._names import FieldNames, cli_visible, named_leaf_fields, set_path
-from ._origins import Origin
+from ._precedence import Precedence
+from ._store import Reading
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable, Iterator
+    from pathlib import Path
+
     from _pytest.config import Config
     from _pytest.config.argparsing import Parser
+
+    from ._index import SpellingIndex
+    from ._origins import OriginKind
+    from ._specs import CliForm, FieldSpec
+    from ._store import Dialect, Unmatched
 
 _T = TypeVar("_T", bound=ConfigPart)
 
 #: Attribute the manager is stashed under on the pytest Parser.
 MANAGER_ATTR = "_cot_config_manager"
 
-#: pytest's precedence for these values. They arrive already merged by pytest,
-#: so the number only has to put this source above nothing else in particular.
-PYTEST_PRECEDENCE = 25
 
-
-def _help_of(field: FieldInfo) -> str:
-    from ._annotations import HelpMarker
-
-    marker = marker_of(field, HelpMarker)
-    return marker.help if marker is not None else ""
-
-
-def _short_of(field: FieldInfo) -> str | None:
-    from ._annotations import ShortMarker
-
-    marker = marker_of(field, ShortMarker)
-    return marker.char if marker is not None else None
-
-
-def _ini_type_of(field: FieldInfo) -> str:
-    """Map a field type onto one of pytest's ini types.
+def _ini_type_of(spec: FieldSpec) -> str:
+    """Map a spec onto one of pytest's ini types.
 
     Anything that is not obviously a bool or a list is read as a string and
     converted by this library, which already knows how to parse a config value
     against an annotation.
     """
-    actual = unwrap_type(field.annotation)
-    if actual is bool:
-        return "bool"
-    if actual is list or getattr(actual, "__origin__", None) is list:
+    if spec.repeatable:
         return "linelist"
+    if unwrap_type(spec.annotation) is bool:
+        return "bool"
     return "string"
 
 
-class PytestOptionSource:
-    """A ConfigSource backed by pytest's own Parser and Config.
+def _argparse_attrs(spec: FieldSpec, form: CliForm) -> dict[str, Any]:
+    """The library's vocabulary, translated into argparse's, for one form."""
+    attrs: dict[str, Any] = {
+        "dest": spec.flat,
+        "help": spec.help,
+        # Never let argparse supply the default: "not given on the command
+        # line" has to stay distinguishable so the ini value can win.
+        "default": None,
+    }
+    if form.contributes is not MISSING:
+        attrs["action"] = "store_const"
+        attrs["const"] = form.contributes
+    elif spec.counts:
+        attrs["action"] = "count"
+    elif form.flag:
+        attrs["action"] = "store_true"
+    elif spec.repeatable:
+        attrs["action"] = "append"
+    return attrs
 
-    Declaration goes out to the `Parser`; values come back from the `Config`
-    once pytest has finished parsing. The two happen in different pytest
-    phases, which is exactly why the manager separates declare from resolve.
+
+class _PytestHost:
+    """What both pytest-backed sources share: the Parser, then the Config."""
+
+    def __init__(self, parser: Parser) -> None:
+        self.parser = parser
+        self.config: Config | None = None
+        self.options: set[str] = set()
+        self.ini_keys: set[str] = set()
+
+
+class PytestOptionSource:
+    """The values pytest parsed from the command line, and the binder.
+
+    Declaration goes out to the `Parser` in the library's vocabulary translated
+    to argparse's; values come back from the `Config` once pytest has finished
+    parsing. The two happen in different pytest phases, which is exactly why
+    the manager separates declare from resolve.
     """
 
-    def __init__(self, parser: Parser, *, precedence: int = PYTEST_PRECEDENCE) -> None:
-        self._parser = parser
-        self._config: Config | None = None
-        self._precedence = precedence
-        self._ini_names: set[str] = set()
-        self._cli_names: set[str] = set()
-        # (part_type, path) -> "cli" | "ini", filled in during load()
-        self._provenance: dict[tuple[type[ConfigPart], tuple[str, ...]], str] = {}
+    dialect: Dialect = "string"
+    kind: OriginKind = "cli"
+
+    def __init__(
+        self, host: _PytestHost | Parser, *, precedence: int = Precedence.CLI
+    ) -> None:
+        self._host = host if isinstance(host, _PytestHost) else _PytestHost(host)
+        self.precedence = precedence
 
     @property
-    def precedence(self) -> int:
-        return self._precedence
+    def host(self) -> _PytestHost:
+        return self._host
 
-    def bind(self, config: Config) -> None:
-        """Attach the Config that parsing produced."""
-        self._config = config
+    @property
+    def base_dir(self) -> Path | None:
+        config = self._host.config
+        return None if config is None else config.invocation_params.dir
 
-    # -- declaration ------------------------------------------------------
+    def bind(self, specs: Iterable[FieldSpec]) -> None:
+        """Register every spec's forms and file key with pytest. Idempotent."""
+        for spec in specs:
+            self._bind_ini(spec)
+            if spec.cli:
+                self._bind_options(spec)
 
-    def declare(self, part_type: type[ConfigPart]) -> None:
-        """Turn a ConfigPart's leaf fields into pytest options and ini keys."""
-        group = self._parser.getgroup(_group_name(part_type))
-
-        for field, names in named_leaf_fields(part_type):
-            self._declare_ini(field, names)
-            if cli_visible(field):
-                self._declare_option(group, field, names)
-
-    def _declare_ini(self, field: FieldInfo, names: FieldNames) -> None:
-        if names.flat in self._ini_names:
+    def _bind_ini(self, spec: FieldSpec) -> None:
+        key = spec.file_key
+        if key is None or key in self._host.ini_keys:
             return
-        self._ini_names.add(names.flat)
-
-        if names.flat in getattr(self._parser, "_inidict", {}):
+        self._host.ini_keys.add(key)
+        if key in getattr(self._host.parser, "_inidict", {}):
             # pytest, or another plugin, already declares this ini key. Adopt
             # it rather than clobbering the existing help and type -- during a
             # migration the same option is expected to exist on both sides.
             return
-
         # default=None so an unset ini key is distinguishable from one set to
         # a falsy value; this library's own declared default fills the gap.
-        self._parser.addini(
-            names.flat,
-            help=_help_of(field),
-            type=_ini_type_of(field),  # type: ignore[arg-type]
+        self._host.parser.addini(
+            key,
+            help=spec.help,
+            type=_ini_type_of(spec),  # type: ignore[arg-type]
             default=None,
         )
 
-    def _declare_option(self, group: Any, field: FieldInfo, names: FieldNames) -> None:
-        if names.flat in self._cli_names:
+    def _bind_options(self, spec: FieldSpec) -> None:
+        if spec.flat in self._host.options:
             return
-        self._cli_names.add(names.flat)
+        self._host.options.add(spec.flat)
+        group = self._host.parser.getgroup(spec.group)
+        for form in spec.cli:
+            names = [name for name in (form.short, form.long) if name is not None]
+            try:
+                group.addoption(*names, **_argparse_attrs(spec, form))
+            except ArgumentError as exc:
+                # An option pytest or another plugin already owns. Raw argparse
+                # says "conflicting option string" and names nothing useful, so
+                # point at the field and the ways out.
+                raise ConfigLifecycleError(
+                    f"Cannot declare {names[-1]} for field "
+                    f"{'.'.join(spec.path)!r}: {exc}. "
+                    f"Rename it with named(...), suppress the option with no_cli, "
+                    f"or change the ConfigPart's name_prefix."
+                ) from exc
 
-        options = [f"--{names.cli}"]
-        short = _short_of(field)
-        if short:
-            options.insert(0, f"-{short}")
-
-        actual = unwrap_type(field.annotation)
-        attrs: dict[str, Any] = {
-            "dest": names.flat,
-            "help": _help_of(field),
-            # Never let argparse supply the default: "not given on the command
-            # line" has to stay distinguishable so the ini value can win.
-            "default": None,
-        }
-        if actual is bool:
-            attrs["action"] = "store_true"
-        elif actual is list or getattr(actual, "__origin__", None) is list:
-            attrs["action"] = "append"
-
-        try:
-            group.addoption(*options, **attrs)
-        except ArgumentError as exc:
-            # An option pytest or another plugin already owns. Raw argparse
-            # says "conflicting option string" and names nothing useful, so
-            # point at the field and the ways out.
-            raise ConfigLifecycleError(
-                f"Cannot declare {options[-1]} for field "
-                f"{'.'.join(names.path)!r}: {exc}. "
-                f"Rename it with named(...), suppress the option with no_cli, "
-                f"or change the ConfigPart's name_prefix."
-            ) from exc
-
-    # -- loading ----------------------------------------------------------
-
-    def load(self, part_type: type[ConfigPart]) -> dict[str, Any]:
-        """Read values back, reassembling pytest's flat names into structure."""
-        config = self._config
+    def read(self, index: SpellingIndex) -> Iterator[Reading | Unmatched]:
+        config = self._host.config
         if config is None:
-            return {}
-
-        result: dict[str, Any] = {}
-        for field, names in named_leaf_fields(part_type):
-            value, kind = self._value_of(config, field, names)
-            if value is None:
-                continue
-            self._provenance[(part_type, field.path)] = kind
-            set_path(result, field.path, value)
-        return result
-
-    def _value_of(
-        self, config: Config, field: FieldInfo, names: FieldNames
-    ) -> tuple[Any, str]:
-        """pytest's get_option_ini precedence: command line first, then ini.
-
-        Values from either side arrive as strings unless pytest was told a
-        type, so both go through this library's own conversion -- otherwise a
-        `float` field holds "10" and comparisons blow up at use time.
-        """
-        if cli_visible(field):
-            value = config.getoption(names.flat, default=None)
-            if value is not None:
-                return self._convert(value, field), "cli"
-
-        if names.flat in self._ini_names:
-            value = config.getini(names.flat)
-            # pytest normalises unset list/string ini values to [] / "".
-            if value not in (None, "", []):
-                return self._convert(value, field), "ini"
-
-        return None, ""
-
-    def _convert(self, value: Any, field: FieldInfo) -> Any:
-        """Parse strings against the field's annotation; pass anything else on."""
-        return coerce_parsed(value, field.annotation)
-
-    def describe_origin(
-        self, part_type: type[ConfigPart], path: tuple[str, ...]
-    ) -> Origin | None:
-        """Say whether pytest took this value from argv or from an ini file."""
-        kind = self._provenance.get((part_type, path))
-        if kind is None:
-            return None
-
-        names = {f.path: n for f, n in named_leaf_fields(part_type)}.get(path)
-        flat = names.flat if names is not None else ".".join(path)
-
-        if kind == "cli":
-            cli = names.cli if names is not None else flat.replace("_", "-")
-            return Origin(kind="cli", location=f"--{cli}", precedence=self._precedence)
-
-        location = flat
-        inipath = getattr(self._config, "inipath", None)
-        if inipath is not None:
-            location = f"{inipath}[{flat}]"
-        return Origin(kind="file", location=location, precedence=self._precedence)
+            return
+        for root in index.roots:
+            for spec in index.specs(root):
+                if spec.flat not in self._host.options:
+                    continue
+                value = config.getoption(spec.flat, default=None)
+                if value is None:
+                    continue
+                if spec.counts and value == 0:
+                    continue
+                location = next(
+                    (form.long or form.short for form in spec.cli), spec.flat
+                )
+                yield Reading(
+                    root=root, path=spec.path, raw=value, location=str(location)
+                )
 
 
-def _group_name(part_type: type[ConfigPart]) -> str:
-    """The pytest option group a ConfigPart's options are shown under."""
-    from ._bases import part_name_prefix, part_prefix
+class PytestIniSource:
+    """The values pytest read from its ini file, one rung below the CLI."""
 
-    return part_name_prefix(part_type) or part_prefix(part_type) or part_type.__name__
+    dialect: Dialect = "string"
+    kind: OriginKind = "file"
+
+    def __init__(self, host: _PytestHost, *, precedence: int = Precedence.FILE) -> None:
+        self._host = host
+        self.precedence = precedence
+
+    @property
+    def base_dir(self) -> Path | None:
+        config = self._host.config
+        inipath = None if config is None else config.inipath
+        return None if inipath is None else inipath.parent
+
+    def read(self, index: SpellingIndex) -> Iterator[Reading | Unmatched]:
+        config = self._host.config
+        if config is None:
+            return
+        inipath = config.inipath
+        for root in index.roots:
+            for spec in index.specs(root):
+                key = spec.file_key
+                if key is None or key not in self._host.ini_keys:
+                    continue
+                value = config.getini(key)
+                # pytest normalises unset list/string ini values to [] / "".
+                if value in (None, "", []):
+                    continue
+                location = f"{inipath}[{key}]" if inipath is not None else key
+                yield Reading(root=root, path=spec.path, raw=value, location=location)
 
 
 # -- the patch -------------------------------------------------------------
@@ -289,9 +272,19 @@ def manager_for_parser(parser: Parser) -> ConfigManager:
     """The ConfigManager attached to a Parser, created on first use."""
     manager: ConfigManager | None = getattr(parser, MANAGER_ATTR, None)
     if manager is None:
-        manager = ConfigManager(sources=[PytestOptionSource(parser)])
+        host = _PytestHost(parser)
+        manager = ConfigManager(
+            sources=[PytestIniSource(host), PytestOptionSource(host)]
+        )
         setattr(parser, MANAGER_ATTR, manager)
     return manager
+
+
+def _binder(manager: ConfigManager) -> PytestOptionSource:
+    for source in manager.sources:
+        if isinstance(source, PytestOptionSource):
+            return source
+    raise LookupError("this manager has no pytest source")
 
 
 def manager_for_config(config: Config) -> ConfigManager:
@@ -301,15 +294,22 @@ def manager_for_config(config: Config) -> ConfigManager:
     hook-ordering concerns: whoever asks first triggers it.
     """
     manager = manager_for_parser(config._parser)
-    for source in manager.sources:
-        if isinstance(source, PytestOptionSource):
-            source.bind(config)
+    _binder(manager).host.config = config
     return manager
 
 
 def _parser_add_config(self: Parser, part_type: type[ConfigPart]) -> None:
-    """`Parser.add_config` -- declare a ConfigPart's options with pytest."""
-    manager_for_parser(self).declare(part_type)
+    """`Parser.add_config` -- declare a ConfigPart's options with pytest.
+
+    Bound at once rather than at resolve: pytest parses between
+    `pytest_addoption` and the first read, so an option registered later would
+    never be seen.
+    """
+    from ._specs import field_specs
+
+    manager = manager_for_parser(self)
+    manager.declare(part_type)
+    _binder(manager).bind(field_specs(part_type))
 
 
 def _config_get_config(self: Config, part_type: type[_T]) -> _T:
@@ -340,6 +340,7 @@ install()
 
 
 __all__ = [
+    "PytestIniSource",
     "PytestOptionSource",
     "install",
     "manager_for_config",

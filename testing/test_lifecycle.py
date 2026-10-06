@@ -130,7 +130,7 @@ class TestCrossFragmentBootstrap:
         extra.write_text(
             dedent("""
             [alpha]
-            value = "from-discovered-file"
+            alpha_value = "from-discovered-file"
         """)
         )
 
@@ -207,7 +207,8 @@ class TestSourcesAddedLate:
         self, tmp_path: Path
     ) -> None:
         toml = tmp_path / "late.toml"
-        toml.write_text('[alpha]\nvalue = "from-late-source"\n')
+        # The flat key: under name_prefix, the nested spelling is [alpha.alpha] (D8).
+        toml.write_text('[alpha]\nalpha_value = "from-late-source"\n')
 
         manager = ConfigManager()
         manager.declare(Alpha)

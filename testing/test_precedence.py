@@ -15,15 +15,16 @@ from typing import Annotated
 import pytest
 
 from cot.config import (
-    AddoptsSource,
     CLISource,
     ConfigManager,
     ConfigPart,
     EnvSource,
+    InjectedArgsSource,
     Precedence,
     TomlSource,
     UnknownConfigKeyWarning,
     config_source,
+    from_env,
     injected_args,
 )
 from cot.config._annotations import InjectedArgsMarker
@@ -35,7 +36,7 @@ class Simple(ConfigPart, prefix="app"):
 
 class WithAddopts(ConfigPart, prefix="app"):
     addopts: Annotated[str, injected_args] = ""
-    level: str = "WARNING"
+    level: Annotated[str, from_env] = "WARNING"
 
 
 def _toml(tmp_path: Path, body: str, name: str = "config.toml") -> Path:
@@ -49,7 +50,7 @@ class TestLadderDefaults:
 
     def test_every_source_defaults_to_its_rung(self, tmp_path: Path) -> None:
         assert TomlSource(tmp_path / "x.toml").precedence == Precedence.FILE
-        assert AddoptsSource().precedence == Precedence.ADDOPTS
+        assert InjectedArgsSource().precedence == Precedence.INJECTED
         assert EnvSource().precedence == Precedence.ENV
         assert CLISource().precedence == Precedence.CLI
 
@@ -57,13 +58,13 @@ class TestLadderDefaults:
         assert (
             Precedence.DEFAULTS
             < Precedence.FILE
-            < Precedence.ADDOPTS
+            < Precedence.INJECTED
             < Precedence.ENV
             < Precedence.CLI
         )
 
     def test_addopts_marker_defaults_to_its_rung(self) -> None:
-        assert InjectedArgsMarker().precedence == Precedence.ADDOPTS
+        assert InjectedArgsMarker().precedence == Precedence.INJECTED
 
 
 class TestPrecedenceIsTheOnlyAuthority:
@@ -166,17 +167,21 @@ class TestAddoptsIsASource:
         manager.resolve()
 
         origin = manager.origin_of(WithAddopts, "level")
-        assert origin.kind == "addopts"
+        assert origin.kind == "injected"
         assert "--level" in origin.location
-        assert origin.precedence == Precedence.ADDOPTS
+        assert origin.precedence == Precedence.INJECTED
 
     def test_the_marker_precedence_is_the_sources_precedence(
         self, tmp_path: Path
     ) -> None:
-        """`injected_args` with a custom precedence actually moves the rung."""
+        """`injected_args` with a custom precedence actually moves the rung.
+
+        Between the command line and ``-o``: no two sources share a rung (D22),
+        and ``override`` holds ``CLI + 5``.
+        """
 
         class LoudAddopts(ConfigPart, prefix="app"):
-            addopts: Annotated[str, InjectedArgsMarker(Precedence.CLI + 5)] = ""
+            addopts: Annotated[str, InjectedArgsMarker(Precedence.CLI + 3)] = ""
             level: str = "WARNING"
 
         config_file = _toml(tmp_path, '[app]\naddopts = "--level FROM_ADDOPTS"\n')
@@ -191,12 +196,12 @@ class TestAddoptsIsASource:
 
         assert manager.get(LoudAddopts).level == "FROM_ADDOPTS"
 
-    def test_no_addopts_source_without_an_addopts_field(self, tmp_path: Path) -> None:
+    def test_no_addopts_source_without_an_injected_args(self, tmp_path: Path) -> None:
         manager = ConfigManager(sources=[CLISource(args=[], invocation_dir=tmp_path)])
         manager.declare(Simple)
         manager.resolve()
 
-        assert not any(isinstance(s, AddoptsSource) for s in manager.sources)
+        assert not any(isinstance(s, InjectedArgsSource) for s in manager.sources)
 
     def test_addopts_accumulate_across_parts(self, tmp_path: Path) -> None:
         """Two parts each contributing addopts both reach the parser.
@@ -215,7 +220,7 @@ class TestAddoptsIsASource:
             [app]
             addopts = "--level FROM_APP"
             [other]
-            addopts = "--other-level FROM_OTHER"
+            other_addopts = "--other-level FROM_OTHER"
             """,
         )
         manager = ConfigManager(
@@ -243,7 +248,7 @@ class TestConfigSourceFields:
         extra = _toml(tmp_path, '[app]\nlevel = "FROM_EXTRA"\n', name="extra.toml")
 
         class Bootstrapping(ConfigPart, prefix="app"):
-            config_file: Annotated[str | None, config_source] = None
+            config_file: Annotated[str | None, config_source, from_env] = None
             level: str = "WARNING"
 
         manager = ConfigManager(

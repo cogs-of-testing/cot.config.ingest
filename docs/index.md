@@ -33,7 +33,7 @@ class PoolConfig(ConfigPart):
     timeout: Annotated[float | None, from_parent, help("seconds before giving up")] = None
 
 
-class DatabaseConfig(ConfigPart, prefix="app", name_prefix="db"):
+class DatabaseConfig(ConfigPart, prefix="app", name_prefix="db", from_env=True):
     host: Annotated[str, help("database host")] = "localhost"
     timeout: Annotated[float | None, help("seconds before giving up")] = None
     pool: PoolConfig
@@ -43,7 +43,9 @@ class DatabaseConfig(ConfigPart, prefix="app", name_prefix="db"):
 sets it directly. `prefix="app"` is the config-file section and the environment
 namespace; `name_prefix="db"` leads every option name. They are separate knobs
 because a section is shared between parts and a name prefix is not
-([names](design/names.md#prefix-versus-name_prefix)).
+([names](design/names.md#prefix-versus-name_prefix)). `from_env=True` makes
+every field readable from the environment, which no field is unless it says so
+([sources](design/sources.md#exposure-is-opt-in)).
 
 The full marker set is in [ConfigParts](design/config-parts.md#markers).
 
@@ -68,7 +70,7 @@ config.pool.timeout       # falls back to config.timeout
 ```
 
 Three phases: `declare()` registers a type and its options, `resolve()` runs
-the feedback passes once for everything declared, `get()` returns the built
+the iteration to a fixpoint for everything declared, `get()` returns the built
 instance. `get()` resolves implicitly; calling `resolve()` yourself pins the
 moment configuration freezes, and declaring after that raises
 `ConfigLifecycleError`. The split exists because a host collects declarations
@@ -81,8 +83,8 @@ One structural path, one spelling per source:
 
 | path | CLI | INI / flat | env | TOML nested |
 |---|---|---|---|---|
-| `("host",)` | `--db-host` | `db_host` | `APP_DB_HOST` | `[app] host` |
-| `("pool", "size")` | `--db-pool-size` | `db_pool_size` | `APP_DB_POOL_SIZE` | `[app.pool] size` |
+| `("host",)` | `--db-host` | `db_host` | `APP_DB_HOST` | `[app.db] host` |
+| `("pool", "size")` | `--db-pool-size` | `db_pool_size` | `APP_DB_POOL_SIZE` | `[app.db.pool] size` |
 
 File sources accept both spellings, so this file sets `host` and `pool.size`:
 
@@ -90,27 +92,24 @@ File sources accept both spellings, so this file sets `host` and `pool.size`:
 [app]
 db_host = "db.internal"
 
-[app.pool]
+[app.db.pool]
 size = 20
 ```
 
-> Every field currently gets an environment variable. The design
-> [makes that opt-in](design/sources.md#exposure-is-opt-in): a field will need
-> a `from_env` marker to be readable from the environment at all.
->
-> The nested column is also today's behaviour. The design
-> [makes `name_prefix` a path segment](design/names.md#the-qualified-path), so
-> `host` moves to `[app.db] host` and `pool.size` to `[app.db.pool] size`.
+`name_prefix` is a segment of the nested spelling, which is what keeps two
+parts sharing a section from reading each other's tables
+([names](design/names.md#the-qualified-path)).
 
 ## Precedence
 
 ```
-defaults(-1) < file(15) < addopts(18) < env(20) < cli(25)
+defaults(-1) < file(15) < named file(16) < injected(18) < env(20) < cli(25) < override(30) < runtime(40)
 ```
 
-This is today's ladder. The design
-[renames `addopts` to `injected`](design/sources.md#the-precedence-ladder) and
-adds `override(30)` for `-o` and `runtime(40)` above the command line.
+A file a `config_source` field names outranks one found by searching, `-o`
+outranks the option it addresses, and a [runtime write](design/lifecycle.md#the-runtime-layer)
+is the top ([the ladder](design/sources.md#the-precedence-ladder)). No two
+sources may share a rung.
 
 These are defaults, not an enum. Every source takes `precedence=`, and that
 number is the only thing that decides a winner:
@@ -137,19 +136,22 @@ print(manager.explain(DatabaseConfig))
 DatabaseConfig:
 field         value          origin
 -----------------------------------
-host          'db.internal'  file:app.toml[db_host]
+host          'db.internal'  file:app.toml[app.db_host]
 timeout       2.5            env:APP_DB_TIMEOUT
-pool.size     8              cli:--db-pool-size
+pool.size     8              cli:--db-pool-size (over file:app.toml[app.db.pool.size])
 pool.timeout  2.5            env:inherited from timeout (APP_DB_TIMEOUT)
 ```
 
 A cascaded value is attributed to wherever the parent got it, never to the
-child's default. An option injected through an `addopts` field reports as
-`addopts --db-pool-size` rather than looking like something you typed.
+child's default. A value that beat another names what it beat, so a file
+setting that did not apply is visible. An option injected through an `injected_args` field reports
+as `injected --db-pool-size (app.toml[addopts])` rather than looking like
+something you typed.
 
 ## Help
 
-`manager.format_help()` renders the registered options and returns the text.
+`manager.format_help()` renders every declared option from its spec, grouped
+by part, with the file key each one corresponds to, and returns the text.
 `manager.help_requested()` reports whether `-h` or `--help` was passed. Neither
 prints nor exits; the application owns the process.
 
@@ -157,12 +159,14 @@ prints nor exits; the application owns the process.
 usage: app [options]
 
 options:
-  -h, --help                show this help
-  --db-host VALUE           database host
-  --db-pool-size VALUE      connections to keep open
-  --db-pool-timeout VALUE   seconds before giving up
-  --db-timeout VALUE        seconds before giving up
-  -o, --override KEY=VALUE  set any config option
+  -h, --help               show this help
+  -o KEY=VALUE             set any option by its file key
+
+db:
+  --db-host VALUE          database host  [file key: db_host]
+  --db-pool-size VALUE     connections to keep open  [file key: db_pool_size]
+  --db-pool-timeout VALUE  seconds before giving up  [file key: db_pool_timeout]
+  --db-timeout VALUE       seconds before giving up  [file key: db_timeout]
 ```
 
 ## pytest, a hack on purpose
@@ -248,7 +252,7 @@ semantics, YAML files, and change notification. Those are
 | [Reporting](design/reporting.md) | Provenance and help |
 | [Diagnostics](design/diagnostics.md) | The warning and error set, and which one an input gets |
 | [Binding contract](design/binding-contract.md) | The core/host boundary, and conformance |
-| [Decisions](design/decisions.md) | D1 to D19, core, with rationale and cost |
+| [Decisions](design/decisions.md) | D1 to D34, core, with rationale and cost |
 | [Deferred](design/deferred.md) | Absent from the code, plus the open questions |
 
 Those are **core**, true for every host and for an application with no host.

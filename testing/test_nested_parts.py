@@ -45,6 +45,17 @@ class OutputConfig(ConfigPart, prefix="output"):
     capture: BaseOutput
 
 
+class EnvOutputConfig(ConfigPart, prefix="output", from_env=True):
+    """The same structure, readable from the environment.
+
+    Exposure is opt-in (D13); ``from_env=True`` opts in every field at once.
+    """
+
+    cli: CliOutput
+    file: FileOutput
+    capture: BaseOutput
+
+
 class TestConfigPartInheritance:
     """Test ConfigPart inheritance pattern."""
 
@@ -137,8 +148,8 @@ class TestNestedConfigPartLoading:
         manager = ConfigManager()
         manager.add_source(EnvSource(environ=env))
 
-        manager.declare(OutputConfig)
-        config = manager.get(OutputConfig)
+        manager.declare(EnvOutputConfig)
+        config = manager.get(EnvOutputConfig)
 
         # CLI settings
         assert config.cli.enabled is True
@@ -175,8 +186,8 @@ class TestNestedConfigPartLoading:
         manager.add_source(TomlSource(toml_file, precedence=10))
         manager.add_source(EnvSource(environ=env, precedence=20))
 
-        manager.declare(OutputConfig)
-        config = manager.get(OutputConfig)
+        manager.declare(EnvOutputConfig)
+        config = manager.get(EnvOutputConfig)
 
         # Env overrides TOML
         assert config.cli.enabled is True

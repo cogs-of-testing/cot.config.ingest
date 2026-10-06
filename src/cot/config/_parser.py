@@ -135,8 +135,12 @@ class ArgumentParser:
             )
             return
         if form.flag:
+            # ``--flag=false`` is an explicit value, converted like any other;
+            # reading it as presence would silently turn it into True.
             result.occurrences.append(
-                Occurrence(spec=spec, form=form, raw=True, token=name)
+                Occurrence(
+                    spec=spec, form=form, raw=inline if sep else True, token=name
+                )
             )
             return
 

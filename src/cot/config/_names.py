@@ -35,9 +35,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from ._annotations import NameMarker, NoCLIMarker
+from ._annotations import NameMarker
 from ._bases import part_name_prefix, part_prefix
-from ._fields import FieldInfo, fields_of, has_marker, marker_of
+from ._fields import FieldInfo, fields_of, marker_of
 
 
 @dataclass(frozen=True)
@@ -134,91 +134,20 @@ def names_of(part_type: type[Any], field: FieldInfo) -> FieldNames:
     )
 
 
-def cli_visible(field: FieldInfo) -> bool:
-    """Whether the field should get a dedicated CLI option."""
-    return not has_marker(field, NoCLIMarker)
-
-
-def named_leaf_fields(part_type: type[Any]) -> list[tuple[FieldInfo, FieldNames]]:
-    """Every leaf field of ``part_type`` paired with its names."""
-    return [
-        (field, names_of(part_type, field))
-        for field in fields_of(part_type)
-        if not field.is_nested
-    ]
-
-
 def flat_index(part_type: type[Any]) -> dict[str, FieldInfo]:
     """Flat key -> field, for every leaf field of ``part_type``."""
-    return {names.flat: field for field, names in named_leaf_fields(part_type)}
-
-
-def set_path(target: dict[str, Any], path: tuple[str, ...], value: Any) -> None:
-    """Assign ``value`` at ``path``, creating intermediate dicts as needed."""
-    node = target
-    for segment in path[:-1]:
-        existing = node.get(segment)
-        if not isinstance(existing, dict):
-            existing = {}
-            node[segment] = existing
-        node = existing
-    node[path[-1]] = value
-
-
-def expand_flat_keys(
-    part_type: type[Any],
-    data: dict[str, Any],
-    *,
-    parse: Any = None,
-) -> dict[str, Any]:
-    """Rewrite recognised flat keys in ``data`` into their nested paths.
-
-    Keys that are already structural (a top-level field name, or a nested
-    table matching a sub-config) are passed through untouched, so a source may
-    mix both spellings -- ``[log.cli] level`` and ``log_cli_level`` reach the
-    same field.
-
-    Args:
-        part_type: The ConfigPart the data is being loaded for.
-        data: Raw key/value pairs from a source.
-        parse: Optional ``(raw_value, field_type) -> value`` callable applied
-            to values whose key was recognised as a flat leaf name.
-
-    Returns:
-        A new dict shaped like the ConfigPart's structure.
-    """
-    own_names = {field.name for field in fields_of(part_type, recurse=False)}
-    by_flat = flat_index(part_type)
-
-    result: dict[str, Any] = {}
-    for key, value in data.items():
-        if key in own_names:
-            # Structural key: a direct field or a nested sub-config table.
-            result[key] = value
-            continue
-
-        field = by_flat.get(key)
-        if field is None:
-            # Unknown to this ConfigPart; keep it so the manager can report it.
-            result[key] = value
-            continue
-
-        if parse is not None and isinstance(value, str):
-            value = parse(value, field.annotation)
-        set_path(result, field.path, value)
-
-    return result
+    return {
+        names_of(part_type, field).flat: field
+        for field in fields_of(part_type)
+        if not field.is_nested
+    }
 
 
 __all__ = [
     "FieldNames",
     "NestedName",
-    "cli_visible",
-    "expand_flat_keys",
     "flat_index",
-    "named_leaf_fields",
     "names_of",
     "qualified_path",
     "section_name",
-    "set_path",
 ]

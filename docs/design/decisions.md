@@ -7,8 +7,8 @@ A decision is what turns a rule elsewhere into a commitment. Disagreeing with
 one means amending the record here, not quietly building something else.
 D1 to D19 came out of two reviews of the first implementation; D20 to D30 out
 of reading the resulting design as if there were no implementation at all,
-which is what [D20](#d20) then made true. D31 onwards come from reading the
-design for what it costs a reader.
+which is what [D20](#d20) then made true. D31 and D32 come from reading the
+design for what it costs a reader, and D33 onwards from building it.
 
 ## D1
 
@@ -665,3 +665,41 @@ entirely to the caller. The declaration that a fragment implies an object, and
 the place its teardown is written, are worth keeping next to the fields that
 configure it; what was worth giving up is the library holding it open.
 
+
+## D33
+
+**A file a `config_source` field names sits one rung above the files
+discovery finds.** ([sources](sources.md#the-precedence-ladder))
+
+Both front ends of [config file discovery](sources.md#config-file-discovery)
+default to `FILE`, and [D22](#d22) refuses two sources at one rung, so an
+application that discovers `pyproject.toml` and also accepts
+`--config-file` could not be constructed. One of the two has to move, and the
+direction is not in doubt: a file the user named is a more specific request
+than a file that happened to be found by searching upwards.
+
+`Precedence.NAMED_FILE` is `FILE + 1`, and it is the default of the
+`config_source` marker.
+
+*Cost:* a named file and a discovered file both contribute; the named one wins
+path by path, rather than replacing discovery outright. A host whose policy is
+that an explicit file disables discovery (pytest's `-c`) says so in its
+binding, by not constructing the discovery source.
+
+## D34
+
+**A discovery source delegates its dialect and its base directory per file.**
+([sources](sources.md#config-file-discovery))
+
+`ConfigFileDiscoverySource` is one source at one rung, but the files it finds
+are of different formats: `pyproject.toml` is typed, `tox.ini` is text. A
+single dialect for the whole source would either reject `debug = true` from an
+ini file or skip checking a TOML value. And a relative path in a file is
+relative to that file, not to wherever the search started.
+
+The source therefore exposes the per-file sources it found, in its documented
+order, and the manager reads each with its own dialect and base directory, at
+the discovery source's rung.
+
+*Cost:* one optional method on the source protocol, `delegates()`, that only a
+source standing for several others implements.

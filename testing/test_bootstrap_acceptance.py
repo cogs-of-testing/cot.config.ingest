@@ -25,6 +25,7 @@ from cot.config import (
     EnvSource,
     bootstrap_only,
     config_source,
+    from_env,
     injected_args,
     short,
 )
@@ -46,7 +47,8 @@ class PytestConfig(ConfigPart, prefix="pytest"):
     """
 
     config_file: Annotated[str | None, config_source] = None
-    addopts: str = ""
+    # PYTEST_ADDOPTS is read because the field opts in (D13).
+    addopts: Annotated[str, from_env] = ""
     testpaths: str = "tests"
 
 
@@ -78,7 +80,6 @@ class TestBootstrapConfigFileDiscovery:
         )
         files = ConfigFileDiscoverySource(
             invocation_dir=tmp_path,
-            cli_source=cli,
         )
         manager = ConfigManager(sources=[cli, files])
         manager.declare(PytestConfig)
@@ -113,7 +114,6 @@ class TestBootstrapConfigFileDiscovery:
         )
         files = ConfigFileDiscoverySource(
             invocation_dir=tmp_path,
-            cli_source=cli,
         )
         manager = ConfigManager(sources=[cli, files])
         manager.add_source(EnvSource(environ=env, precedence=20))
@@ -154,7 +154,6 @@ class TestBootstrapConfigFileDiscovery:
         )
         files = ConfigFileDiscoverySource(
             invocation_dir=tmp_path,
-            cli_source=cli,
         )
         manager = ConfigManager(sources=[cli, files])
 
@@ -197,7 +196,6 @@ class TestAddoptsCombination:
         )
         files = ConfigFileDiscoverySource(
             invocation_dir=tmp_path,
-            cli_source=cli,
         )
         manager = ConfigManager(sources=[cli, files])
         manager.add_source(EnvSource(environ=env, precedence=20))
@@ -226,7 +224,6 @@ class TestAddoptsCombination:
         )
         files = ConfigFileDiscoverySource(
             invocation_dir=tmp_path,
-            cli_source=cli,
         )
         manager = ConfigManager(sources=[cli, files])
 
@@ -274,7 +271,6 @@ class TestAddoptsCombination:
         )
         files = ConfigFileDiscoverySource(
             invocation_dir=tmp_path,
-            cli_source=cli,
         )
         manager = ConfigManager(sources=[cli, files])
         manager.add_source(EnvSource(environ=env, precedence=20))
@@ -317,7 +313,6 @@ class TestAddoptsPropagation:
         )
         files = ConfigFileDiscoverySource(
             invocation_dir=tmp_path,
-            cli_source=cli,
         )
         manager = ConfigManager(sources=[cli, files])
         manager.declare(PytestConfigWithVerbose)
@@ -364,7 +359,6 @@ class TestAddoptsPropagation:
         )
         files = ConfigFileDiscoverySource(
             invocation_dir=tmp_path,
-            cli_source=cli,
         )
         manager = ConfigManager(sources=[cli, files])
         manager.declare(PytestConfigWithVerbose)
@@ -396,7 +390,6 @@ class TestAddoptsPropagation:
         )
         files = ConfigFileDiscoverySource(
             invocation_dir=tmp_path,
-            cli_source=cli,
         )
         manager = ConfigManager(sources=[cli, files])
 
@@ -422,7 +415,6 @@ class TestAddoptsPropagation:
         )
         files = ConfigFileDiscoverySource(
             invocation_dir=tmp_path,
-            cli_source=cli,
         )
         manager = ConfigManager(sources=[cli, files])
         manager.declare(PytestConfigWithVerbose)
@@ -439,7 +431,7 @@ class PytestConfigWithVerbose(ConfigPart, prefix="pytest"):
     # bootstrap_only: can only be set via CLI, not via addopts
     config_file: Annotated[str | None, config_source, bootstrap_only] = None
     # injected_args: value is re-parsed as CLI args
-    addopts: Annotated[str, injected_args] = ""
+    addopts: Annotated[str, injected_args, from_env] = ""
     testpaths: str = "tests"
     verbose: bool = False
     tb: str = "auto"

@@ -82,7 +82,9 @@ class LogFileConfig(LogOutputConfig):
     mode: Annotated[str, named("log_file_mode"), help("log file open mode")] = "w"
 
 
-class LoggingConfig(LogOutputConfig, ConfigPart, prefix="pytest", name_prefix="log"):
+class LoggingConfig(
+    LogOutputConfig, ConfigPart, prefix="pytest", name_prefix="log", from_env=True
+):
     auto_indent: Annotated[str | None, help("auto-indent multiline messages")] = None
     logger_disable: Annotated[
         list[str], named("log_disable"), help("disable a logger by name")

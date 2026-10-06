@@ -61,7 +61,7 @@ says where a value came from and nothing else.
 ## The precedence ladder
 
 ```
-defaults(-1) < file(15) < injected(18) < env(20) < cli(25) < override(30) < runtime(40)
+defaults(-1) < file(15) < named file(16) < injected(18) < env(20) < cli(25) < override(30) < runtime(40)
 ```
 
 These are defaults, not an enum. Every source takes `precedence=`, and so does
@@ -70,6 +70,10 @@ every marker that creates one:
 ```python
 TomlSource(path, precedence=Precedence.ENV + 1)
 ```
+
+`named file` is where a file a [`config_source`](#config-file-discovery)
+field names lands: one rung above the files discovery finds, because naming a
+file is a more specific request than finding one ([D33](decisions.md#d33)).
 
 `DEFAULTS` is negative so that a value nobody configured loses to every real
 source, including one declared at precedence 0. Gaps between the rungs let
@@ -177,7 +181,8 @@ Rules:
   that token is itself a registered option spelling or the tokens are
   exhausted, in which case it is a [`ConfigUsageError`](diagnostics.md#errors)
   naming the option
-- every boolean has both `--flag` and `--no-flag`
+- every boolean has both `--flag` and `--no-flag`; `--flag=value` converts the
+  value like any other, so `--flag=false` is `False`, never presence
 - unknown tokens are collected for host passthrough, not treated as errors
 
 With files below the CLI on the ladder, a value set in a file must be
@@ -271,9 +276,10 @@ path and the field. That one function is the whole of what a new file format
 costs: a row in the table plus a loader. [Names](names.md#the-qualified-path)
 and [merging](merging.md) are format-blind.
 
-`ConfigFileDiscoverySource` is one source. It yields the readings of every file
-it found, ordered by depth with the file nearest the invocation directory
-last, so the nearest file wins without any two files needing a rung of their
+`ConfigFileDiscoverySource` is one source. It hands the manager a source per
+file it found, each read with its own dialect and base directory at the
+discovery source's rung ([D34](decisions.md#d34)), ordered by depth with the
+file nearest the invocation directory last, so the nearest file wins without any two files needing a rung of their
 own. It reads the explicit-config-file field through
 [the index](names.md#the-spelling-index), never a hardcoded name.
 

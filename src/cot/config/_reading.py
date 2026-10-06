@@ -68,7 +68,7 @@ class BindingSource(ConfigSource, Protocol):
 
 
 def _readings_for(
-    targets: Sequence[SpellingTarget], raw: Any, location: str
+    targets: Sequence[SpellingTarget], raw: Any, location: str, spelling: str = ""
 ) -> Iterator[Reading]:
     """One reading per field the spelling resolved to.
 
@@ -76,7 +76,13 @@ def _readings_for(
     case: a plugin and its host declaring the same option during a transition.
     """
     for target in targets:
-        yield Reading(root=target.root, path=target.path, raw=raw, location=location)
+        yield Reading(
+            root=target.root,
+            path=target.path,
+            raw=raw,
+            location=location,
+            alias=spelling if target.deprecated else None,
+        )
 
 
 # --- files ------------------------------------------------------------------
@@ -106,7 +112,9 @@ def _place(
 
     for targets in candidates:
         if targets:
-            yield from _readings_for(targets, raw, f"{location}[{'.'.join(chain)}]")
+            yield from _readings_for(
+                targets, raw, f"{location}[{'.'.join(chain)}]", spelling=key
+            )
             return
 
     yield Unmatched(spelling=".".join(chain), location=location)
@@ -217,9 +225,20 @@ class ConfigFileDiscoverySource:
         found.reverse()
         return found
 
+    def delegates(self) -> list[ConfigSource]:
+        """A source per file found, in order, each at this source's rung.
+
+        The manager reads each with its own dialect and base directory: one
+        rung does not make ``pyproject.toml`` and ``tox.ini`` one format.
+        """
+        return [
+            source_for_file(path, precedence=self.precedence)
+            for path in self.discovered()
+        ]
+
     def read(self, index: SpellingIndex) -> Iterable[Reading | Unmatched]:
-        for path in self.discovered():
-            yield from source_for_file(path).read(index)
+        for source in self.delegates():
+            yield from source.read(index)
 
 
 # --- the environment --------------------------------------------------------
@@ -278,7 +297,7 @@ class TomlEnvSource(EnvSource):
 # --- argv -------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(kw_only=True)
 class _ArgvSource:
     """Shared machinery for everything that parses command-line tokens."""
 
@@ -373,7 +392,7 @@ class CLISource(_ArgvSource):
         return self.invocation_dir
 
 
-@dataclass
+@dataclass(kw_only=True)
 class InjectedArgsSource(_ArgvSource):
     """Tokens a configuration field contributed, re-parsed as arguments.
 
@@ -425,7 +444,7 @@ class OverrideSource:
                 if not targets:
                     yield Unmatched(spelling=key, location=f"-o {key}")
                     continue
-                yield from _readings_for(targets, value, f"-o {key}")
+                yield from _readings_for(targets, value, f"-o {key}", spelling=key)
 
 
 @dataclass
@@ -443,7 +462,7 @@ class RuntimeSource:
 
     def read(self, index: SpellingIndex) -> Iterable[Reading | Unmatched]:
         for root, path, value, writer in self.writes:
-            yield Reading(root=root, path=path, raw=value, location=f"runtime:{writer}")
+            yield Reading(root=root, path=path, raw=value, location=writer)
 
 
 __all__ = [

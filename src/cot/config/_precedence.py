@@ -28,7 +28,7 @@ from typing import Final
 class Precedence:
     """Default precedence values, lowest first.
 
-    ``defaults < file < injected < env < cli < override < runtime``
+    ``defaults < file < named file < injected < env < cli < override < runtime``
     """
 
     DEFAULTS: Final = -1
@@ -37,11 +37,11 @@ class Precedence:
     FILE: Final = 15
     """TOML/INI files, and files named by a ``config_source`` field."""
 
+    NAMED_FILE: Final = 16
+    """A file a ``config_source`` field names: one above the files discovery finds."""
+
     INJECTED: Final = 18
     """Tokens an ``injected_args`` field contributed, re-parsed as arguments."""
-
-    ADDOPTS: Final = INJECTED
-    """Deprecated spelling of :attr:`INJECTED`, kept until the sources land."""
 
     ENV: Final = 20
     """Environment variables."""

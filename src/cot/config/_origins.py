@@ -14,13 +14,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import Literal
 
 from ._precedence import Precedence
 
-OriginKind = Literal[
-    "default", "file", "env", "cli", "addopts", "injected", "override", "runtime"
-]
+OriginKind = Literal["default", "file", "env", "cli", "injected", "override", "runtime"]
 
 
 @dataclass(frozen=True)
@@ -60,45 +58,9 @@ def default_origin(field_dotted: str) -> Origin:
     )
 
 
-@runtime_checkable
-class OriginAware(Protocol):
-    """Optional protocol: a source that can name where a value came from.
-
-    Sources that do not implement this are still tracked -- the manager falls
-    back to a generic origin built from the source's class and precedence.
-    """
-
-    def describe_origin(
-        self, part_type: type[Any], path: tuple[str, ...]
-    ) -> Origin | None:
-        """Describe where ``path`` came from, or None if this source has no value."""
-        ...
-
-
-def generic_origin(source: Any) -> Origin:
-    """Attribute a value to a source that does not describe itself."""
-    kind: OriginKind = "file"
-    name = type(source).__name__
-    if "Env" in name:
-        kind = "env"
-    elif "Addopts" in name:
-        kind = "addopts"
-    elif "CLI" in name:
-        kind = "cli"
-
-    location = name
-    path = getattr(source, "path", None)
-    if path is not None:
-        location = str(path)
-
-    return Origin(kind=kind, location=location, precedence=source.precedence)
-
-
 __all__ = [
     "DEFAULT_ORIGIN_PRECEDENCE",
     "Origin",
-    "OriginAware",
     "OriginKind",
     "default_origin",
-    "generic_origin",
 ]

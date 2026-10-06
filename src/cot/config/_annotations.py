@@ -117,7 +117,7 @@ class ConfigSourceMarker(Marker):
 
     precedence: int
 
-    def __init__(self, precedence: int = Precedence.FILE) -> None:
+    def __init__(self, precedence: int = Precedence.NAMED_FILE) -> None:
         self.precedence = precedence
 
     def __repr__(self) -> str:
@@ -166,7 +166,7 @@ class InjectedArgsMarker(Marker):
 
     precedence: int
 
-    def __init__(self, precedence: int = Precedence.ADDOPTS) -> None:
+    def __init__(self, precedence: int = Precedence.INJECTED) -> None:
         self.precedence = precedence
 
     def __repr__(self) -> str:
