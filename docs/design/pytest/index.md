@@ -11,7 +11,7 @@ or another host.
 |---|---|
 | this page | the binding |
 | [Evolution](evolution.md) | the staged plan to replace pytest's config layer |
-| [Decisions](decisions.md) | P1 to P8, pytest policy with rationale and cost |
+| [Decisions](decisions.md) | P1 to P9, pytest policy with rationale and cost |
 
 ## Division of labour
 
@@ -56,6 +56,13 @@ The binding raises [`ConfigCollisionError`](../diagnostics.md#errors) when
 pytest already owns a CLI option, naming the field and pointing at `named()`,
 `no_cli` and `name_prefix`, exactly as the native parser does
 ([collisions](../names.md#collisions)).
+
+A plugin that replaces the one owning those options asks for them with
+`add_config(parser, T, adopt=True)` ([P9](decisions.md#p9)). A command-line
+option that already exists with the same action is then read from its
+existing `dest` instead of declared, and its existing default counts as "not
+given", so a file value still wins over it. An option with a different action,
+or a field with more than one command-line form, still raises.
 
 An ini key pytest already declares is adopted, never clobbered: the existing
 help and type survive and the value is read.

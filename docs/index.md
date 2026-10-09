@@ -242,7 +242,7 @@ pytest's own policy is separate and may not be cited by a core document:
 |----------|-------------|
 | [pytest binding](design/pytest/index.md) | the adapter as it is today |
 | [pytest: Evolution](design/pytest/evolution.md) | the staged plan to replace pytest's config layer |
-| [pytest: Decisions](design/pytest/decisions.md) | P1 to P8, pytest policy |
+| [pytest: Decisions](design/pytest/decisions.md) | P1 to P9, pytest policy |
 | [vcs-versioning](design/vcs-versioning/index.md) | a candidate binding, evaluated against the design |
 
 Start with [Invariants](design/invariants.md); they are short, and everything

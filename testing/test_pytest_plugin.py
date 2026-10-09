@@ -238,6 +238,63 @@ class TestCollisionWithPytestsOwnOptions:
         result.stdout.fnmatch_lines(["*ADOPTED='WARNING'*", "*PYTEST_OWN='WARNING'*"])
         assert result.ret == 0
 
+    def test_adopt_reads_pytests_own_options(self, pytester: pytest.Pytester) -> None:
+        # A plugin that replaces pytest's logging plugin declares the same
+        # options; pytest has declared them before any -p plugin loads (P9).
+        pytester.makeconftest(
+            """
+            from typing import Annotated
+            from cot.config.pytest_binding import add_config, get_config
+            from cot.config import ConfigPart, named
+
+            class Replacing(ConfigPart, prefix="pytest", name_prefix="log"):
+                level: str | None = None
+                file_mode: str = "w"
+                logger_disable: Annotated[list[str], named("log_disable")] = []
+
+            def pytest_addoption(parser):
+                add_config(parser, Replacing, adopt=True)
+
+            def pytest_configure(config):
+                config._replacing = get_config(config, Replacing)
+            """
+        )
+        pytester.makeini("[pytest]\nlog_level = WARNING\nlog_file_mode = a\n")
+        pytester.makepyfile(
+            test_adopted="""
+            def test_adopted(pytestconfig):
+                c = pytestconfig._replacing
+                disabled = ",".join(c.logger_disable)
+                print("SEEN=%s|%s|%s" % (c.level, c.file_mode, disabled))
+            """
+        )
+        result = run(pytester, "-s", "--log-level=DEBUG", "--log-disable=a")
+        result.stdout.fnmatch_lines(["*SEEN=DEBUG|a|a"])
+
+        # not given on the command line: the ini value wins over pytest's
+        # argparse default
+        result = run(pytester, "-s")
+        result.stdout.fnmatch_lines(["*SEEN=WARNING|a|"])
+
+    def test_adopt_refuses_an_incompatible_option(
+        self, pytester: pytest.Pytester
+    ) -> None:
+        pytester.makeconftest(
+            """
+            from cot.config.pytest_binding import add_config
+            from cot.config import ConfigPart
+
+            class Clash(ConfigPart, prefix="pytest", name_prefix="log"):
+                level: bool = False      # a flag where pytest takes a value
+
+            def pytest_addoption(parser):
+                add_config(parser, Clash, adopt=True)
+            """
+        )
+        result = run(pytester)
+        assert result.ret != 0
+        result.stderr.fnmatch_lines(["*ConfigCollisionError*not compatible*"])
+
 
 class TestLateDeclarationIsRejected:
     def test_declaring_after_configure_raises(self, pytester: pytest.Pytester) -> None:
