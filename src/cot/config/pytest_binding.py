@@ -29,6 +29,7 @@ both directions:
 
 from __future__ import annotations
 
+import argparse
 import weakref
 from argparse import ArgumentError
 from pathlib import Path
@@ -112,13 +113,51 @@ def _option_attrs(spec: FieldSpec, form: CliForm) -> dict[str, Any]:
     return attrs
 
 
+#: The argparse action each of _option_attrs's ``action`` values creates.
+_ACTIONS = {
+    None: argparse._StoreAction,
+    "store_const": argparse._StoreConstAction,
+    "count": argparse._CountAction,
+    "store_true": argparse._StoreTrueAction,
+    "append": argparse._AppendAction,
+}
+
+
+def _existing_action(parser: Parser, names: list[str]) -> argparse.Action | None:
+    """The action that already owns one of ``names``, if any."""
+    known = parser.optparser._option_string_actions
+    for name in names:
+        if name in known:
+            return known[name]
+    return None
+
+
+def _compatible(
+    action: argparse.Action, names: list[str], attrs: dict[str, Any]
+) -> bool:
+    """Whether reading ``action``'s dest gives what declaring ``attrs`` would."""
+    return (
+        set(names) <= set(action.option_strings)
+        and type(action) is _ACTIONS.get(attrs.get("action"))
+        and action.const == attrs.get("const")
+        and action.nargs is None
+    )
+
+
+def _hashable(value: Any) -> Any:
+    return tuple(value) if isinstance(value, list) else value
+
+
 class _Host:
     """What both pytest-backed sources share: the Parser, then the Config."""
 
     def __init__(self, parser: Parser) -> None:
         self.parser = parser
         self.config: Config | None = None
-        self.options: set[str] = set()
+        self.options: dict[str, tuple[str, Any]] = {}
+        """flat name -> the dest pytest stores it under, and the value that
+        means "not given": ``None`` for options declared here, the existing
+        default for adopted ones."""
         self.ini_keys: dict[str, str] = {}
         """file key -> the ini type pytest parses it as."""
 
@@ -138,12 +177,16 @@ class PytestOptionSource:
         config = self.host.config
         return None if config is None else config.invocation_params.dir
 
-    def bind(self, specs: Iterable[FieldSpec]) -> None:
-        """Register every spec's forms and file key with pytest. Idempotent."""
+    def bind(self, specs: Iterable[FieldSpec], *, adopt: bool = False) -> None:
+        """Register every spec's forms and file key with pytest. Idempotent.
+
+        With ``adopt``, a compatible option pytest or another plugin already
+        declares is read instead of declared again (P9).
+        """
         for spec in specs:
             self._bind_ini(spec)
             if spec.cli:
-                self._bind_options(spec)
+                self._bind_options(spec, adopt=adopt)
 
     def _bind_ini(self, spec: FieldSpec) -> None:
         key = spec.file_key
@@ -168,22 +211,43 @@ class PytestOptionSource:
             aliases=spec.aliases,
         )
 
-    def _bind_options(self, spec: FieldSpec) -> None:
+    def _bind_options(self, spec: FieldSpec, *, adopt: bool) -> None:
         if spec.flat in self.host.options:
             return
-        self.host.options.add(spec.flat)
         group = self.host.parser.getgroup(spec.group)
+        adopted: set[tuple[str, Any]] = set()
         for form in spec.cli:
             names = [name for name in (form.short, form.long) if name is not None]
+            attrs = _option_attrs(spec, form)
+            existing = _existing_action(self.host.parser, names) if adopt else None
+            if existing is not None and _compatible(existing, names, attrs):
+                adopted.add((existing.dest, _hashable(existing.default)))
+                continue
             try:
-                group.addoption(*names, **_option_attrs(spec, form))
+                group.addoption(*names, **attrs)
             except ArgumentError as exc:
                 raise ConfigCollisionError(
                     f"{'.'.join(spec.path)} cannot be declared as {names[-1]}: "
                     f"pytest or another plugin already owns it ({exc}). "
                     f"Give it a named(...) override, no_cli, or a different "
-                    f"name_prefix."
+                    f"name_prefix"
+                    + (
+                        "; the existing option is not compatible, so it was "
+                        "not adopted."
+                        if adopt
+                        else ", or adopt it with add_config(..., adopt=True)."
+                    )
                 ) from exc
+        if not adopted:
+            self.host.options[spec.flat] = (spec.flat, None)
+        elif len(adopted) == 1 and len(spec.cli) == 1:
+            ((dest, default),) = adopted
+            self.host.options[spec.flat] = (dest, default)
+        else:
+            raise ConfigCollisionError(
+                f"{'.'.join(spec.path)} can only adopt an option when it has "
+                f"one command-line form; it has {len(spec.cli)}."
+            )
 
     def read(self, index: SpellingIndex) -> Iterator[Reading | Unmatched]:
         config = self.host.config
@@ -193,8 +257,11 @@ class PytestOptionSource:
             for spec in index.specs(root):
                 if spec.flat not in self.host.options:
                     continue
-                value = config.getoption(spec.flat, default=None)
+                dest, not_given = self.host.options[spec.flat]
+                value = config.getoption(dest, default=None)
                 if value is None or (spec.counts and value == 0):
+                    continue
+                if not_given is not None and _hashable(value) == not_given:
                     continue
                 first = spec.cli[0]
                 location = first.long or first.short or spec.flat
@@ -267,16 +334,20 @@ def _binder(manager: ConfigManager) -> PytestOptionSource:
     raise LookupError("this manager has no pytest source")  # pragma: no cover
 
 
-def add_config(parser: Parser, root: type[ConfigPart]) -> None:
+def add_config(parser: Parser, root: type[ConfigPart], *, adopt: bool = False) -> None:
     """Declare ``root`` and register its options and ini keys with pytest.
 
     Call it from ``pytest_addoption``. The specs are bound at once rather than
     at resolve, because pytest parses between ``pytest_addoption`` and the
     first read, and an option registered later would never be seen.
+
+    ``adopt=True`` is for a plugin that replaces the one owning its options:
+    a command-line option that already exists with the same action is read
+    rather than declared, and an incompatible one still raises (P9).
     """
     manager = _manager_for_parser(parser)
     manager.declare(root)
-    _binder(manager).bind(field_specs(root))
+    _binder(manager).bind(field_specs(root), adopt=adopt)
 
 
 def manager_for(config: Config) -> ConfigManager:

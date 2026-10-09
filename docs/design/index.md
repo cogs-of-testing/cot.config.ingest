@@ -132,7 +132,7 @@ document:
 |---|---|
 | [pytest](pytest/index.md) | the binding |
 | [pytest: Evolution](pytest/evolution.md) | the staged plan to replace pytest's config layer |
-| [pytest: Decisions](pytest/decisions.md) | P1 to P8, pytest policy |
+| [pytest: Decisions](pytest/decisions.md) | P1 to P9, pytest policy |
 | [vcs-versioning](vcs-versioning/index.md) | a candidate binding, evaluated; no argument parser at all |
 
 **Reading order.** [Invariants](invariants.md) first. Then

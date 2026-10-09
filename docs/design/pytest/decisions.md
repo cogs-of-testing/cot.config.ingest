@@ -171,3 +171,24 @@ become permanent.
 *Cost:* the legacy part has no meaningful provenance beyond "ingested". The
 flat shape also means two ingested options that would collide by `dest`
 collide for real.
+
+## P9
+
+**Adopting an option pytest already declares is opt-in.**
+([collisions](index.md#collisions))
+
+pytest imports its own plugins, and they declare their options, before any
+`-p` plugin loads. Blocking a plugin afterwards unregisters it but leaves its
+options in the parser, and `-p no:NAME` is only early enough on the real
+command line, not from `addopts`. A plugin that replaces one of pytest's own,
+such as cot.capture's logging binding replacing `logging`, therefore meets
+every option it means to take over already declared.
+
+`add_config(..., adopt=True)` reads such an option instead of failing, when it
+has the same action. Without the flag a collision still raises, because a
+plugin that derives `--log-level` by accident should hear about it.
+
+*Cost:* an adopted option keeps the existing help, choices and `dest`, so
+`--help` shows the old plugin's text and the field's own help is unused. The
+check reads `parser.optparser`, which is pytest's argparse parser and not
+public API.
