@@ -5,6 +5,12 @@ release, and breaking changes are noted here rather than deprecated.
 
 <!-- towncrier release notes start -->
 
+## 0.3.0 (2026-10-09)
+
+### Added
+
+- Added `add_config(parser, T, adopt=True)`: a plugin that replaces one of pytest's own can read the command-line options pytest already declared instead of failing with `ConfigCollisionError` (P9).
+
 ## 0.2.0 (2026-10-06)
 
 ### Breaking Changes
